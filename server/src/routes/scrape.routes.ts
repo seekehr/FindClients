@@ -8,19 +8,20 @@ import { recentScrapeRuns } from '../services/analytics.service';
 export const scrapeRouter = Router();
 scrapeRouter.use(requireAuth);
 
-// Manually trigger a scrape cycle (handy for demos). Throttled so it can't be spammed.
+// Manually trigger a scrape for the calling user's own connected accounts.
+// Throttled so it can't be spammed.
 scrapeRouter.post(
   '/run',
   rateLimit({ windowMs: 30_000, max: 3, bucket: 'scrape-run' }),
-  asyncHandler(async (_req, res) => {
-    const summary = await runScrapeCycle();
+  asyncHandler(async (req, res) => {
+    const summary = await runScrapeCycle({ userId: req.user!.id });
     res.json({ ok: true, summary });
   }),
 );
 
 scrapeRouter.get(
   '/runs',
-  asyncHandler(async (_req, res) => {
-    res.json({ data: recentScrapeRuns() });
+  asyncHandler(async (req, res) => {
+    res.json({ data: await recentScrapeRuns(req.user!.id) });
   }),
 );

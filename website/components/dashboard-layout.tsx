@@ -1,24 +1,48 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { Menu, X, LogOut, Settings, Bell } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Menu, X, LogOut, Bell } from 'lucide-react'
+import { useRequireAuth, useLogout } from '@/lib/use-auth'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
 }
 
+const menuItems = [
+  { label: 'Dashboard', href: '/dashboard', icon: '📊' },
+  { label: 'Leads', href: '/dashboard/leads', icon: '🔍' },
+  { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: '🔖' },
+  { label: 'Connections', href: '/dashboard/connections', icon: '🔌' },
+  { label: 'Analytics', href: '/dashboard/analytics', icon: '📈' },
+  { label: 'Config', href: '/dashboard/config', icon: '🎛️' },
+  { label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
+]
+
+function initials(name: string, email: string) {
+  const src = (name || email || '?').trim()
+  const parts = src.split(/\s+/)
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+  return src.slice(0, 2).toUpperCase()
+}
+
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const pathname = usePathname()
+  const { user, checked } = useRequireAuth()
+  const logout = useLogout()
 
-  const menuItems = [
-    { label: 'Dashboard', href: '/dashboard', icon: '📊' },
-    { label: 'Leads', href: '/dashboard/leads', icon: '🔍' },
-    { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: '🔖' },
-    { label: 'Analytics', href: '/dashboard/analytics', icon: '📈' },
-    { label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
-  ]
+  // Avoid a flash of protected content before the auth check resolves.
+  if (!checked) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background text-foreground/50">
+        Loading…
+      </div>
+    )
+  }
+
+  const displayName = user?.fullName || user?.email || 'Account'
 
   return (
     <div className="flex h-screen bg-background">
@@ -40,25 +64,32 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {menuItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-foreground/70 hover:bg-primary/10 hover:text-primary transition"
-            >
-              <span className="text-lg">{item.icon}</span>
-              <span className="font-medium">{item.label}</span>
-            </Link>
-          ))}
+          {menuItems.map((item) => {
+            const active = pathname === item.href
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setSidebarOpen(false)}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
+                  active
+                    ? 'bg-primary/10 text-primary font-semibold'
+                    : 'text-foreground/70 hover:bg-primary/10 hover:text-primary'
+                }`}
+              >
+                <span className="text-lg">{item.icon}</span>
+                <span className="font-medium">{item.label}</span>
+              </Link>
+            )
+          })}
         </nav>
 
         {/* User section */}
         <div className="p-4 border-t border-border/40 space-y-2">
-          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-foreground/70 hover:bg-primary/10 hover:text-primary transition">
-            <Bell className="w-5 h-5" />
-            <span className="font-medium">Notifications</span>
-          </button>
-          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-foreground/70 hover:bg-destructive/10 hover:text-destructive transition">
+          <button
+            onClick={() => void logout()}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-foreground/70 hover:bg-destructive/10 hover:text-destructive transition"
+          >
             <LogOut className="w-5 h-5" />
             <span className="font-medium">Sign out</span>
           </button>
@@ -84,19 +115,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               <Bell className="w-5 h-5" />
               <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
             </button>
-            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-secondary hover:bg-secondary/80 transition cursor-pointer">
+            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-secondary">
               <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                <span className="text-sm font-bold">JD</span>
+                <span className="text-sm font-bold">{initials(user?.fullName ?? '', user?.email ?? '')}</span>
               </div>
-              <span className="hidden sm:inline text-sm font-medium">John Doe</span>
+              <span className="hidden sm:inline text-sm font-medium">{displayName}</span>
             </div>
           </div>
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-auto">
-          {children}
-        </main>
+        <main className="flex-1 overflow-auto">{children}</main>
       </div>
 
       {/* Mobile overlay */}

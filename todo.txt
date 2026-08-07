@@ -1,0 +1,11 @@
+1. Setup supabase
+2. Use supabase for auth (tell claude)
+3. Setup the global .env in ./
+4. Make sure proper user data is being saved in database. Save config options in user database
+5. Create a config page on the website
+
+
+6. Remove unnecessary info from landing page (eg the sidebar)
+6.5. Test Website
+7. Test X scrapper works (add its auth token too)
+8. Test Upwork scrapper works (it requires cookies + headless chrome browser)

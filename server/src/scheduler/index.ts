@@ -20,7 +20,9 @@ export function startScheduler(): void {
   }
 
   task = cron.schedule(env.scrapeCron, () => {
-    void runScrapeCycle().catch((err) => logger.error('Scrape cycle crashed', err));
+    void runScrapeCycle().catch((err) =>
+      logger.error('Scrape cycle crashed', (err as Error).message),
+    );
   });
 
   logger.info(`Scheduler started (cron: "${env.scrapeCron}")`);

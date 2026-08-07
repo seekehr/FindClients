@@ -1,0 +1,9 @@
+{
+  "name": "findclients-scrapper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform scrapers for FindClients. Loaded at runtime by ../server.",
+  "dependencies": {
+    "playwright": "^1.62.0"
+  }
+}

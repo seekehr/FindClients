@@ -1,3 +1,5 @@
+'use client'
+
 import { Bookmark, BookmarkCheck, ExternalLink, MessageCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
@@ -7,12 +9,14 @@ interface LeadCardProps {
   title: string
   platform: 'upwork' | 'twitter' | 'discord'
   description: string
+  url?: string
   budget?: string
   timeline?: string
   bookmarked?: boolean
   postedTime: string
   clientImage?: string
   tags: string[]
+  onToggleBookmark?: () => void
 }
 
 const platformColors = {
@@ -21,19 +25,20 @@ const platformColors = {
   discord: { bg: 'bg-purple-500/10', text: 'text-purple-600', label: 'Discord', icon: '🎮' },
 }
 
-export default function LeadCard({ 
+export default function LeadCard({
   id,
-  title, 
-  platform, 
+  title,
+  platform,
   description,
+  url,
   budget,
   timeline,
   bookmarked = false,
   postedTime,
-  clientImage,
-  tags
+  tags,
+  onToggleBookmark,
 }: LeadCardProps) {
-  const platformInfo = platformColors[platform]
+  const platformInfo = platformColors[platform] ?? platformColors.upwork
 
   return (
     <div className="bg-card rounded-xl border border-border/40 hover:border-border/80 hover:shadow-md transition overflow-hidden flex flex-col h-full">
@@ -45,12 +50,12 @@ export default function LeadCard({
             {platformInfo.label}
           </span>
         </div>
-        <button className={`p-1.5 rounded-lg transition ${bookmarked ? 'bg-accent/20 text-accent' : 'hover:bg-secondary'}`}>
-          {bookmarked ? (
-            <BookmarkCheck className="w-5 h-5" />
-          ) : (
-            <Bookmark className="w-5 h-5" />
-          )}
+        <button
+          onClick={onToggleBookmark}
+          aria-label={bookmarked ? 'Remove bookmark' : 'Add bookmark'}
+          className={`p-1.5 rounded-lg transition ${bookmarked ? 'bg-accent/20 text-accent' : 'hover:bg-secondary'}`}
+        >
+          {bookmarked ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
         </button>
       </div>
 
@@ -62,7 +67,7 @@ export default function LeadCard({
         </h3>
 
         {/* Description */}
-        <p className="text-foreground/70 text-sm mb-4 line-clamp-3">
+        <p className="text-foreground/70 text-sm mb-4 line-clamp-3 whitespace-pre-line">
           {description}
         </p>
 
@@ -101,9 +106,7 @@ export default function LeadCard({
         )}
 
         {/* Posted time */}
-        <p className="text-xs text-foreground/50 mb-4">
-          Posted {postedTime}
-        </p>
+        <p className="text-xs text-foreground/50 mb-4 mt-auto">Posted {postedTime}</p>
       </div>
 
       {/* Actions */}
@@ -114,10 +117,14 @@ export default function LeadCard({
             View
           </Button>
         </Link>
-        <Button size="sm" className="gap-2">
-          <ExternalLink className="w-4 h-4" />
-          Open
-        </Button>
+        {url && (
+          <a href={url} target="_blank" rel="noopener noreferrer">
+            <Button size="sm" className="gap-2">
+              <ExternalLink className="w-4 h-4" />
+              Open
+            </Button>
+          </a>
+        )}
       </div>
     </div>
   )

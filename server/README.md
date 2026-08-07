@@ -1,32 +1,35 @@
 # FindClients — API Server
 
 The backend for FindClients: authentication, lead management, analytics,
-notifications, billing, and the scraping scheduler. Built to run as a **zero-config
-demo** — no external services required.
+notifications, billing, and the scraping scheduler.
 
 ## Stack
 
 - **Node 22.5+ / TypeScript** (run with [`tsx`](https://github.com/privatenumber/tsx))
 - **Express** — REST API
-- **node:sqlite** — Node's built-in SQLite (no native build step, no DB server)
-- **JWT + bcrypt** — auth
+- **Supabase Postgres** — data, via `@supabase/supabase-js` and the service key
+- **Supabase Auth** — identity, brokered by this server
 - **node-cron** — scheduler
 - **zod** — request validation
 
 ## Quick start
 
+Configuration comes from the **global `.env` at the repository root** (see
+[`../.env.example`](../.env.example)); a `server/.env` is optional and only
+layers local overrides on top. Apply
+[`../supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql)
+in your Supabase SQL Editor first — the server refuses to start without it.
+
 ```bash
 cd server
 npm install
-cp .env.example .env      # optional — sane defaults work out of the box
 npm run dev               # http://localhost:4000
 ```
 
-On first boot the server seeds a demo account and starter leads, then starts the
-scheduler. With `USE_DEMO_SCRAPERS=true` (default) synthetic leads trickle in
-every couple of minutes so the pipeline is visibly alive.
-
-**Demo login:** `demo@findclients.dev` / `demo12345`
+Register an account in the web app, then connect a platform under **Connections**
+(paste your session cookie). The scheduler then scrapes on your behalf every
+couple of minutes; new leads flow into the shared pool and are matched to each
+user by their keyword preferences.
 
 ### Scripts
 
@@ -34,30 +37,29 @@ every couple of minutes so the pipeline is visibly alive.
 | ----------------- | --------------------------------------------- |
 | `npm run dev`     | Start with hot reload (tsx watch)             |
 | `npm start`       | Start once (tsx)                              |
-| `npm run seed`    | Seed demo user + starter leads                |
 | `npm run typecheck` | Type-check the whole project (server + scrapper) |
 
 ## Architecture
 
 ```
-Scrapers (../scrapper)          ← you implement these
-      ↓  loaded at runtime
- Scheduler (node-cron)          src/scheduler
+Users connect accounts    src/services/credential.service.ts  (cookies, encrypted at rest)
       ↓
- Runner  → dedupe → insert      src/scrapers/runner.ts
+ Scheduler (node-cron)     src/scheduler
+      ↓  for each connected user…
+ Runner  → scraper(cookies) → dedupe → insert   src/scrapers/runner.ts
       ↓
- Database (SQLite)              src/db
+ Database (Supabase)       src/db/supabase.ts
       ↓
- Services                       src/services  (auth, leads, analytics, billing…)
+ Services                  src/services  (auth, leads, analytics, billing…)
       ↓
- REST API (Express)            src/routes  → /api/*
+ REST API (Express)        src/routes  → /api/*
       ↓
- Notifications                 src/services/notification.service.ts
+ Notifications             src/services/notification.service.ts
 ```
 
-The `scrapper/` folder holds the real platform scrapers (placeholders for now).
-The server ships **demo scrapers** that generate synthetic leads so everything
-works before the real ones exist. See [`../scrapper/README.md`](../scrapper/README.md).
+Each scrape run is driven by one connected user's session cookies (see
+[`../scrapper/README.md`](../scrapper/README.md)). Cookies are encrypted with
+`ENCRYPTION_KEY` (AES-256-GCM) and never returned by the API.
 
 ## API
 
@@ -71,7 +73,9 @@ All responses are JSON. Protected routes need `Authorization: Bearer <token>`.
 | GET    | `/api/auth/me`              | —                                      |
 | PATCH  | `/api/auth/me`              | `{ fullName?, email? }`                |
 | POST   | `/api/auth/change-password` | `{ currentPassword, newPassword }`     |
-| POST   | `/api/auth/logout`          | — (client discards token)              |
+| POST   | `/api/auth/refresh`         | `{ refreshToken }` → new access token  |
+| POST   | `/api/auth/logout`          | — revokes the refresh token            |
+| DELETE | `/api/auth/me`              | — deletes the account and all its data |
 
 ### Leads
 | Method | Path                           | Notes                                                        |
@@ -86,8 +90,15 @@ All responses are JSON. Protected routes need `Authorization: Bearer <token>`.
 ### Analytics
 `GET /api/analytics/overview` · `/platforms` · `/trend` · `/scrape-runs`
 
-### Settings · Notifications · Billing · Scrape
-- `GET|PUT /api/settings`
+### Connections (per-user platform sessions)
+| Method | Path                        | Notes                                                    |
+| ------ | --------------------------- | -------------------------------------------------------- |
+| GET    | `/api/credentials`          | Masked connection status per platform (never the secret) |
+| PUT    | `/api/credentials/:platform`| `{ cookies }` — store/replace the session (encrypted)    |
+| DELETE | `/api/credentials/:platform`| Disconnect                                               |
+
+### Config · Notifications · Billing · Scrape
+- `GET|PUT /api/config` — the user's own configuration (`public.user_config`)
 - `GET /api/notifications` · `POST /api/notifications/:id/read` · `POST /api/notifications/read-all`
 - `GET /api/billing/plans` · `GET /api/billing/subscription` · `POST /api/billing/subscribe`
 - `POST /api/scrape/run` (manual trigger) · `GET /api/scrape/runs`
@@ -97,21 +108,34 @@ All responses are JSON. Protected routes need `Authorization: Bearer <token>`.
 
 ## Configuration
 
-See [`.env.example`](./.env.example). Highlights:
+All variables live in the global [`../.env`](../.env.example). Highlights:
 
 | Var                 | Default                     | Purpose                              |
 | ------------------- | --------------------------- | ------------------------------------ |
 | `PORT`              | `4000`                      | HTTP port                            |
 | `CORS_ORIGIN`       | `http://localhost:3000`     | Allowed frontend origin(s)           |
-| `JWT_SECRET`        | dev secret                  | **Change in production**             |
-| `DATABASE_FILE`     | `./data/findclients.db`     | SQLite file                          |
+| `SUPABASE_URL`      | — (required)                | Your project URL                     |
+| `SUPABASE_SERVICE_KEY` | — (required)             | Service key. **Server only** — bypasses RLS |
+| `SUPABASE_AUTO_CONFIRM_EMAILS` | `true`           | Skip the verification email on sign-up |
+| `ENCRYPTION_KEY`    | dev key                     | Encrypts stored session cookies. **Change in production** |
 | `SCHEDULER_ENABLED` | `true`                      | Background scraping on/off           |
 | `SCRAPE_CRON`       | `*/2 * * * *`               | Scrape cadence                       |
-| `USE_DEMO_SCRAPERS` | `true`                      | Generate synthetic leads             |
-| `DISCORD_WEBHOOK_URL` | —                         | Optional Discord notifications       |
+
+Scraper keywords, thresholds, limits, feed URLs and Discord webhooks are **not**
+environment variables — they are per-user and live in `public.user_config`,
+edited on the app's Config page.
 
 ## Notes for production
 
-This is a demo. Before shipping: swap SQLite for Postgres, the in-memory cache
-for Redis, integrate a real payment provider in `billing.service.ts`, wire real
-email/push in `notification.service.ts`, and set a strong `JWT_SECRET`.
+Before shipping: swap the in-memory cache for Redis, integrate a real payment
+provider in `billing.service.ts`, wire real email/push in
+`notification.service.ts`, set `SUPABASE_AUTO_CONFIRM_EMAILS=false` and configure
+SMTP so addresses are actually verified, set a strong `ENCRYPTION_KEY`, and move
+cookie encryption to a KMS (envelope encryption) instead of an app-level key.
+
+The service key bypasses Row Level Security, so every query in `src/services`
+scopes itself by user id. Keep that invariant when adding new ones.
+
+> Storing users' third-party session cookies makes this server a high-value
+> target and automating those platforms may violate their Terms of Service.
+> Treat the credentials table as crown-jewels and get the compliance call right.

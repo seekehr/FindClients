@@ -1,20 +1,13 @@
-// Silence the "ExperimentalWarning: SQLite is an experimental feature" noise
-// from node:sqlite — the API is stable enough for this demo.
-process.removeAllListeners('warning');
-process.on('warning', (w) => {
-  if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return;
-  console.warn(w);
-});
-
 import { env } from './config/env';
 import { logger } from './utils/logger';
 import { createApp } from './app';
-import { ensureSeed } from './db/seed';
+import { assertSchemaReady } from './db/supabase';
 import { startScheduler, stopScheduler } from './scheduler';
 
 async function main() {
-  // Seed a demo account + starter leads on first boot so the app isn't empty.
-  await ensureSeed();
+  // Fail fast and legibly if Supabase is unreachable or the migration in
+  // supabase/migrations/ has not been applied yet.
+  await assertSchemaReady();
 
   const app = createApp();
   const server = app.listen(env.port, () => {
@@ -36,6 +29,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  logger.error('Fatal startup error', err);
-  process.exit(1);
+  logger.error('Fatal startup error', (err as Error).message);
+  // Set the code rather than calling process.exit(), so pending handles unwind
+  // cleanly instead of tripping a libuv assertion on the way out.
+  process.exitCode = 1;
 });

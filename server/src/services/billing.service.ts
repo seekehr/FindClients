@@ -1,9 +1,9 @@
-import { db } from '../db';
-import { nowIso } from '../utils/time';
-import { badRequest, notFound } from '../utils/http';
+import { supabase, unwrap } from '../db/supabase';
+import { badRequest } from '../utils/http';
+import { setPlan } from './user.service';
 import type { Plan } from '../types';
 
-/** Monthly lead-delivery limit per plan (usage cap in the demo). */
+/** Monthly lead-delivery limit per plan. */
 export const PLAN_LIMITS: Record<Plan, number> = {
   free: 50,
   pro: 1000,
@@ -58,18 +58,7 @@ interface SubscriptionRow {
   updated_at: string;
 }
 
-export function getSubscription(userId: string) {
-  const row = db.prepare('SELECT * FROM subscriptions WHERE user_id = ?').get(userId) as
-    | SubscriptionRow
-    | undefined;
-  if (!row) {
-    // Lazily create a free subscription if one is somehow missing.
-    db.prepare(
-      `INSERT INTO subscriptions (user_id, plan, status, leads_limit, updated_at)
-       VALUES (?, 'free', 'active', ?, ?)`,
-    ).run(userId, PLAN_LIMITS.free, nowIso());
-    return getSubscription(userId);
-  }
+function toDTO(row: SubscriptionRow) {
   return {
     plan: row.plan,
     status: row.status,
@@ -79,22 +68,57 @@ export function getSubscription(userId: string) {
   };
 }
 
+export async function getSubscription(userId: string) {
+  const { data } = await supabase
+    .from('subscriptions')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (data) return toDTO(data as SubscriptionRow);
+
+  // Defensive: the sign-up trigger should have created this row already.
+  const created = unwrap(
+    await supabase
+      .from('subscriptions')
+      .upsert(
+        { user_id: userId, plan: 'free', status: 'active', leads_limit: PLAN_LIMITS.free },
+        { onConflict: 'user_id' },
+      )
+      .select()
+      .single(),
+    'creating your subscription',
+  ) as SubscriptionRow;
+  return toDTO(created);
+}
+
 /**
  * Demo-only plan change. A real implementation would create a Stripe checkout
  * session and flip the plan on webhook confirmation — never trust the client.
  */
-export function changePlan(userId: string, plan: Plan) {
+export async function changePlan(userId: string, plan: Plan) {
   if (!PLANS.some((p) => p.id === plan)) throw badRequest(`Unknown plan: ${plan}`);
-  const exists = db.prepare('SELECT 1 FROM subscriptions WHERE user_id = ?').get(userId);
-  if (!exists) throw notFound('Subscription not found');
 
   const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare(
-    `UPDATE subscriptions
-     SET plan = ?, leads_limit = ?, current_period_end = ?, status = 'active', updated_at = ?
-     WHERE user_id = ?`,
-  ).run(plan, PLAN_LIMITS[plan], periodEnd, nowIso(), userId);
-  db.prepare('UPDATE users SET plan = ? WHERE id = ?').run(plan, userId);
 
+  unwrap(
+    await supabase
+      .from('subscriptions')
+      .upsert(
+        {
+          user_id: userId,
+          plan,
+          status: 'active',
+          leads_limit: PLAN_LIMITS[plan],
+          current_period_end: periodEnd,
+        },
+        { onConflict: 'user_id' },
+      )
+      .select()
+      .single(),
+    'changing your plan',
+  );
+
+  await setPlan(userId, plan);
   return getSubscription(userId);
 }

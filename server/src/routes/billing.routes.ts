@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/http';
-import { requireAuth } from '../middleware/auth';
+import { invalidateAuthCache, requireAuth } from '../middleware/auth';
 import { PLANS, changePlan, getSubscription } from '../services/billing.service';
 
 export const billingRouter = Router();
@@ -14,7 +14,7 @@ billingRouter.use(requireAuth);
 billingRouter.get(
   '/subscription',
   asyncHandler(async (req, res) => {
-    res.json({ subscription: getSubscription(req.user!.id) });
+    res.json({ subscription: await getSubscription(req.user!.id) });
   }),
 );
 
@@ -23,6 +23,9 @@ billingRouter.post(
   '/subscribe',
   asyncHandler(async (req, res) => {
     const { plan } = z.object({ plan: z.enum(['free', 'pro', 'agency']) }).parse(req.body);
-    res.json({ subscription: changePlan(req.user!.id, plan) });
+    const subscription = await changePlan(req.user!.id, plan);
+    // The cached auth lookup carries the old plan — drop it.
+    invalidateAuthCache(req.accessToken!);
+    res.json({ subscription });
   }),
 );

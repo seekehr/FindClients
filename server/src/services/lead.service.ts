@@ -1,17 +1,31 @@
-import { db } from '../db';
+import { supabase, unwrap } from '../db/supabase';
 import { cache } from '../cache';
-import { newId, sourceHash } from '../utils/ids';
-import { nowIso, relativeTime } from '../utils/time';
-import type { LeadDTO, LeadRow, LeadStatus, RawLead } from '../types';
+import { sourceHash } from '../utils/ids';
+import { relativeTime } from '../utils/time';
+import { badRequest } from '../utils/http';
+import type { LeadDTO, LeadRow, LeadStatus, Platform, RawLead } from '../types';
 
 const VALID_STATUS: LeadStatus[] = ['new', 'viewed', 'contacted', 'won', 'archived'];
 
-interface RowWithUser extends LeadRow {
-  ul_status: string | null;
-  ul_bookmarked: number | null;
+/** One row as returned by the list_leads / get_lead SQL functions. */
+interface LeadWithUserState {
+  id: string;
+  title: string;
+  platform: Platform;
+  description: string;
+  budget: string | null;
+  timeline: string | null;
+  url: string | null;
+  author: string | null;
+  tags: string[] | null;
+  posted_at: string;
+  created_at: string;
+  status: LeadStatus;
+  bookmarked: boolean;
+  total_count?: number;
 }
 
-function toDTO(row: RowWithUser): LeadDTO {
+function toDTO(row: LeadWithUserState): LeadDTO {
   return {
     id: row.id,
     title: row.title,
@@ -21,22 +35,13 @@ function toDTO(row: RowWithUser): LeadDTO {
     timeline: row.timeline,
     url: row.url,
     author: row.author,
-    tags: safeTags(row.tags),
+    tags: row.tags ?? [],
     postedAt: row.posted_at,
     postedTime: relativeTime(row.posted_at),
-    status: (row.ul_status as LeadStatus) ?? 'new',
-    bookmarked: row.ul_bookmarked === 1,
+    status: row.status ?? 'new',
+    bookmarked: row.bookmarked ?? false,
     createdAt: row.created_at,
   };
-}
-
-function safeTags(json: string): string[] {
-  try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
 }
 
 export interface ListLeadsParams {
@@ -49,56 +54,26 @@ export interface ListLeadsParams {
   limit?: number;
 }
 
-export function listLeads(params: ListLeadsParams) {
+export async function listLeads(params: ListLeadsParams) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(100, Math.max(1, params.limit ?? 20));
-  const offset = (page - 1) * limit;
 
-  const where: string[] = [];
-  // node:sqlite rejects bound keys that don't appear in the statement, so the
-  // shared filter params (used by both queries) are kept separate from the
-  // pagination params (used only by the SELECT).
-  const filterArgs: Record<string, unknown> = { userId: params.userId };
+  const rows = unwrap(
+    await supabase.rpc('list_leads', {
+      p_user_id: params.userId,
+      p_platform: params.platform ?? null,
+      p_status: params.status ?? null,
+      p_q: params.q ?? null,
+      p_bookmarked: params.bookmarked ?? false,
+      p_limit: limit,
+      p_offset: (page - 1) * limit,
+    }),
+    'listing leads',
+  ) as LeadWithUserState[];
 
-  if (params.platform) {
-    where.push('l.platform = $platform');
-    filterArgs.platform = params.platform;
-  }
-  if (params.status) {
-    where.push("COALESCE(ul.status, 'new') = $status");
-    filterArgs.status = params.status;
-  }
-  if (params.bookmarked) {
-    where.push('ul.bookmarked = 1');
-  }
-  if (params.q) {
-    where.push('(l.title LIKE $q OR l.description LIKE $q)');
-    filterArgs.q = `%${params.q}%`;
-  }
-
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-  const rows = db
-    .prepare(
-      `SELECT l.*, ul.status AS ul_status, ul.bookmarked AS ul_bookmarked
-       FROM leads l
-       LEFT JOIN user_leads ul ON ul.lead_id = l.id AND ul.user_id = $userId
-       ${whereSql}
-       ORDER BY l.posted_at DESC
-       LIMIT $limit OFFSET $offset`,
-    )
-    .all({ ...filterArgs, limit, offset }) as RowWithUser[];
-
-  const total = (
-    db
-      .prepare(
-        `SELECT COUNT(*) AS c
-         FROM leads l
-         LEFT JOIN user_leads ul ON ul.lead_id = l.id AND ul.user_id = $userId
-         ${whereSql}`,
-      )
-      .get(filterArgs) as { c: number }
-  ).c;
+  // total_count is a window function over the filtered set, so it is the same
+  // on every row and absent only when the page is empty.
+  const total = rows.length ? Number(rows[0].total_count ?? 0) : 0;
 
   return {
     data: rows.map(toDTO),
@@ -106,39 +81,51 @@ export function listLeads(params: ListLeadsParams) {
   };
 }
 
-export function getLead(userId: string, id: string): LeadDTO | null {
-  const row = db
-    .prepare(
-      `SELECT l.*, ul.status AS ul_status, ul.bookmarked AS ul_bookmarked
-       FROM leads l
-       LEFT JOIN user_leads ul ON ul.lead_id = l.id AND ul.user_id = $userId
-       WHERE l.id = $id`,
-    )
-    .get({ userId, id }) as RowWithUser | undefined;
-  return row ? toDTO(row) : null;
+export async function getLead(userId: string, id: string): Promise<LeadDTO | null> {
+  // A malformed id would make Postgres reject the uuid cast; treat it as absent.
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+
+  const rows = unwrap(
+    await supabase.rpc('get_lead', { p_user_id: userId, p_lead_id: id }),
+    'loading a lead',
+  ) as LeadWithUserState[];
+  return rows.length ? toDTO(rows[0]) : null;
 }
 
-function upsertUserLead(userId: string, leadId: string, patch: { status?: LeadStatus; bookmarked?: boolean }) {
-  const existing = db
-    .prepare('SELECT status, bookmarked FROM user_leads WHERE user_id = ? AND lead_id = ?')
-    .get(userId, leadId) as { status: string; bookmarked: number } | undefined;
+async function upsertUserLead(
+  userId: string,
+  leadId: string,
+  patch: { status?: LeadStatus; bookmarked?: boolean },
+) {
+  const { data: existing } = await supabase
+    .from('user_leads')
+    .select('status, bookmarked')
+    .eq('user_id', userId)
+    .eq('lead_id', leadId)
+    .maybeSingle();
 
-  const status = patch.status ?? (existing?.status as LeadStatus) ?? 'new';
-  const bm = patch.bookmarked === undefined ? existing?.bookmarked ?? 0 : patch.bookmarked ? 1 : 0;
+  const current = existing as { status: LeadStatus; bookmarked: boolean } | null;
+  const status = patch.status ?? current?.status ?? 'new';
+  const bookmarked = patch.bookmarked ?? current?.bookmarked ?? false;
 
-  db.prepare(
-    `INSERT INTO user_leads (user_id, lead_id, bookmarked, status, updated_at)
-     VALUES ($userId, $leadId, $bm, $status, $now)
-     ON CONFLICT(user_id, lead_id) DO UPDATE SET
-       bookmarked = $bm, status = $status, updated_at = $now`,
-  ).run({ userId, leadId, bm, status, now: nowIso() });
+  unwrap(
+    await supabase
+      .from('user_leads')
+      .upsert(
+        { user_id: userId, lead_id: leadId, status, bookmarked, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,lead_id' },
+      )
+      .select('status, bookmarked')
+      .single(),
+    'saving your lead',
+  );
 
   cache.invalidatePrefix(`leads:${userId}`);
-  return { status, bookmarked: bm === 1 };
+  return { status, bookmarked };
 }
 
 export function setLeadStatus(userId: string, leadId: string, status: LeadStatus) {
-  if (!VALID_STATUS.includes(status)) throw new Error(`Invalid status: ${status}`);
+  if (!VALID_STATUS.includes(status)) throw badRequest(`Invalid status: ${status}`);
   return upsertUserLead(userId, leadId, { status });
 }
 
@@ -147,21 +134,28 @@ export function setBookmark(userId: string, leadId: string, bookmarked: boolean)
 }
 
 /**
- * Insert leads discovered by a scraper, skipping duplicates via source_hash.
- * Returns the newly inserted leads (so the caller can fan out notifications).
+ * Insert leads discovered by a scraper, skipping ones already in the pool.
+ *
+ * De-duplication is the source_hash unique index: `ignoreDuplicates` turns the
+ * insert into ON CONFLICT DO NOTHING, and the returned rows are exactly the
+ * ones that were genuinely new — which is what the caller fans notifications
+ * out over.
  */
-export function insertLeads(raw: RawLead[]): LeadDTO[] {
-  const inserted: LeadRow[] = [];
-  const insert = db.prepare(
-    `INSERT INTO leads (id, title, platform, description, budget, timeline, url, author, tags, source_hash, posted_at, created_at)
-     VALUES ($id, $title, $platform, $description, $budget, $timeline, $url, $author, $tags, $hash, $postedAt, $createdAt)
-     ON CONFLICT(source_hash) DO NOTHING`,
-  );
+export async function insertLeads(raw: RawLead[]): Promise<LeadDTO[]> {
+  if (!raw.length) return [];
+
+  const nowIso = new Date().toISOString();
+  const seen = new Set<string>();
+  const rows: Omit<LeadRow, 'id' | 'created_at'>[] = [];
 
   for (const r of raw) {
-    const postedAt = r.postedAt ? new Date(r.postedAt).toISOString() : nowIso();
-    const row: LeadRow = {
-      id: newId('lead'),
+    const hash = sourceHash(r.platform, r.url, r.title);
+    // A single scrape run can surface the same post twice; Postgres rejects a
+    // statement that conflicts with itself, so collapse duplicates up front.
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+
+    rows.push({
       title: r.title,
       platform: r.platform,
       description: r.description ?? '',
@@ -169,27 +163,19 @@ export function insertLeads(raw: RawLead[]): LeadDTO[] {
       timeline: r.timeline ?? null,
       url: r.url ?? null,
       author: r.author ?? null,
-      tags: JSON.stringify(r.tags ?? []),
-      source_hash: sourceHash(r.platform, r.url, r.title),
-      posted_at: postedAt,
-      created_at: nowIso(),
-    };
-    const res = insert.run({
-      id: row.id,
-      title: row.title,
-      platform: row.platform,
-      description: row.description,
-      budget: row.budget,
-      timeline: row.timeline,
-      url: row.url,
-      author: row.author,
-      tags: row.tags,
-      hash: row.source_hash,
-      postedAt: row.posted_at,
-      createdAt: row.created_at,
+      tags: r.tags ?? [],
+      source_hash: hash,
+      posted_at: r.postedAt ? new Date(r.postedAt).toISOString() : nowIso,
     });
-    if (res.changes > 0) inserted.push(row);
   }
+
+  const inserted = unwrap(
+    await supabase
+      .from('leads')
+      .upsert(rows, { onConflict: 'source_hash', ignoreDuplicates: true })
+      .select(),
+    'saving discovered leads',
+  ) as LeadRow[];
 
   if (inserted.length) cache.clear();
 
@@ -202,7 +188,7 @@ export function insertLeads(raw: RawLead[]): LeadDTO[] {
     timeline: row.timeline,
     url: row.url,
     author: row.author,
-    tags: safeTags(row.tags),
+    tags: row.tags ?? [],
     postedAt: row.posted_at,
     postedTime: relativeTime(row.posted_at),
     status: 'new',
@@ -211,6 +197,9 @@ export function insertLeads(raw: RawLead[]): LeadDTO[] {
   }));
 }
 
-export function totalLeadCount(): number {
-  return (db.prepare('SELECT COUNT(*) AS c FROM leads').get() as { c: number }).c;
+export async function totalLeadCount(): Promise<number> {
+  const { count, error } = await supabase
+    .from('leads')
+    .select('id', { count: 'exact', head: true });
+  return error ? 0 : (count ?? 0);
 }

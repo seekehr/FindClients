@@ -17,6 +17,6 @@ bookmarksRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const { page, limit } = query.parse(req.query);
-    res.json(listLeads({ userId: req.user!.id, bookmarked: true, page, limit }));
+    res.json(await listLeads({ userId: req.user!.id, bookmarked: true, page, limit }));
   }),
 );

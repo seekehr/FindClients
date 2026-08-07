@@ -5,21 +5,20 @@
  * the `scrapers` array on a schedule. Implement each platform in its own file
  * (see ./upwork, ./twitter, ./discord) and add it here.
  *
- * Anything you export here overrides the server's built-in *demo* scraper for
- * that platform. Until a scraper returns real leads, the demo scraper keeps the
- * pipeline alive (toggle with USE_DEMO_SCRAPERS in server/.env).
+ * Each run is driven by one user's connected session cookies and their saved
+ * configuration — see `ScrapeContext` in ../server/src/scrapers/types.ts.
  */
 import type { Scraper } from '../server/src/scrapers/types';
 
 import { upworkScraper } from './upwork';
 import { twitterScraper } from './twitter';
-import { discordScraper } from './discord';
-
 export const scrapers: Scraper[] = [
-  // Uncomment / add scrapers here once you've implemented them.
-  // upworkScraper,
-  // twitterScraper,
-  // discordScraper,
+  // Implemented — real Playwright scrapers.
+  //   Twitter/X: needs X_AUTH_TOKEN (see scrapper/twitter).
+  //   Upwork:    needs Chrome on --remote-debugging-port=9222, logged into Upwork
+  //              (see scrapper/upwork). Both need `npx playwright install chromium`.
+  twitterScraper,
+  upworkScraper,
 ];
 
-export { upworkScraper, twitterScraper, discordScraper };
+export { upworkScraper, twitterScraper };

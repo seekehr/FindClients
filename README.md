@@ -6,22 +6,43 @@ This is a SaaS that basically allows you to monitor all leads through scrapping 
 
 | Folder                       | What it is                                                                 |
 | ---------------------------- | -------------------------------------------------------------------------- |
-| [`website/`](website)        | Next.js frontend (dashboard, leads, analytics, settings).                  |
-| [`server/`](server)          | REST API + auth + scheduler + notifications + billing. See [server/README.md](server/README.md). |
-| [`scrapper/`](scrapper)      | Platform scrapers — **placeholders you implement**. See [scrapper/README.md](scrapper/README.md). |
+| [`website/`](website)        | Next.js frontend (dashboard, leads, connections, analytics, settings).     |
+| [`server/`](server)          | REST API + auth + scheduler + notifications + billing + credential store. See [server/README.md](server/README.md). |
+| [`scrapper/`](scrapper)      | Real platform scrapers (Twitter/X, Upwork) + a Discord placeholder. See [scrapper/README.md](scrapper/README.md). |
 
-### Quick start (backend)
+| [`supabase/`](supabase)      | The database schema, as SQL you run in your Supabase project.               |
+
+### Quick start
+
+**1. Configure.** Copy [`.env.example`](.env.example) to `.env` in this folder
+and fill in `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` (Supabase dashboard →
+Project Settings → API). This one file is read by the server, the scrapers, and
+the website — there is no per-workspace `.env` to keep in sync.
+
+**2. Create the schema.** In the Supabase dashboard open **SQL Editor → New
+query**, paste all of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql),
+and run it. It is idempotent, so re-running it is safe.
+
+**3. Run it.**
 
 ```bash
-cd server
-npm install
-npm run dev        # http://localhost:4000  (demo login: demo@findclients.dev / demo12345)
+# Backend + scrapers
+cd server && npm install && npm run dev            # http://localhost:4000
+cd scrapper && npm install && npx playwright install chromium
+
+# Frontend (new terminal)
+cd website && npm install && npm run dev           # http://localhost:3000
 ```
 
-The server runs as a **zero-config demo**: it uses Node's built-in SQLite (no
-database server, no native build), seeds sample data on first boot, and runs
-built-in *demo scrapers* on a schedule so the whole pipeline is visibly alive
-before the real scrapers in `scrapper/` are implemented.
+Then open http://localhost:3000, **sign up**, set your keywords and platforms on
+the **Config** page, and go to **Connections** to link a platform (paste your
+session cookie). The scheduler scrapes on your behalf using your saved config,
+and new leads appear on the Leads page.
+
+Data lives in **Supabase Postgres**; identity is **Supabase Auth**. Session
+cookies are stored **encrypted at rest** (AES-256-GCM) and never returned by the
+API. Scraping real platforms may violate their Terms of Service and can put the
+connected account at risk — see the notes in [server/README.md](server/README.md).
 
 ## Components
 
@@ -39,12 +60,13 @@ The web application used by customers to:
 ---
 
 ### 🔐 Authentication Service
-Responsible for:
+**Supabase Auth**, brokered by the API server (the browser never holds the
+service key). Responsible for:
 
 - User registration
 - Login
-- Password resets
-- Session/JWT management
+- Password changes
+- Access/refresh token management
 - Email verification
 
 ---
@@ -121,15 +143,16 @@ Responsibilities:
 ---
 
 ### 🗄️ Database
-Stores:
+**Supabase Postgres.** Schema in [`supabase/migrations/`](supabase/migrations).
+Row Level Security is enabled on every table. Stores:
 
-- Users
-- Leads
-- Saved leads
-- Scraping history
+- Users (`profiles`, mirroring `auth.users`)
+- Per-user configuration (`user_config` — what the Config page edits)
+- Leads (`leads`) and per-user lead state (`user_leads`)
+- Connected platform sessions (`credentials`, encrypted)
+- Scraping history (`scrape_runs`)
 - Notifications
-- Billing data
-- Settings
+- Billing data (`subscriptions`)
 
 ---
 

@@ -2,85 +2,65 @@
 
 import DashboardLayout from '@/components/dashboard-layout'
 import LeadCard from '@/components/lead-card'
-import { useState } from 'react'
-import { Search, Filter } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Search, Loader2, Inbox } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import Link from 'next/link'
+import { leadsApi, type Lead } from '@/lib/api'
 
-const mockLeads = [
-  {
-    id: '1',
-    title: 'E-commerce Website Redesign',
-    platform: 'upwork' as const,
-    description: 'Looking for a talented web developer to redesign our e-commerce website. We need modern UI/UX with payment integration.',
-    budget: '$5,000 - $10,000',
-    timeline: '3-4 weeks',
-    postedTime: '2 hours ago',
-    tags: ['Web Design', 'React', 'Payment Integration'],
-  },
-  {
-    id: '2',
-    title: 'Mobile App Development',
-    platform: 'upwork' as const,
-    description: 'We need a React Native developer to build a cross-platform mobile app for our startup. Must have experience with APIs.',
-    budget: '$8,000 - $15,000',
-    timeline: '6-8 weeks',
-    postedTime: '4 hours ago',
-    tags: ['React Native', 'Mobile', 'Backend Integration'],
-  },
-  {
-    id: '3',
-    title: 'Social Media Campaign',
-    platform: 'twitter' as const,
-    description: 'Social media expert needed! Looking for someone to manage our Twitter/X and LinkedIn accounts. Need daily posts and engagement.',
-    budget: '$2,000/month',
-    timeline: 'Ongoing',
-    postedTime: '1 hour ago',
-    tags: ['Social Media', 'Content', 'Engagement'],
-  },
-  {
-    id: '4',
-    title: 'Discord Bot Development',
-    platform: 'discord' as const,
-    description: 'Need a Discord bot developer to create a custom bot with moderation, welcome messages, and role management features.',
-    budget: '$1,500 - $3,000',
-    timeline: '2 weeks',
-    postedTime: '3 hours ago',
-    tags: ['Discord', 'Python', 'Bot Development'],
-    bookmarked: true,
-  },
-  {
-    id: '5',
-    title: 'UI/UX Design Services',
-    platform: 'upwork' as const,
-    description: 'Looking for an experienced UI/UX designer to design wireframes and mockups for our new SaaS product. Need 5-10 screens.',
-    budget: '$3,000 - $5,000',
-    timeline: '3 weeks',
-    postedTime: '5 hours ago',
-    tags: ['UI/UX', 'Figma', 'Design System'],
-  },
-  {
-    id: '6',
-    title: 'API Development',
-    platform: 'twitter' as const,
-    description: 'Senior backend developer needed to build RESTful APIs for our platform. Must have experience with Node.js and MongoDB.',
-    budget: '$10,000 - $20,000',
-    timeline: '8-10 weeks',
-    postedTime: '6 hours ago',
-    tags: ['Node.js', 'MongoDB', 'API'],
-  },
+const PLATFORMS = [
+  { id: null, label: 'All' },
+  { id: 'upwork', label: 'Upwork' },
+  { id: 'twitter', label: 'Twitter' },
+  { id: 'discord', label: 'Discord' },
 ]
 
 export default function LeadsPage() {
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const filteredLeads = mockLeads.filter(lead => {
-    const matchesPlatform = !selectedPlatform || lead.platform === selectedPlatform
-    const matchesSearch = !searchTerm || 
-      lead.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.description.toLowerCase().includes(searchTerm.toLowerCase())
-    return matchesPlatform && matchesSearch
-  })
+  // Debounce the search box.
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(searchTerm), 300)
+    return () => clearTimeout(t)
+  }, [searchTerm])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await leadsApi.list({
+        platform: selectedPlatform ?? undefined,
+        q: debounced || undefined,
+        limit: 60,
+      })
+      setLeads(res.data)
+    } catch {
+      setError('Could not load leads.')
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedPlatform, debounced])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function toggleBookmark(lead: Lead) {
+    // Optimistic update.
+    setLeads((prev) =>
+      prev.map((l) => (l.id === lead.id ? { ...l, bookmarked: !l.bookmarked } : l)),
+    )
+    try {
+      await leadsApi.bookmark(lead.id, !lead.bookmarked)
+    } catch {
+      load() // revert on failure
+    }
+  }
 
   return (
     <DashboardLayout>
@@ -104,55 +84,58 @@ export default function LeadsPage() {
             />
           </div>
 
-          <div className="flex gap-2">
-            <Button 
-              variant={selectedPlatform === null ? "default" : "outline"}
-              onClick={() => setSelectedPlatform(null)}
-              size="sm"
-            >
-              All
-            </Button>
-            <Button 
-              variant={selectedPlatform === 'upwork' ? "default" : "outline"}
-              onClick={() => setSelectedPlatform('upwork')}
-              size="sm"
-            >
-              Upwork
-            </Button>
-            <Button 
-              variant={selectedPlatform === 'twitter' ? "default" : "outline"}
-              onClick={() => setSelectedPlatform('twitter')}
-              size="sm"
-            >
-              Twitter
-            </Button>
-            <Button 
-              variant={selectedPlatform === 'discord' ? "default" : "outline"}
-              onClick={() => setSelectedPlatform('discord')}
-              size="sm"
-            >
-              Discord
-            </Button>
-            <Button variant="outline" size="sm" className="gap-2">
-              <Filter className="w-4 h-4" />
-              More Filters
-            </Button>
+          <div className="flex gap-2 flex-wrap">
+            {PLATFORMS.map((p) => (
+              <Button
+                key={p.label}
+                variant={selectedPlatform === p.id ? 'default' : 'outline'}
+                onClick={() => setSelectedPlatform(p.id)}
+                size="sm"
+              >
+                {p.label}
+              </Button>
+            ))}
           </div>
         </div>
 
-        {/* Leads Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredLeads.map(lead => (
-            <LeadCard key={lead.id} {...lead} />
-          ))}
-        </div>
-
-        {filteredLeads.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-foreground/60 mb-4">No leads found matching your criteria.</p>
-            <Button variant="outline" onClick={() => { setSearchTerm(''); setSelectedPlatform(null); }}>
-              Clear filters
-            </Button>
+        {/* States */}
+        {loading ? (
+          <div className="flex items-center gap-2 text-foreground/50 py-16 justify-center">
+            <Loader2 className="w-5 h-5 animate-spin" /> Loading leads…
+          </div>
+        ) : error ? (
+          <div className="text-center py-12 text-foreground/60">{error}</div>
+        ) : leads.length === 0 ? (
+          <div className="text-center py-16 max-w-md mx-auto">
+            <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mx-auto mb-4">
+              <Inbox className="w-7 h-7 text-foreground/40" />
+            </div>
+            <p className="font-semibold mb-1">No leads yet</p>
+            <p className="text-foreground/60 text-sm mb-4">
+              Connect an account and run a scrape to start discovering opportunities.
+            </p>
+            <Link href="/dashboard/connections">
+              <Button>Connect an account</Button>
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {leads.map((lead) => (
+              <LeadCard
+                key={lead.id}
+                id={lead.id}
+                title={lead.title}
+                platform={lead.platform as 'upwork' | 'twitter' | 'discord'}
+                description={lead.description}
+                url={lead.url ?? undefined}
+                budget={lead.budget ?? undefined}
+                timeline={lead.timeline ?? undefined}
+                postedTime={lead.postedTime}
+                tags={lead.tags}
+                bookmarked={lead.bookmarked}
+                onToggleBookmark={() => toggleBookmark(lead)}
+              />
+            ))}
           </div>
         )}
       </div>

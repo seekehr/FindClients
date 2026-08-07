@@ -11,14 +11,14 @@ notificationsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const { unread } = z.object({ unread: z.coerce.boolean().optional() }).parse(req.query);
-    res.json(listNotifications(req.user!.id, unread ?? false));
+    res.json(await listNotifications(req.user!.id, unread ?? false));
   }),
 );
 
 notificationsRouter.post(
   '/read-all',
   asyncHandler(async (req, res) => {
-    markAllRead(req.user!.id);
+    await markAllRead(req.user!.id);
     res.json({ ok: true });
   }),
 );
@@ -26,7 +26,7 @@ notificationsRouter.post(
 notificationsRouter.post(
   '/:id/read',
   asyncHandler(async (req, res) => {
-    markRead(req.user!.id, req.params.id);
+    await markRead(req.user!.id, req.params.id);
     res.json({ ok: true });
   }),
 );
