@@ -1,24 +1,23 @@
 import type { Platform, RawLead, SessionCookie, UserConfig } from '../types';
 
+// Re-exported so the scrapper workspace has one import site for these.
 export type { Platform, RawLead, SessionCookie, UserConfig };
 
 /**
  * Context handed to every scraper run. Scraping is per-user: each run is driven
- * by one connected user's session cookies (pasted from their browser) and that
- * user's own saved configuration.
+ * by one connected user's session cookies (pasted from their browser).
+ *
+ * Note what is deliberately *absent*: the user's configuration. Scrapers fetch
+ * that themselves from the server's `/api/internal` endpoint (see
+ * `scrapper/lib/api.ts`), so they depend on an HTTP contract rather than on
+ * being handed state by their caller — which is what lets them run
+ * out-of-process without changing.
  */
 export interface ScrapeContext {
   /** The user this run is scraping on behalf of. */
   userId: string;
   /** The user's decrypted session cookies for this platform, ready to inject. */
   cookies: SessionCookie[];
-  /**
-   * The user's saved configuration (`public.user_config`), as edited on the
-   * app's Config page. This is the *only* source for search settings —
-   * keywords, thresholds and limits are per-user and are not read from the
-   * environment, so a change in the UI takes effect on the next cycle.
-   */
-  config: UserConfig;
   /** Only return leads posted at/after this time, when the source supports it. */
   since?: Date;
   /** Soft cap on how many leads to return in one run. */

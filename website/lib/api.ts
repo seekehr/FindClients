@@ -244,6 +244,8 @@ export const configApi = {
     api<{ config: UserConfig }>('/config', { method: 'PUT', body: patch }),
 }
 
+export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived'
+
 export const leadsApi = {
   list: (params: Record<string, string | number | undefined> = {}) => {
     const q = new URLSearchParams()
@@ -251,8 +253,20 @@ export const leadsApi = {
     const qs = q.toString()
     return api<Paginated<Lead>>(`/leads${qs ? `?${qs}` : ''}`)
   },
+  get: (id: string) => api<{ lead: Lead }>(`/leads/${id}`),
+  setStatus: (id: string, status: LeadStatus) =>
+    api<{ ok: boolean; status: LeadStatus }>(`/leads/${id}`, { method: 'PATCH', body: { status } }),
   bookmark: (id: string, on: boolean) =>
     api(`/leads/${id}/bookmark`, { method: on ? 'PUT' : 'DELETE' }),
+}
+
+export const bookmarksApi = {
+  list: (params: { page?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) if (v !== undefined) q.set(k, String(v))
+    const qs = q.toString()
+    return api<Paginated<Lead>>(`/bookmarks${qs ? `?${qs}` : ''}`)
+  },
 }
 
 export const credentialsApi = {
@@ -275,6 +289,7 @@ export const analyticsApi = {
     }>('/analytics/overview'),
   platforms: () =>
     api<{ data: { platform: string; count: number; percentage: number }[] }>('/analytics/platforms'),
+  trend: (days = 14) => api<{ data: { date: string; count: number }[] }>(`/analytics/trend?days=${days}`),
   scrapeRuns: () => api<{ data: ScrapeRun[] }>('/analytics/scrape-runs'),
 }
 

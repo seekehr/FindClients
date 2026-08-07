@@ -97,6 +97,17 @@ All responses are JSON. Protected routes need `Authorization: Bearer <token>`.
 | PUT    | `/api/credentials/:platform`| `{ cookies }` — store/replace the session (encrypted)    |
 | DELETE | `/api/credentials/:platform`| Disconnect                                               |
 
+### Internal (service-to-service)
+Requires the `x-internal-key: $INTERNAL_API_KEY` header — **not** a user token.
+This is how the scrapers in `../scrapper` fetch what they need without touching
+the database. Unset `INTERNAL_API_KEY` and these routes return 503.
+
+| Method | Path                                        | Notes                                        |
+| ------ | ------------------------------------------- | -------------------------------------------- |
+| GET    | `/api/internal/users/:userId/config`        | That user's `user_config` row                |
+| GET    | `/api/internal/platforms/:platform/connections` | Connected users + **decrypted cookies** + config |
+| GET    | `/api/internal/platforms`                   | Platforms that support a connection          |
+
 ### Config · Notifications · Billing · Scrape
 - `GET|PUT /api/config` — the user's own configuration (`public.user_config`)
 - `GET /api/notifications` · `POST /api/notifications/:id/read` · `POST /api/notifications/read-all`
@@ -120,6 +131,7 @@ All variables live in the global [`../.env`](../.env.example). Highlights:
 | `ENCRYPTION_KEY`    | dev key                     | Encrypts stored session cookies. **Change in production** |
 | `SCHEDULER_ENABLED` | `true`                      | Background scraping on/off           |
 | `SCRAPE_CRON`       | `*/2 * * * *`               | Scrape cadence                       |
+| `INTERNAL_API_KEY`  | — (unset = disabled)        | Shared secret for `/api/internal`    |
 
 Scraper keywords, thresholds, limits, feed URLs and Discord webhooks are **not**
 environment variables — they are per-user and live in `public.user_config`,

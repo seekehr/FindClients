@@ -67,22 +67,69 @@ Every scraper implements the `Scraper` interface from the server:
 
 ```ts
 import type { Scraper, RawLead, ScrapeContext } from '../server/src/scrapers/types';
+import { getUserConfig } from '../lib/api';
 
 export const myScraper: Scraper = {
   platform: 'upwork',           // 'upwork' | 'twitter' | 'discord' | 'reddit' | 'linkedin'
   name: 'Upwork',
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> {
+    const config = await getUserConfig(ctx.userId);   // ← over HTTP, see below
     // fetch → parse → return. Returning [] is fine.
     return [];
   },
 };
 ```
 
-`ctx` carries the running user's identity, their decrypted platform cookies, and
-`ctx.config` — their saved configuration from the app's **Config** page. Env vars
-are only *defaults*: pass `ctx.config` values into your `loadXConfig({ … })` call
-so a change in the UI takes effect on the next cycle, the way `twitter/index.ts`
-and `upwork/index.ts` already do.
+`ctx` carries only what the caller can't be expected to fetch: the running
+user's id, their decrypted platform cookies, a soft `limit`, and `log`.
+
+## Getting the user's config
+
+Scrapers never touch the database. They ask the **server** for the running
+user's configuration over HTTP, through the client in
+[`lib/api.ts`](./lib/api.ts):
+
+```ts
+import { getUserConfig, getPlatformConnections } from '../lib/api';
+
+const config = await getUserConfig(ctx.userId);
+config.keywords              // from the app's Config page
+config.twitterMinLikes       // …not from an env var
+```
+
+Under the hood that is `GET /api/internal/users/:userId/config`, authenticated
+with the `INTERNAL_API_KEY` shared secret from the root `.env`. Responses are
+cached for 30s so a scrape cycle doesn't re-fetch per platform, and a change on
+the Config page still lands on the next run.
+
+Two variables in the root `.env` drive it:
+
+| Var                | Purpose                                                  |
+| ------------------ | -------------------------------------------------------- |
+| `INTERNAL_API_URL` | Where the server is, e.g. `http://localhost:4000/api`    |
+| `INTERNAL_API_KEY` | Shared secret; the server rejects the call without it     |
+
+`lib/env.ts` reads the root `.env` itself, so this works whether the scrapers
+are loaded in-process by the server or run standalone.
+
+### Running standalone
+
+Because config and sessions both come over HTTP, a scraper needs nothing from
+the server process to run:
+
+```ts
+import { getPlatformConnections } from './lib/api';
+import { twitterScraper } from './twitter';
+
+for (const conn of await getPlatformConnections('twitter')) {
+  const leads = await twitterScraper.scrape({
+    userId: conn.userId,
+    cookies: conn.cookies,
+    limit: conn.config.leadsPerRun,
+    log: console.log,
+  });
+}
+```
 
 A `RawLead` looks like:
 

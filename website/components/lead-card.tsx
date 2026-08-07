@@ -7,22 +7,24 @@ import Link from 'next/link'
 interface LeadCardProps {
   id: string
   title: string
-  platform: 'upwork' | 'twitter' | 'discord'
+  /** Any platform string the API returns; unknown ones fall back to a neutral badge. */
+  platform: string
   description: string
-  url?: string
-  budget?: string
-  timeline?: string
+  url?: string | null
+  budget?: string | null
+  timeline?: string | null
   bookmarked?: boolean
   postedTime: string
-  clientImage?: string
   tags: string[]
   onToggleBookmark?: () => void
 }
 
-const platformColors = {
+const platformColors: Record<string, { bg: string; text: string; label: string; icon: string }> = {
   upwork: { bg: 'bg-blue-500/10', text: 'text-blue-600', label: 'Upwork', icon: '💼' },
   twitter: { bg: 'bg-blue-400/10', text: 'text-blue-500', label: 'Twitter', icon: '𝕏' },
   discord: { bg: 'bg-purple-500/10', text: 'text-purple-600', label: 'Discord', icon: '🎮' },
+  reddit: { bg: 'bg-orange-500/10', text: 'text-orange-600', label: 'Reddit', icon: '👽' },
+  linkedin: { bg: 'bg-sky-600/10', text: 'text-sky-700', label: 'LinkedIn', icon: '💼' },
 }
 
 export default function LeadCard({
@@ -38,7 +40,12 @@ export default function LeadCard({
   tags,
   onToggleBookmark,
 }: LeadCardProps) {
-  const platformInfo = platformColors[platform] ?? platformColors.upwork
+  const platformInfo = platformColors[platform] ?? {
+    bg: 'bg-secondary',
+    text: 'text-foreground/70',
+    label: platform,
+    icon: '🔎',
+  }
 
   return (
     <div className="bg-card rounded-xl border border-border/40 hover:border-border/80 hover:shadow-md transition overflow-hidden flex flex-col h-full">

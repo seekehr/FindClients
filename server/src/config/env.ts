@@ -57,6 +57,13 @@ export const env = {
   // Key for encrypting stored session cookies at rest. CHANGE IN PRODUCTION.
   encryptionKey: process.env.ENCRYPTION_KEY ?? 'dev-insecure-encryption-key-change-me',
 
+  /**
+   * Shared secret for the service-to-service API under /api/internal, which the
+   * scrapers call to fetch the config and session they should run with. Empty
+   * disables those routes entirely rather than leaving them unauthenticated.
+   */
+  internalApiKey: process.env.INTERNAL_API_KEY ?? '',
+
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, true),
   scrapeCron: process.env.SCRAPE_CRON ?? '*/2 * * * *',
 

@@ -1,6 +1,7 @@
 import { chromium, type ElementHandle, type Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
 import { loadUpworkConfig, type UpworkConfig } from './config';
+import { getUserConfig } from '../lib/api';
 
 /**
  * Upwork scraper — a TypeScript translation of a Playwright reference
@@ -244,18 +245,19 @@ export const upworkScraper: Scraper = {
   name: 'Upwork',
 
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> {
-    // Search settings come from this user's saved config; only the browser
-    // runtime comes from the environment.
-    const cfg = loadUpworkConfig({
-      jobsUrl: ctx.config.upworkJobsUrl,
-      maxAgeHours: ctx.config.upworkMaxAgeHours,
-      fetchDetails: ctx.config.upworkFetchDetails,
-    });
-
     if (!ctx.cookies.length) {
       ctx.log('no Upwork session cookies for this user — skipping');
       return [];
     }
+
+    // Ask the server for this user's saved config. Search settings come from
+    // there; only the browser runtime comes from the environment.
+    const userConfig = await getUserConfig(ctx.userId);
+    const cfg = loadUpworkConfig({
+      jobsUrl: userConfig.upworkJobsUrl,
+      maxAgeHours: userConfig.upworkMaxAgeHours,
+      fetchDetails: userConfig.upworkFetchDetails,
+    });
 
     const browser = await chromium.launch({ headless: cfg.headless });
 

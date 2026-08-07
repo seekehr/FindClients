@@ -40,10 +40,11 @@ async function runOne(
   const runId = (run as { id: string } | null)?.id;
 
   try {
+    // The scraper fetches this user's config itself over /api/internal — the
+    // runner only decides *whether* to run and caps how much comes back.
     const raw = await scraper.scrape({
       userId,
       cookies,
-      config,
       limit: config.leadsPerRun,
       log: (msg) => logger.debug(`[${scraper.name}:${userId}] ${msg}`),
     });

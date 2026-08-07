@@ -14,6 +14,7 @@ import { notificationsRouter } from './routes/notifications.routes';
 import { billingRouter } from './routes/billing.routes';
 import { scrapeRouter } from './routes/scrape.routes';
 import { credentialsRouter } from './routes/credentials.routes';
+import { internalRouter } from './routes/internal.routes';
 import { totalLeadCount } from './services/lead.service';
 
 export function createApp() {
@@ -53,6 +54,9 @@ export function createApp() {
   app.use('/api/billing', billingRouter);
   app.use('/api/scrape', scrapeRouter);
   app.use('/api/credentials', credentialsRouter);
+
+  // Service-to-service (scrapers). Shared-secret auth, never a user token.
+  app.use('/api/internal', internalRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
