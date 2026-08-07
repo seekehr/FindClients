@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { credentialsApi, scrapeApi, ApiError, type Connection } from '@/lib/api'
+import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
 
 interface PlatformMeta {
   id: string
@@ -34,6 +35,7 @@ const PLATFORMS: PlatformMeta[] = [
     steps: [
       'Open x.com in your browser and make sure you are logged in.',
       'Press F12 to open DevTools, then go to the Network tab.',
+      'Filter the requests by "x.com" in the URL column.',
       'Click any request to x.com, open Headers → Request Headers.',
       'Copy the entire value of the "Cookie:" header and paste it below.',
     ],
@@ -64,6 +66,9 @@ export default function ConnectionsPage() {
   const [formError, setFormError] = useState('')
   const [scraping, setScraping] = useState(false)
   const [notice, setNotice] = useState('')
+
+  // Reflect a run started anywhere (this button, or the scheduler).
+  const scrape = useScrapeStatus(() => refresh())
 
   async function refresh() {
     try {
@@ -112,8 +117,9 @@ export default function ConnectionsPage() {
     setScraping(true)
     setNotice('')
     try {
+      // Returns as soon as the run is queued; useScrapeStatus tracks it.
       await scrapeApi.run()
-      setNotice('Scrape started — new leads will appear on your Leads page shortly.')
+      setNotice('Scrape started — new leads will appear on your Leads page as they are found.')
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : 'Could not start scrape')
     } finally {
@@ -132,9 +138,18 @@ export default function ConnectionsPage() {
               Connect your accounts so FindClients can monitor leads on your behalf.
             </p>
           </div>
-          <Button variant="outline" onClick={runScrape} disabled={scraping} className="gap-2 shrink-0">
-            {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Scrape now
+          <Button
+            variant="outline"
+            onClick={runScrape}
+            disabled={scraping || scrape.running}
+            className="gap-2 shrink-0"
+          >
+            {scraping || scrape.running ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            {scrape.running ? `Scraping ${describePlatforms(scrape.runs)}…` : 'Scrape now'}
           </Button>
         </div>
 

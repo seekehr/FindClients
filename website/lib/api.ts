@@ -293,6 +293,13 @@ export const analyticsApi = {
   scrapeRuns: () => api<{ data: ScrapeRun[] }>('/analytics/scrape-runs'),
 }
 
+export interface ScrapeStatus {
+  running: boolean
+  runs: { id: string; platform: string; startedAt: string }[]
+  lastFinishedAt: string | null
+}
+
 export const scrapeApi = {
   run: () => api<{ ok: boolean; summary: unknown }>('/scrape/run', { method: 'POST' }),
+  status: () => api<ScrapeStatus>('/scrape/status'),
 }

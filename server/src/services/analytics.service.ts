@@ -63,6 +63,52 @@ export async function leadsTrend(days = 14) {
 }
 
 /**
+ * A run left in 'running' for longer than this is assumed dead — the process
+ * was killed mid-scrape and never got to close its row. Treating it as active
+ * forever would pin a "scraping…" spinner in the UI permanently.
+ */
+const STALE_RUN_MS = 30 * 60 * 1000;
+
+/**
+ * Whether a scrape is currently in flight for this user, so the UI can say
+ * "finding leads" instead of "no leads yet".
+ */
+export async function scrapeStatus(userId: string) {
+  const rows = unwrap(
+    await supabase
+      .from('scrape_runs')
+      .select('id, platform, status, started_at, finished_at')
+      .eq('user_id', userId)
+      .order('started_at', { ascending: false })
+      .limit(20),
+    'checking scrape status',
+  ) as {
+    id: string;
+    platform: string;
+    status: string;
+    started_at: string;
+    finished_at: string | null;
+  }[];
+
+  const cutoff = Date.now() - STALE_RUN_MS;
+  const active = rows.filter(
+    (r) => r.status === 'running' && new Date(r.started_at).getTime() > cutoff,
+  );
+
+  const lastFinished = rows.find((r) => r.finished_at);
+
+  return {
+    running: active.length > 0,
+    runs: active.map((r) => ({
+      id: r.id,
+      platform: r.platform,
+      startedAt: r.started_at,
+    })),
+    lastFinishedAt: lastFinished?.finished_at ?? null,
+  };
+}
+
+/**
  * Recent scraper runs (scraping history). Scoped to one user — runs are
  * per-connected-account, so another user's runs are none of your business.
  */

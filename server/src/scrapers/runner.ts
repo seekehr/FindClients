@@ -9,7 +9,7 @@ import {
   markCredentialUsed,
 } from '../services/credential.service';
 import { loadUserScrapers } from './loader';
-import type { LeadDTO, SessionCookie, UserConfig } from '../types';
+import type { LeadDTO, RawLead, SessionCookie, UserConfig } from '../types';
 import type { Scraper } from './types';
 
 let running = false;
@@ -32,26 +32,49 @@ async function runOne(
   cookies: SessionCookie[],
   config: UserConfig,
 ): Promise<{ inserted: LeadDTO[]; found: number; error?: string }> {
-  const { data: run } = await supabase
+  // Open the audit row first so a run is visible while it is still going.
+  // A failure here must not stop the scrape, but it must not be silent either —
+  // without the row there is no record that the run ever happened.
+  const { data: run, error: runError } = await supabase
     .from('scrape_runs')
     .insert({ user_id: userId, platform: scraper.platform, status: 'running' })
     .select('id')
     .single();
+
+  if (runError) {
+    logger.error(
+      `[${scraper.name}] could not record a scrape run for ${userId}: ${runError.message}`,
+      runError.details ?? runError.hint ?? '',
+    );
+  }
   const runId = (run as { id: string } | null)?.id;
 
   try {
-    // The scraper fetches this user's config itself over /api/internal — the
-    // runner only decides *whether* to run and caps how much comes back.
-    const raw = await scraper.scrape({
-      userId,
-      cookies,
-      limit: config.leadsPerRun,
-      log: (msg) => logger.debug(`[${scraper.name}:${userId}] ${msg}`),
-    });
+    // Scraping and persisting fail for completely different reasons, and only
+    // the first says anything about the user's session. Keeping them in
+    // separate try blocks is what stops a database problem from marking a
+    // perfectly good connection as broken.
+    let raw: RawLead[];
+    try {
+      // The scraper fetches this user's config itself over /api/internal — the
+      // runner only decides *whether* to run and caps how much comes back.
+      raw = await scraper.scrape({
+        userId,
+        cookies,
+        limit: config.leadsPerRun,
+        log: (msg) => logger.debug(`[${scraper.name}:${userId}] ${msg}`),
+      });
+    } catch (err) {
+      // The scrape itself failed — a stale session, a challenge, a timeout.
+      // This one *is* about the credential.
+      await markCredentialError(userId, scraper.platform, (err as Error).message);
+      throw err;
+    }
+
     const inserted = await insertLeads(raw);
 
     if (runId) {
-      await supabase
+      const { error } = await supabase
         .from('scrape_runs')
         .update({
           status: 'success',
@@ -60,6 +83,7 @@ async function runOne(
           finished_at: new Date().toISOString(),
         })
         .eq('id', runId);
+      if (error) logger.error(`Could not close scrape run ${runId}: ${error.message}`);
     }
     await markCredentialUsed(userId, scraper.platform);
     logger.info(
@@ -69,12 +93,14 @@ async function runOne(
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
     if (runId) {
-      await supabase
+      const { error } = await supabase
         .from('scrape_runs')
         .update({ status: 'error', error: message, finished_at: new Date().toISOString() })
         .eq('id', runId);
+      if (error) logger.error(`Could not close scrape run ${runId}: ${error.message}`);
     }
-    await markCredentialError(userId, scraper.platform, message);
+    // Note: the credential is deliberately NOT marked here. Only a failure of
+    // the scrape itself (handled above) implicates the user's session.
     logger.error(`[${scraper.name}] user ${userId} failed`, message);
     return { inserted: [], found: 0, error: message };
   }

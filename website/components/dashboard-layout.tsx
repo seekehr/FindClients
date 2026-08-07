@@ -11,13 +11,13 @@ interface DashboardLayoutProps {
 }
 
 const menuItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: '📊' },
-  { label: 'Leads', href: '/dashboard/leads', icon: '🔍' },
-  { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: '🔖' },
-  { label: 'Connections', href: '/dashboard/connections', icon: '🔌' },
-  { label: 'Analytics', href: '/dashboard/analytics', icon: '📈' },
-  { label: 'Config', href: '/dashboard/config', icon: '🎛️' },
-  { label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
+  { label: 'Dashboard', href: '/dashboard', icon: '' },
+  { label: 'Leads', href: '/dashboard/leads', icon: '' },
+  { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: '' },
+  { label: 'Connections', href: '/dashboard/connections', icon: '' },
+  { label: 'Analytics', href: '/dashboard/analytics', icon: '' },
+  { label: 'Config', href: '/dashboard/config', icon: '' },
+  { label: 'Settings', href: '/dashboard/settings', icon: '' },
 ]
 
 function initials(name: string, email: string) {

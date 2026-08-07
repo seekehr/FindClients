@@ -176,8 +176,13 @@ export async function getConnectionsForPlatform(
 ): Promise<{ userId: string; cookies: SessionCookie[] }[]> {
   if (!isCredentialPlatform(platform)) return [];
 
+  // Errored connections are deliberately included. A failed run is often
+  // transient (a challenge, a timeout, a blip), and excluding them meant one
+  // bad cycle silently disabled a user's scraping for good with no way back
+  // except reconnecting by hand. A successful run clears the flag via
+  // markCredentialUsed, so this self-heals.
   const rows = unwrap(
-    await supabase.from('credentials').select('*').eq('platform', platform).neq('status', 'error'),
+    await supabase.from('credentials').select('*').eq('platform', platform),
     'loading connected accounts',
   ) as CredentialRow[];
 
@@ -196,11 +201,12 @@ export async function getConnectionsForPlatform(
 }
 
 export async function markCredentialUsed(userId: string, platform: string): Promise<void> {
-  await supabase
+  const { error } = await supabase
     .from('credentials')
     .update({ last_used_at: new Date().toISOString(), status: 'connected', last_error: null })
     .eq('user_id', userId)
     .eq('platform', platform);
+  if (error) logger.error(`Could not mark ${platform} credential used: ${error.message}`);
 }
 
 export async function markCredentialError(
@@ -208,9 +214,12 @@ export async function markCredentialError(
   platform: string,
   error: string,
 ): Promise<void> {
-  await supabase
+  const { error: updateError } = await supabase
     .from('credentials')
     .update({ status: 'error', last_error: error.slice(0, 300) })
     .eq('user_id', userId)
     .eq('platform', platform);
+  if (updateError) {
+    logger.error(`Could not mark ${platform} credential failed: ${updateError.message}`);
+  }
 }

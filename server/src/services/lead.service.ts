@@ -2,6 +2,7 @@ import { supabase, unwrap } from '../db/supabase';
 import { cache } from '../cache';
 import { sourceHash } from '../utils/ids';
 import { relativeTime } from '../utils/time';
+import { sanitizeNullable, sanitizeText } from '../utils/text';
 import { badRequest } from '../utils/http';
 import type { LeadDTO, LeadRow, LeadStatus, Platform, RawLead } from '../types';
 
@@ -155,17 +156,26 @@ export async function insertLeads(raw: RawLead[]): Promise<LeadDTO[]> {
     if (seen.has(hash)) continue;
     seen.add(hash);
 
+    // A scraper may report a date we can't parse; fall back to "now" rather
+    // than throwing and losing every other lead in the batch.
+    const parsed = r.postedAt ? new Date(r.postedAt) : null;
+    const postedAt =
+      parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : nowIso;
+
+    // A scraper can hand us text Postgres will refuse — a lone surrogate from
+    // slicing an emoji in half, or a NUL byte. Left alone, one bad field fails
+    // the whole batch and the entire run's leads are lost.
     rows.push({
-      title: r.title,
+      title: sanitizeText(r.title),
       platform: r.platform,
-      description: r.description ?? '',
-      budget: r.budget ?? null,
-      timeline: r.timeline ?? null,
-      url: r.url ?? null,
-      author: r.author ?? null,
-      tags: r.tags ?? [],
+      description: sanitizeText(r.description ?? ''),
+      budget: sanitizeNullable(r.budget),
+      timeline: sanitizeNullable(r.timeline),
+      url: sanitizeNullable(r.url),
+      author: sanitizeNullable(r.author),
+      tags: (r.tags ?? []).map(sanitizeText),
       source_hash: hash,
-      posted_at: r.postedAt ? new Date(r.postedAt).toISOString() : nowIso,
+      posted_at: postedAt,
     });
   }
 

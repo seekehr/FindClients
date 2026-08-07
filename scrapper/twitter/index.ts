@@ -272,7 +272,12 @@ const HASHTAG_RE = /#(\w+)/g;
 /** Map a scraped tweet into the server's platform-agnostic RawLead shape. */
 export function tweetToLead(tweet: Tweet): RawLead {
   const text = tweet.postText.replace(/\s+/g, ' ').trim();
-  const title = text ? text.slice(0, 100) + (text.length > 100 ? '…' : '') : `Tweet by @${tweet.authorUsername}`;
+  // Slice by code point, not UTF-16 unit: `text.slice(0, 100)` can cut an emoji
+  // in half and leave a lone surrogate, which Postgres rejects outright.
+  const points = Array.from(text);
+  const title = text
+    ? points.slice(0, 100).join('') + (points.length > 100 ? '…' : '')
+    : `Tweet by @${tweet.authorUsername}`;
   const tags = [...new Set(Array.from(text.matchAll(HASHTAG_RE), (m) => m[1]))].slice(0, 6);
 
   return {
