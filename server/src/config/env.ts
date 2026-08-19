@@ -64,6 +64,14 @@ export const env = {
    */
   internalApiKey: process.env.INTERNAL_API_KEY ?? '',
 
+  /**
+   * Key for the AI lead qualification pass. One key for the whole server —
+   * what each user configures is the *prompt*, on their Config page. Empty
+   * means qualification is switched off everywhere, and the app says so
+   * rather than silently letting unqualified leads through.
+   */
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
+
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, true),
   scrapeCron: process.env.SCRAPE_CRON ?? '*/2 * * * *',
 

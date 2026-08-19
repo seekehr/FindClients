@@ -11,6 +11,15 @@ export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived';
 
 export type Plan = 'free' | 'pro' | 'agency';
 
+/**
+ * Platform-specific facts a scraper collected about a lead, beyond the fields
+ * every platform shares. Free-form on purpose: an Upwork job has a client
+ * hire rate, a tweet has view counts, and neither should force a column on
+ * the other. Stored as JSONB, rendered as labelled facts in the UI, and given
+ * to the AI qualifier so it can judge on more than the post text.
+ */
+export type LeadMetadata = Record<string, string | number | boolean | null>;
+
 /** A lead as stored in Postgres (global, platform-discovered). */
 export interface LeadRow {
   id: string;
@@ -22,9 +31,21 @@ export interface LeadRow {
   url: string | null;
   author: string | null;
   tags: string[];
+  metadata: LeadMetadata;
   source_hash: string;
   posted_at: string; // ISO
   created_at: string; // ISO
+}
+
+/** This user's AI verdict on a lead. Absent until their qualifier has run. */
+export type AiVerdict = 'qualified' | 'rejected' | 'error';
+
+export interface LeadAiReview {
+  verdict: AiVerdict | null;
+  /** 0–100 confidence that the lead is worth this user's time. */
+  score: number | null;
+  reason: string;
+  checkedAt: string | null;
 }
 
 /** A lead as returned by the API (per-user fields merged in). */
@@ -38,10 +59,12 @@ export interface LeadDTO {
   url: string | null;
   author: string | null;
   tags: string[];
+  metadata: LeadMetadata;
   postedAt: string;
   postedTime: string; // human-relative, e.g. "2 hours ago"
   status: LeadStatus;
   bookmarked: boolean;
+  ai: LeadAiReview;
   createdAt: string;
 }
 
@@ -55,6 +78,8 @@ export interface RawLead {
   url?: string | null;
   author?: string | null;
   tags?: string[];
+  /** Platform-specific extras — see LeadMetadata. */
+  metadata?: LeadMetadata;
   /** When the lead was originally posted on the source platform (ISO or Date). */
   postedAt?: string | Date;
 }
@@ -115,6 +140,16 @@ export interface UserConfig {
   upworkJobsUrl: string;
   upworkFetchDetails: boolean;
   upworkMaxAgeHours: number;
+
+  // AI qualification — the user's own definition of a lead worth their time.
+  aiEnabled: boolean;
+  /** Free-text criteria the model scores each lead against. */
+  aiPrompt: string;
+  aiModel: string;
+  /** Leads scoring below this (0–100) are rejected. */
+  aiMinScore: number;
+  /** Archive rejected leads instead of leaving them in the inbox. */
+  aiAutoArchive: boolean;
 
   updatedAt: string;
 }

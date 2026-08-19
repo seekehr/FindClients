@@ -33,6 +33,32 @@ export function sanitizeNullable(value: string | null | undefined): string | nul
 }
 
 /**
+ * Sanitise a scraper's free-form metadata bag.
+ *
+ * Both keys and values are scraped text, so both get the same treatment as any
+ * other field. Values that are neither string, number nor boolean are dropped
+ * rather than coerced — a nested object in a flat fact sheet is a scraper bug,
+ * and rendering "[object Object]" in the UI would hide it.
+ */
+export function sanitizeMetadata(
+  value: Record<string, unknown> | null | undefined,
+): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  if (!value) return out;
+
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === null || raw === undefined || raw === '') continue;
+    const cleanKey = sanitizeText(key).slice(0, 60);
+    if (!cleanKey) continue;
+
+    if (typeof raw === 'string') out[cleanKey] = truncateByCodePoint(sanitizeText(raw), 300);
+    else if (typeof raw === 'number' && Number.isFinite(raw)) out[cleanKey] = raw;
+    else if (typeof raw === 'boolean') out[cleanKey] = raw;
+  }
+  return out;
+}
+
+/**
  * Truncate to a maximum number of *code points*, never splitting a surrogate
  * pair. Use this instead of `String.prototype.slice` when shortening text that
  * may contain emoji.

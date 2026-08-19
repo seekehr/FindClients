@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
     "@supabase/supabase-js": "^2.112.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

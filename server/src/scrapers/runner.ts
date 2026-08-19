@@ -1,6 +1,12 @@
 import { supabase } from '../db/supabase';
 import { logger } from '../utils/logger';
-import { insertLeads } from '../services/lead.service';
+import {
+  insertLeads,
+  leadsAlreadyReviewed,
+  saveAiReviews,
+  type AiReviewToSave,
+} from '../services/lead.service';
+import { qualifyLeads } from '../services/ai.service';
 import { notifyNewLeads } from '../services/notification.service';
 import { getConfig } from '../services/config.service';
 import {
@@ -71,7 +77,15 @@ async function runOne(
       throw err;
     }
 
-    const inserted = await insertLeads(raw);
+    const { inserted, all } = await insertLeads(raw);
+
+    // Qualification is the user's own judgment layer, so it runs per user and
+    // over every lead this run surfaced — including ones already in the shared
+    // pool, which are still new to *them*. Leads their prompt has already
+    // judged are skipped so a re-seen post is not re-billed.
+    await reviewForUser(userId, all, config, (msg) =>
+      logger.debug(`[${scraper.name}:${userId}] ${msg}`),
+    );
 
     if (runId) {
       const { error } = await supabase

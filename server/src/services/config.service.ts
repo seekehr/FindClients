@@ -29,6 +29,11 @@ interface ConfigRow {
   upwork_jobs_url: string;
   upwork_fetch_details: boolean;
   upwork_max_age_hours: number;
+  ai_enabled: boolean;
+  ai_prompt: string;
+  ai_model: string;
+  ai_min_score: number;
+  ai_auto_archive: boolean;
   updated_at: string;
 }
 
@@ -56,6 +61,12 @@ function toDTO(row: ConfigRow): UserConfig {
     upworkFetchDetails: row.upwork_fetch_details,
     upworkMaxAgeHours: row.upwork_max_age_hours,
 
+    aiEnabled: row.ai_enabled ?? false,
+    aiPrompt: row.ai_prompt ?? '',
+    aiModel: row.ai_model || 'claude-opus-5',
+    aiMinScore: row.ai_min_score ?? 60,
+    aiAutoArchive: row.ai_auto_archive ?? true,
+
     updatedAt: row.updated_at,
   };
 }
@@ -79,6 +90,11 @@ const COLUMNS: Record<keyof ConfigPatch, keyof ConfigRow> = {
   upworkJobsUrl: 'upwork_jobs_url',
   upworkFetchDetails: 'upwork_fetch_details',
   upworkMaxAgeHours: 'upwork_max_age_hours',
+  aiEnabled: 'ai_enabled',
+  aiPrompt: 'ai_prompt',
+  aiModel: 'ai_model',
+  aiMinScore: 'ai_min_score',
+  aiAutoArchive: 'ai_auto_archive',
 };
 
 export type ConfigPatch = Partial<Omit<UserConfig, 'updatedAt'>>;

@@ -16,6 +16,7 @@ const listQuery = z.object({
   q: z.string().max(200).optional(),
   status: statusEnum.optional(),
   bookmarked: z.coerce.boolean().optional(),
+  ai: z.enum(['qualified', 'rejected', 'unchecked']).optional(),
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
 });
