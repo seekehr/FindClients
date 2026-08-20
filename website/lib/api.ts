@@ -82,16 +82,15 @@ interface RequestOptions {
 let refreshInFlight: Promise<boolean> | null = null
 
 async function refreshAccessToken(): Promise<boolean> {
-  const refreshToken = getRefreshToken()
-  if (!refreshToken) return false
-
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
+        const refreshToken = getRefreshToken()
         const res = await fetch(`${API_URL}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
+          credentials: 'include',
+          body: JSON.stringify(refreshToken ? { refreshToken } : {}),
         })
         if (!res.ok) return false
         const data = (await res.json()) as AuthResponse
@@ -100,7 +99,6 @@ async function refreshAccessToken(): Promise<boolean> {
       } catch {
         return false
       } finally {
-        // Let the next 401 start a fresh attempt.
         setTimeout(() => (refreshInFlight = null), 0)
       }
     })()
@@ -118,6 +116,7 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
     res = await fetch(`${API_URL}${path}`, {
       method: opts.method ?? 'GET',
       headers,
+      credentials: 'include',
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     })
   } catch {
@@ -127,13 +126,11 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
   const data = await res.json().catch(() => ({}))
 
   if (!res.ok) {
-    if (res.status === 401 && !opts._retried && getRefreshToken()) {
-      // The access token expired — swap it for a fresh one and replay once.
+    if (res.status === 401 && !opts._retried) {
       if (await refreshAccessToken()) {
         return api<T>(path, { ...opts, _retried: true })
       }
     }
-    // Session is genuinely gone — clear it so the app can bounce to login.
     if (res.status === 401) clearSession()
     throw new ApiError(res.status, (data as { error?: string })?.error ?? res.statusText)
   }

@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler, notFound } from '../utils/http';
 import { invalidateAuthCache, requireAuth } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
+import { env } from '../config/env';
 import {
   changePassword,
   deleteAccount,
@@ -30,6 +31,24 @@ const loginSchema = z.object({
 
 const authThrottle = rateLimit({ windowMs: 60_000, max: 20, bucket: 'auth' });
 
+const COOKIE_OPTS: import('express').CookieOptions = {
+  httpOnly: true,
+  secure: env.isProd,
+  sameSite: 'lax',
+  path: '/',
+  maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+};
+
+function setAuthCookies(res: Response, session: Session) {
+  res.cookie('fc_token', session.accessToken, { ...COOKIE_OPTS, maxAge: 60 * 60 * 1000 }); // 1 hour
+  res.cookie('fc_refresh', session.refreshToken, COOKIE_OPTS);
+}
+
+function clearAuthCookies(res: Response) {
+  res.clearCookie('fc_token', { path: '/' });
+  res.clearCookie('fc_refresh', { path: '/' });
+}
+
 /**
  * Flatten a Supabase session onto the response. `token` is kept as the name of
  * the access token so existing clients keep working; `refreshToken` lets them
@@ -50,10 +69,10 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const body = registerSchema.parse(req.body);
     const { user, session } = await registerUser(body);
+    if (session) setAuthCookies(res, session);
     res.status(201).json({
       user,
       ...sessionBody(session),
-      // No session means Supabase is set to require email confirmation.
       needsEmailConfirmation: !session,
     });
   }),
@@ -65,6 +84,7 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const { email, password } = loginSchema.parse(req.body);
     const { user, session } = await signIn(email, password);
+    if (session) setAuthCookies(res, session);
     res.json({ user, ...sessionBody(session) });
   }),
 );
@@ -73,8 +93,14 @@ authRouter.post(
   '/refresh',
   authThrottle,
   asyncHandler(async (req, res) => {
-    const { refreshToken } = z.object({ refreshToken: z.string().min(1) }).parse(req.body);
+    const body = req.body as Record<string, unknown>;
+    const refreshToken = (body?.refreshToken as string) || req.cookies?.fc_refresh;
+    if (!refreshToken) {
+      res.status(401).json({ error: 'No refresh token' });
+      return;
+    }
     const { user, session } = await refreshSession(refreshToken);
+    if (session) setAuthCookies(res, session);
     res.json({ user, ...sessionBody(session) });
   }),
 );
@@ -126,6 +152,7 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     await signOut(req.accessToken!);
     invalidateAuthCache(req.accessToken!);
+    clearAuthCookies(res);
     res.json({ ok: true });
   }),
 );

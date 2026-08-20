@@ -14,7 +14,8 @@ import {
 /**
  * Redirects to /login if there is no session. Returns the stored user
  * immediately (so the UI can paint) and refreshes it from /auth/me in the
- * background, which also validates that the token is still good.
+ * background. With cookie-based auth the token may live only in an HTTP-only
+ * cookie, so we always attempt /auth/me even without a localStorage token.
  */
 export function useRequireAuth() {
   const router = useRouter()
@@ -22,13 +23,11 @@ export function useRequireAuth() {
   const [checked, setChecked] = useState(false)
 
   useEffect(() => {
-    if (!getToken()) {
-      router.replace('/login')
-      return
+    const stored = getStoredUser()
+    if (stored) {
+      setUser(stored)
+      setChecked(true)
     }
-
-    setUser(getStoredUser())
-    setChecked(true)
 
     let cancelled = false
     authApi
@@ -37,10 +36,13 @@ export function useRequireAuth() {
         if (cancelled) return
         setStoredUser(user)
         setUser(user)
+        setChecked(true)
       })
       .catch(() => {
-        // api() has already cleared an unrecoverable session.
-        if (!cancelled && !getToken()) router.replace('/login')
+        if (cancelled) return
+        if (!getToken() && !getStoredUser()) {
+          router.replace('/login')
+        }
       })
 
     return () => {
@@ -54,7 +56,6 @@ export function useRequireAuth() {
 export function useLogout() {
   const router = useRouter()
   return useCallback(async () => {
-    // Revoking server-side is best effort; the local session goes either way.
     await authApi.logout().catch(() => undefined)
     clearSession()
     router.replace('/login')

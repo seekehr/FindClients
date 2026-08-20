@@ -23,7 +23,10 @@ export const supabase = createClient(env.supabaseUrl, env.supabaseServiceKey, {
     detectSessionInUrl: false,
   },
   global: {
-    headers: { 'X-Client-Info': 'findclients-api' },
+    headers: {
+      'X-Client-Info': 'findclients-api',
+      Authorization: `Bearer ${env.supabaseServiceKey}`,
+    },
   },
 });
 

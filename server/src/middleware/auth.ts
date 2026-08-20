@@ -15,10 +15,11 @@ declare global {
   }
 }
 
-/** Pull a Bearer token off the request, if there is one. */
-function bearer(req: Request): string | undefined {
+/** Pull an access token off the request: Authorization header first, then cookie. */
+function extractToken(req: Request): string | undefined {
   const header = req.headers.authorization;
-  return header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+  if (header?.startsWith('Bearer ')) return header.slice(7);
+  return req.cookies?.fc_token as string | undefined;
 }
 
 /**
@@ -55,7 +56,7 @@ async function resolveUser(token: string): Promise<AuthedRequestUser | null> {
 
 /** Require a valid Supabase access token; attaches req.user or throws 401. */
 export async function requireAuth(req: Request, _res: Response, next: NextFunction) {
-  const token = bearer(req);
+  const token = extractToken(req);
   if (!token) return next(unauthorized('Missing authorization token'));
 
   try {
@@ -71,7 +72,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
 
 /** Attach req.user when a valid token is present, but never reject. */
 export async function optionalAuth(req: Request, _res: Response, next: NextFunction) {
-  const token = bearer(req);
+  const token = extractToken(req);
   if (!token) return next();
   try {
     const user = await resolveUser(token);

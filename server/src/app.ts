@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { env } from './config/env';
 import { asyncHandler } from './utils/http';
@@ -27,6 +28,7 @@ export function createApp() {
     }),
   );
   app.use(express.json({ limit: '1mb' }));
+  app.use(cookieParser());
 
   // Health / readiness. Doubles as a Supabase connectivity check.
   app.get(
