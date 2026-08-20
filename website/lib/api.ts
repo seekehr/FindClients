@@ -297,7 +297,24 @@ export interface ScrapeStatus {
   lastFinishedAt: string | null
 }
 
+export interface CaptchaChallenge {
+  sessionId: string
+  platform: string
+  screenshot: string
+  width: number
+  height: number
+  createdAt: number
+}
+
 export const scrapeApi = {
   run: () => api<{ ok: boolean; summary: unknown }>('/scrape/run', { method: 'POST' }),
   status: () => api<ScrapeStatus>('/scrape/status'),
+  captcha: () => api<{ challenge: CaptchaChallenge | null }>('/scrape/captcha'),
+  captchaClick: (sessionId: string, x: number, y: number) =>
+    api<{ screenshot: string; solved: boolean }>('/scrape/captcha/click', {
+      method: 'POST',
+      body: { sessionId, x, y },
+    }),
+  captchaDismiss: (sessionId: string) =>
+    api<{ ok: boolean }>('/scrape/captcha/dismiss', { method: 'POST', body: { sessionId } }),
 }

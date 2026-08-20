@@ -181,12 +181,14 @@ async function runOne(
   console.log(`limit   : ${limit}`);
   console.log('');
 
+  const headless = cfg.headless ?? true;
   const started = Date.now();
   const leads = await scraper.scrape({
     userId,
     cookies,
     limit,
     log: (m) => console.log('  ', m),
+    interactive: !headless,
   });
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   console.log('');

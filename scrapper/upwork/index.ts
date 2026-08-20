@@ -141,11 +141,56 @@ export async function parseJobTile(section: ElementHandle): Promise<UpworkJob> {
 
 /** Does the page look like a CAPTCHA / bot challenge? */
 async function looksLikeChallenge(page: Page): Promise<boolean> {
-  const url = page.url().toLowerCase();
-  const title = (await page.title()).toLowerCase();
-  return ['captcha', 'challenge', 'verify', 'robot', 'blocked'].some(
-    (kw) => url.includes(kw) || title.includes(kw),
-  );
+  try {
+    const url = page.url().toLowerCase();
+    const title = (await page.title()).toLowerCase();
+    return ['captcha', 'challenge', 'verify', 'robot', 'blocked'].some(
+      (kw) => url.includes(kw) || title.includes(kw),
+    );
+  } catch {
+    return false;
+  }
+}
+
+const CAPTCHA_POLL_MS = 3_000;
+const CAPTCHA_TIMEOUT_MS = 5 * 60 * 1000;
+
+async function waitForCaptchaSolved(
+  page: Page,
+  log: (m: string) => void,
+): Promise<boolean> {
+  log('CAPTCHA detected — solve it in the browser window. Waiting up to 5 minutes…');
+  const deadline = Date.now() + CAPTCHA_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await sleep(CAPTCHA_POLL_MS);
+    if (!(await looksLikeChallenge(page))) {
+      log('CAPTCHA solved — resuming');
+      await sleep(2000);
+      return true;
+    }
+  }
+  log('CAPTCHA timeout — giving up');
+  return false;
+}
+
+async function handleChallenge(
+  page: Page,
+  ctx: ScrapeContext,
+): Promise<boolean> {
+  if (!(await looksLikeChallenge(page))) return false;
+  if (ctx.interactive) return !(await waitForCaptchaSolved(page, ctx.log));
+  if (ctx.onCaptcha) {
+    ctx.log('CAPTCHA detected — waiting for user to solve via dashboard');
+    const solved = await ctx.onCaptcha(page, 'upwork');
+    if (solved) {
+      ctx.log('CAPTCHA solved via dashboard — resuming');
+      return false;
+    }
+    ctx.log('CAPTCHA not solved — skipping');
+    return true;
+  }
+  ctx.log('CAPTCHA/challenge detected (headless — cannot solve, skipping)');
+  return true;
 }
 
 /** Visit a job's detail page to enrich client rating + hire rate. */
@@ -280,8 +325,7 @@ export const upworkScraper: Scraper = {
       ctx.log(`navigating to feed: ${feedUrl}`);
       await page.goto(feedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-      if (await looksLikeChallenge(page)) {
-        ctx.log('CAPTCHA/challenge on feed (session may be stale) — skipping this run');
+      if (await handleChallenge(page, ctx)) {
         return [];
       }
       if (!(await waitForFeed(page, ctx.log))) {
@@ -305,10 +349,7 @@ export const upworkScraper: Scraper = {
       let done = await collect();
       let clicks = 0;
       while (!done && clicks < cfg.maxLoadMoreClicks && jobs.length < ctx.limit) {
-        if (await looksLikeChallenge(page)) {
-          ctx.log('challenge detected while paging — stopping');
-          break;
-        }
+        if (await handleChallenge(page, ctx)) break;
         const button = page.locator(LOAD_MORE_SEL);
         if ((await button.count()) === 0) {
           ctx.log('no "Load More Jobs" button — feed exhausted');
@@ -339,10 +380,7 @@ export const upworkScraper: Scraper = {
       if (jobs.length) {
         detailPage = await context.newPage();
         for (const job of jobs) {
-          if (await looksLikeChallenge(detailPage)) {
-            ctx.log('challenge on detail page — stopping enrichment');
-            break;
-          }
+          if (await handleChallenge(detailPage, ctx)) break;
           const detail = await scrapeDetail(detailPage, job.url, cfg, ctx.log);
           if (detail.clientRating) job.clientRating = detail.clientRating;
           job.clientHireRate = detail.clientHireRate;

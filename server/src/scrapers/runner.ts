@@ -15,6 +15,7 @@ import {
   markCredentialUsed,
 } from '../services/credential.service';
 import { loadUserScrapers } from './loader';
+import { registerCaptcha } from '../services/captcha.service';
 import type { LeadDTO, RawLead, SessionCookie, UserConfig } from '../types';
 import type { Scraper } from './types';
 
@@ -95,6 +96,7 @@ async function runOne(
         cookies,
         limit: config.leadsPerRun,
         log: (msg) => logger.info(`[${scraper.name}] ${msg}`),
+        onCaptcha: (page, platform) => registerCaptcha(page, platform, userId),
       });
     } catch (err) {
       await markCredentialError(userId, scraper.platform, (err as Error).message);
