@@ -149,10 +149,6 @@ export async function notifyNewLeads(leads: LeadDTO[]): Promise<void> {
       leadId: matches[0].id,
     });
 
-    if (config.emailNotifications) {
-      logger.debug(`[email] -> user ${userId}: ${matches.length} new leads`);
-    }
-
     // Per-user only — there is deliberately no global webhook fallback, so one
     // user's leads can never be posted to another user's channel.
     if (config.discordWebhookUrl) {

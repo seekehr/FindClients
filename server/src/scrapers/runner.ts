@@ -18,6 +18,36 @@ import { loadUserScrapers } from './loader';
 import type { LeadDTO, RawLead, SessionCookie, UserConfig } from '../types';
 import type { Scraper } from './types';
 
+async function reviewForUser(
+  userId: string,
+  leads: LeadDTO[],
+  config: UserConfig,
+  log: (msg: string) => void,
+): Promise<void> {
+  if (!config.aiEnabled || !leads.length) return;
+
+  const alreadyDone = await leadsAlreadyReviewed(userId, leads.map((l) => l.id));
+  const toReview = leads.filter((l) => !alreadyDone.has(l.id));
+  if (!toReview.length) return;
+
+  const verdicts = await qualifyLeads(toReview, config, log);
+  if (!verdicts.size) return;
+
+  const rows: AiReviewToSave[] = [];
+  for (const [leadId, review] of verdicts) {
+    rows.push({
+      leadId,
+      verdict: review.verdict,
+      score: review.score,
+      reason: review.reason,
+      model: review.model,
+      archive: config.aiAutoArchive,
+    });
+  }
+
+  await saveAiReviews(userId, rows);
+}
+
 let running = false;
 
 interface RunSummary {
@@ -55,37 +85,25 @@ async function runOne(
   }
   const runId = (run as { id: string } | null)?.id;
 
+  logger.info(`[${scraper.name}] scrape started`);
+
   try {
-    // Scraping and persisting fail for completely different reasons, and only
-    // the first says anything about the user's session. Keeping them in
-    // separate try blocks is what stops a database problem from marking a
-    // perfectly good connection as broken.
     let raw: RawLead[];
     try {
-      // The scraper fetches this user's config itself over /api/internal — the
-      // runner only decides *whether* to run and caps how much comes back.
       raw = await scraper.scrape({
         userId,
         cookies,
         limit: config.leadsPerRun,
-        log: (msg) => logger.debug(`[${scraper.name}:${userId}] ${msg}`),
+        log: () => {},
       });
     } catch (err) {
-      // The scrape itself failed — a stale session, a challenge, a timeout.
-      // This one *is* about the credential.
       await markCredentialError(userId, scraper.platform, (err as Error).message);
       throw err;
     }
 
     const { inserted, all } = await insertLeads(raw);
 
-    // Qualification is the user's own judgment layer, so it runs per user and
-    // over every lead this run surfaced — including ones already in the shared
-    // pool, which are still new to *them*. Leads their prompt has already
-    // judged are skipped so a re-seen post is not re-billed.
-    await reviewForUser(userId, all, config, (msg) =>
-      logger.debug(`[${scraper.name}:${userId}] ${msg}`),
-    );
+    await reviewForUser(userId, all, config, () => {});
 
     if (runId) {
       const { error } = await supabase
@@ -100,9 +118,7 @@ async function runOne(
       if (error) logger.error(`Could not close scrape run ${runId}: ${error.message}`);
     }
     await markCredentialUsed(userId, scraper.platform);
-    logger.info(
-      `[${scraper.name}] user ${userId}: found ${raw.length}, inserted ${inserted.length}`,
-    );
+    logger.info(`[${scraper.name}] scrape finished — found ${raw.length}, inserted ${inserted.length}`);
     return { inserted, found: raw.length };
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
@@ -113,9 +129,7 @@ async function runOne(
         .eq('id', runId);
       if (error) logger.error(`Could not close scrape run ${runId}: ${error.message}`);
     }
-    // Note: the credential is deliberately NOT marked here. Only a failure of
-    // the scrape itself (handled above) implicates the user's session.
-    logger.error(`[${scraper.name}] user ${userId} failed`, message);
+    logger.error(`[${scraper.name}] scrape failed`, message);
     return { inserted: [], found: 0, error: message };
   }
 }
@@ -153,17 +167,14 @@ export async function runScrapeCycle(options: RunOptions = {}): Promise<RunSumma
   try {
     const scrapers = await loadUserScrapers();
 
-    for (const scraper of scrapers) {
+    async function runScraper(scraper: Scraper) {
       let connections = await getConnectionsForPlatform(scraper.platform);
       if (options.userId) connections = connections.filter((c) => c.userId === options.userId);
 
       const bucket = { runs: 0, found: 0, inserted: 0 };
       summary.perPlatform[scraper.platform] = bucket;
 
-      if (!connections.length) {
-        logger.debug(`[${scraper.name}] no connected users — nothing to scrape`);
-        continue;
-      }
+      if (!connections.length) return;
 
       for (const conn of connections) {
         const config = await configFor(conn.userId);
@@ -172,15 +183,11 @@ export async function runScrapeCycle(options: RunOptions = {}): Promise<RunSumma
           continue;
         }
 
-        // Honour the user's own switches: scraping off, or this platform not
-        // selected on their Config page, means no run on their behalf.
         if (!config.scrapeEnabled) {
-          logger.debug(`[${scraper.name}] user ${conn.userId} has scraping disabled — skipping`);
           summary.skipped += 1;
           continue;
         }
         if (config.platforms.length && !config.platforms.includes(scraper.platform)) {
-          logger.debug(`[${scraper.name}] user ${conn.userId} has not selected this platform`);
           summary.skipped += 1;
           continue;
         }
@@ -194,6 +201,8 @@ export async function runScrapeCycle(options: RunOptions = {}): Promise<RunSumma
         allNew.push(...inserted);
       }
     }
+
+    await Promise.all(scrapers.map(runScraper));
 
     if (allNew.length) await notifyNewLeads(allNew);
   } finally {

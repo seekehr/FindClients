@@ -258,7 +258,7 @@ export async function insertLeads(raw: RawLead[]): Promise<InsertLeadsResult> {
   return { inserted: inserted.map(rowToFreshDTO), all: all.map(rowToFreshDTO) };
 }
 
-/** Which of these leads has this user's qualifier already judged? */
+/** Which of these leads has this user already reviewed or dismissed? */
 export async function leadsAlreadyReviewed(
   userId: string,
   leadIds: string[],
@@ -268,14 +268,17 @@ export async function leadsAlreadyReviewed(
   const rows = unwrap(
     await supabase
       .from('user_leads')
-      .select('lead_id')
+      .select('lead_id, status, ai_checked_at')
       .eq('user_id', userId)
-      .in('lead_id', leadIds)
-      .not('ai_checked_at', 'is', null),
+      .in('lead_id', leadIds),
     'loading reviewed leads',
-  ) as { lead_id: string }[];
+  ) as { lead_id: string; status: string; ai_checked_at: string | null }[];
 
-  return new Set(rows.map((r) => r.lead_id));
+  return new Set(
+    rows
+      .filter((r) => r.status === 'dismissed' || r.ai_checked_at !== null)
+      .map((r) => r.lead_id),
+  );
 }
 
 export interface AiReviewToSave {
@@ -342,6 +345,24 @@ export async function saveAiReviews(
   );
 
   cache.invalidatePrefix(`leads:${userId}`);
+}
+
+export async function clearLeads(userId: string): Promise<number> {
+  // Mark as dismissed rather than deleting — dismissed leads are excluded from
+  // queries and won't reappear on future scrapes.
+  const rows = unwrap(
+    await supabase
+      .from('user_leads')
+      .update({ status: 'dismissed', updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .neq('status', 'dismissed')
+      .neq('bookmarked', true)
+      .select('lead_id'),
+    'clearing your leads',
+  ) as { lead_id: string }[];
+
+  cache.invalidatePrefix(`leads:${userId}`);
+  return rows.length;
 }
 
 export async function totalLeadCount(): Promise<number> {

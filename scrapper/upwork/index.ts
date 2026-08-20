@@ -1,7 +1,6 @@
 import { chromium, type ElementHandle, type Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
-import { loadUpworkConfig, type UpworkConfig } from './config';
-import { getUserConfig } from '../lib/api';
+import { loadUpworkRuntimeConfig, type UpworkRuntimeConfig } from './config';
 
 /**
  * Upwork scraper — a TypeScript translation of a Playwright reference
@@ -153,7 +152,7 @@ async function looksLikeChallenge(page: Page): Promise<boolean> {
 async function scrapeDetail(
   page: Page,
   url: string,
-  cfg: UpworkConfig,
+  cfg: UpworkRuntimeConfig,
   log: (m: string) => void,
 ): Promise<{ clientRating: string; clientHireRate: string }> {
   const result = { clientRating: '', clientHireRate: '' };
@@ -250,23 +249,11 @@ export const upworkScraper: Scraper = {
       return [];
     }
 
-    // Ask the server for this user's saved config. Search settings come from
-    // there; only the browser runtime comes from the environment.
-    const userConfig = await getUserConfig(ctx.userId);
-    const cfg = loadUpworkConfig({
-      jobsUrl: userConfig.upworkJobsUrl,
-      maxAgeHours: userConfig.upworkMaxAgeHours,
-      fetchDetails: userConfig.upworkFetchDetails,
-    });
+    const cfg = loadUpworkRuntimeConfig();
 
     const browser = await chromium.launch({ headless: cfg.headless });
 
-    // Effective age cutoff: the stricter of the config window and ctx.since.
-    const cutoffCandidates = [
-      new Date(Date.now() - cfg.maxAgeHours * 60 * 60 * 1000),
-      ctx.since ?? null,
-    ].filter((d): d is Date => d !== null);
-    const cutoff = new Date(Math.max(...cutoffCandidates.map((d) => d.getTime())));
+    const feedUrl = 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop';
 
     const seen = new Set<string>();
     const jobs: UpworkJob[] = [];
@@ -290,8 +277,8 @@ export const upworkScraper: Scraper = {
       );
       const page = await context.newPage();
 
-      ctx.log(`navigating to feed: ${cfg.jobsUrl}`);
-      await page.goto(cfg.jobsUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      ctx.log(`navigating to feed: ${feedUrl}`);
+      await page.goto(feedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
       if (await looksLikeChallenge(page)) {
         ctx.log('CAPTCHA/challenge on feed (session may be stale) — skipping this run');
@@ -303,18 +290,12 @@ export const upworkScraper: Scraper = {
       }
       await sleep(1500);
 
-      // Collect tiles, clicking "Load More Jobs" until the cutoff / limit / end.
       const collect = async (): Promise<boolean> => {
         const sections = await page.$$('section.air3-card-section');
         for (const section of sections) {
           if (jobs.length >= ctx.limit) return true;
           const job = await parseJobTile(section);
           if (!job.title || !job.url || seen.has(job.url)) continue;
-          const when = postedDate(job.posted);
-          if (when && when < cutoff) {
-            ctx.log(`cutoff reached at "${job.posted}"`);
-            return true;
-          }
           seen.add(job.url);
           jobs.push(job);
         }
@@ -353,10 +334,9 @@ export const upworkScraper: Scraper = {
         done = await collect();
       }
 
-      ctx.log(`collected ${jobs.length} job(s) within the ${cfg.maxAgeHours}h window`);
+      ctx.log(`collected ${jobs.length} job(s)`);
 
-      // Enrich via detail pages (bounded by what we collected).
-      if (cfg.fetchDetails && jobs.length) {
+      if (jobs.length) {
         detailPage = await context.newPage();
         for (const job of jobs) {
           if (await looksLikeChallenge(detailPage)) {

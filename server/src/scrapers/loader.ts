@@ -12,9 +12,7 @@ export async function loadUserScrapers(): Promise<Scraper[]> {
       scrapers?: Scraper[];
     };
     const scrapers = mod.scrapers ?? [];
-    const usable = scrapers.filter((s) => s && typeof s.scrape === 'function');
-    logger.debug(`Loaded ${usable.length} scraper(s) from scrapper/`);
-    return usable;
+    return scrapers.filter((s) => s && typeof s.scrape === 'function');
   } catch (err) {
     logger.warn('Could not load scrapers from scrapper/', (err as Error).message);
     return [];

@@ -258,6 +258,7 @@ export const leadsApi = {
     api<{ ok: boolean; status: LeadStatus }>(`/leads/${id}`, { method: 'PATCH', body: { status } }),
   bookmark: (id: string, on: boolean) =>
     api(`/leads/${id}/bookmark`, { method: on ? 'PUT' : 'DELETE' }),
+  clear: () => api<{ ok: boolean; removed: number }>('/leads', { method: 'DELETE' }),
 }
 
 export const bookmarksApi = {

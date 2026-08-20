@@ -186,8 +186,6 @@ export async function getConnectionsForPlatform(
     'loading connected accounts',
   ) as CredentialRow[];
 
-  logger.debug(`[credentials] ${platform}: ${rows.length} row(s) from the credentials table`);
-
   const connections: { userId: string; cookies: SessionCookie[] }[] = [];
   for (const row of rows) {
     try {

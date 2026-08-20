@@ -26,6 +26,11 @@ export function startScheduler(): void {
   });
 
   logger.info(`Scheduler started (cron: "${env.scrapeCron}")`);
+
+  // Run immediately on startup so users don't wait for the first cron tick.
+  void runScrapeCycle().catch((err) =>
+    logger.error('Initial scrape cycle crashed', (err as Error).message),
+  );
 }
 
 export function stopScheduler(): void {

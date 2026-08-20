@@ -183,7 +183,7 @@ export async function signOut(accessToken: string): Promise<void> {
   // Best effort: revoking the refresh token is a courtesy, not a correctness
   // requirement — the access token is short-lived and self-verifying.
   const { error } = await supabase.auth.admin.signOut(accessToken);
-  if (error) logger.debug(`Sign-out revocation failed: ${error.message}`);
+  if (error) logger.warn(`Sign-out revocation failed: ${error.message}`);
 }
 
 export async function getPublicUser(id: string): Promise<PublicUser | null> {

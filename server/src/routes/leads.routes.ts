@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { asyncHandler, notFound } from '../utils/http';
 import { requireAuth } from '../middleware/auth';
 import { cache } from '../cache';
-import { getLead, listLeads, setBookmark, setLeadStatus } from '../services/lead.service';
+import { clearLeads, getLead, listLeads, setBookmark, setLeadStatus } from '../services/lead.service';
 import type { LeadStatus } from '../types';
 
 export const leadsRouter = Router();
@@ -34,6 +34,14 @@ leadsRouter.get(
     const result = await listLeads({ userId, ...params });
     cache.set(cacheKey, result, 15_000);
     res.json(result);
+  }),
+);
+
+leadsRouter.delete(
+  '/',
+  asyncHandler(async (req, res) => {
+    const removed = await clearLeads(req.user!.id);
+    res.json({ ok: true, removed });
   }),
 );
 

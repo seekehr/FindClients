@@ -3,10 +3,10 @@
 import DashboardLayout from '@/components/dashboard-layout'
 import LeadCard from '@/components/lead-card'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, Loader2, Inbox, Radar } from 'lucide-react'
+import { Search, Loader2, Inbox, Radar, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
-import { leadsApi, type Lead } from '@/lib/api'
+import { leadsApi, scrapeApi, ApiError, type Lead } from '@/lib/api'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
 
 const PLATFORMS = [
@@ -24,6 +24,8 @@ export default function LeadsPage() {
   const [loaded, setLoaded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+  const [scraping, setScraping] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   // Debounce the search box.
   useEffect(() => {
@@ -59,6 +61,30 @@ export default function LeadsPage() {
   loadRef.current = load
   const scrape = useScrapeStatus(() => loadRef.current())
 
+  async function runScrape() {
+    setScraping(true)
+    try {
+      await scrapeApi.run()
+    } catch {
+      // scrape status polling will pick up the state
+    } finally {
+      setScraping(false)
+    }
+  }
+
+  async function clearAllLeads() {
+    if (!confirm('Clear all leads? This cannot be undone.')) return
+    setClearing(true)
+    try {
+      await leadsApi.clear()
+      setLeads([])
+    } catch {
+      setError('Could not clear leads.')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   async function toggleBookmark(lead: Lead) {
     // Optimistic update.
     setLeads((prev) =>
@@ -90,13 +116,43 @@ export default function LeadsPage() {
             </p>
           </div>
 
-          {/* Live scrape indicator — visible whether or not there are leads. */}
-          {scrape.running && (
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Scraping {describePlatforms(scrape.runs)}…
-            </span>
-          )}
+          <div className="flex gap-2 shrink-0">
+            {leads.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={clearAllLeads}
+                disabled={clearing}
+                className="gap-2 text-destructive hover:text-destructive"
+              >
+                {clearing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                Clear leads
+              </Button>
+            )}
+            {scrape.running ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Scraping {describePlatforms(scrape.runs)}…
+              </span>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={runScrape}
+                disabled={scraping}
+                className="gap-2"
+              >
+                {scraping ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
+                Scrape now
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Search and Filter */}
