@@ -2,16 +2,10 @@
  * Standalone scraper CLI. Does not need the API server.
  *
  * From this folder:
- *   npm run cli -- upwork
- *   npm run cli -- twitter
- *   npm run cli -- all
+ *   npm run cli
  *
- * Cookies and search settings come from cli_config.json (copy from
- * cli_config.example.json). Paste a browser Cookie header into `cookie`.
- *
- *   --config <path>   other json file (default: ./cli_config.json)
- *   --limit <n>       cap leads this run
- *   --headed          show the browser (overrides config.headless)
+ * Settings come from cli_config.json. Paste a browser Cookie header
+ * (raw, no quoting) into upwork.cookie / twitter.cookie in this folder.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,12 +17,13 @@ import type { SessionCookie, UserConfig } from '../server/src/scrapers/types';
 loadRootEnv();
 
 const ROOT = __dirname;
-const PLATFORMS = scrapers.map((s) => s.platform);
 
 interface PlatformCliConfig {
-  /** Raw `Cookie:` header pasted from DevTools. */
+  /** Optional path to a text file containing the raw Cookie header. */
+  cookieFile?: string;
+  /** Inline Cookie header — avoid this; quotes in cookies break JSON. */
   cookie?: string;
-  /** Or a list of cookies (takes priority over `cookie` if non-empty). */
+  /** Or a list of cookies (takes priority over files/`cookie` if non-empty). */
   cookies?: SessionCookie[];
   jobsUrl?: string;
   fetchDetails?: boolean;
@@ -48,34 +43,6 @@ interface CliConfig {
   twitter?: PlatformCliConfig;
 }
 
-function usage(code = 1): never {
-  console.error(
-    `Usage: npm run cli -- <${PLATFORMS.join('|')}|all> [--config path] [--limit n] [--headed]`,
-  );
-  process.exit(code);
-}
-
-function parseArgs(argv: string[]) {
-  const positional: string[] = [];
-  const flags = new Map<string, string | true>();
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith('--')) {
-      positional.push(a);
-      continue;
-    }
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (next && !next.startsWith('--')) {
-      flags.set(key, next);
-      i++;
-    } else {
-      flags.set(key, true);
-    }
-  }
-  return { positional, flags };
-}
-
 function parseCookieHeader(header: string, domain: string): SessionCookie[] {
   return header
     .split(';')
@@ -93,24 +60,52 @@ function parseCookieHeader(header: string, domain: string): SessionCookie[] {
     .filter((c) => c.name && c.value);
 }
 
-function cookiesFor(platform: PlatformCliConfig | undefined, domain: string): SessionCookie[] {
-  if (!platform) return [];
-  if (platform.cookies?.length) {
-    return platform.cookies.map((c) => ({
-      name: c.name,
-      value: c.value,
-      domain: c.domain || domain,
-      path: c.path || '/',
-    }));
+function readCookieHeader(
+  platformName: string,
+  platform: PlatformCliConfig | undefined,
+  configDir: string,
+): string {
+  const files: string[] = [];
+  if (platform?.cookieFile) files.push(path.resolve(configDir, platform.cookieFile));
+  files.push(path.join(configDir, `${platformName}.cookie`));
+
+  for (const file of files) {
+    if (!fs.existsSync(file)) continue;
+    const text = fs.readFileSync(file, 'utf8').trim();
+    if (text.includes('=')) return text;
   }
-  if (platform.cookie?.trim()) return parseCookieHeader(platform.cookie, domain);
-  return [];
+
+  const inline = platform?.cookie?.trim();
+  if (inline?.includes('=')) return inline;
+  return '';
+}
+
+function cookiesFor(
+  platformName: string,
+  platform: PlatformCliConfig | undefined,
+  domain: string,
+  configDir: string,
+): SessionCookie[] {
+  if (platform?.cookies?.length) {
+    const listed = platform.cookies
+      .filter((c) => c.name?.trim() && c.value?.trim())
+      .map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain || domain,
+        path: c.path || '/',
+      }));
+    if (listed.length) return listed;
+  }
+
+  const header = readCookieHeader(platformName, platform, configDir);
+  return header ? parseCookieHeader(header, domain) : [];
 }
 
 function loadConfig(filePath: string): CliConfig {
   if (!fs.existsSync(filePath)) {
     console.error(
-      `Missing ${filePath}\nCopy cli_config.example.json to cli_config.json and paste your cookies.`,
+      `Missing ${filePath}\nCopy cli_config.example.json to cli_config.json.`,
     );
     process.exit(1);
   }
@@ -160,20 +155,25 @@ async function runOne(
   cfg: CliConfig,
   userId: string,
   limit: number,
+  configDir: string,
 ): Promise<void> {
   const scraper = scrapers.find((s) => s.platform === platform);
   if (!scraper) {
-    console.error(`Unknown platform "${platform}". Known: ${PLATFORMS.join(', ')}`);
+    console.error(`Unknown platform "${platform}".`);
     process.exit(1);
   }
 
   const domain = platform === 'twitter' ? '.x.com' : `.${platform}.com`;
-  const cookies = cookiesFor(cfg[platform as 'upwork' | 'twitter'], domain);
+  const cookies = cookiesFor(
+    platform,
+    cfg[platform as 'upwork' | 'twitter'],
+    domain,
+    configDir,
+  );
   if (!cookies.length) {
-    console.error(
-      `No cookies for ${platform}. Paste a Cookie header into cli_config.json → ${platform}.cookie`,
-    );
-    process.exit(1);
+    console.log(`── ${scraper.name} ────────────────────────────────`);
+    console.log(`skipped : paste a Cookie header into ${platform}.cookie`);
+    return;
   }
 
   console.log(`── ${scraper.name} ────────────────────────────────`);
@@ -195,22 +195,11 @@ async function runOne(
 }
 
 async function main() {
-  const { positional, flags } = parseArgs(process.argv.slice(2));
-  const target = positional[0];
-  if (!target || target === 'help' || flags.has('help') || flags.has('h')) {
-    usage(target === 'help' || flags.has('help') || flags.has('h') ? 0 : 1);
-  }
-
-  const configRel = typeof flags.get('config') === 'string' ? (flags.get('config') as string) : 'cli_config.json';
-  const configPath = path.resolve(ROOT, configRel);
+  const configPath = path.resolve(ROOT, 'cli_config.json');
   const cfg = loadConfig(configPath);
   const userId = cfg.userId || 'cli-test';
-  const limitFlag = flags.get('limit');
-  const limit =
-    (typeof limitFlag === 'string' ? Number.parseInt(limitFlag, 10) : NaN) ||
-    cfg.limit ||
-    10;
-  const headless = flags.has('headed') ? false : (cfg.headless ?? true);
+  const limit = cfg.limit || 10;
+  const headless = cfg.headless ?? true;
 
   process.env.UPWORK_HEADLESS = headless ? 'true' : 'false';
   process.env.X_HEADLESS = headless ? 'true' : 'false';
@@ -221,9 +210,9 @@ async function main() {
   console.log('headless:', headless);
   console.log('');
 
-  const wanted = target === 'all' ? PLATFORMS : [target];
-  for (const platform of wanted) {
-    await runOne(platform, cfg, userId, limit);
+  const configDir = path.dirname(configPath);
+  for (const scraper of scrapers) {
+    await runOne(scraper.platform, cfg, userId, limit, configDir);
     console.log('');
   }
 }
