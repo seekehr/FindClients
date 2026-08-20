@@ -94,7 +94,7 @@ async function runOne(
         userId,
         cookies,
         limit: config.leadsPerRun,
-        log: () => {},
+        log: (msg) => logger.info(`[${scraper.name}] ${msg}`),
       });
     } catch (err) {
       await markCredentialError(userId, scraper.platform, (err as Error).message);

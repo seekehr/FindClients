@@ -3,7 +3,8 @@ import { cache } from '../cache';
 import { sourceHash } from '../utils/ids';
 import { relativeTime } from '../utils/time';
 import { sanitizeMetadata, sanitizeNullable, sanitizeText } from '../utils/text';
-import { badRequest } from '../utils/http';
+import { badRequest, HttpError } from '../utils/http';
+import { logger } from '../utils/logger';
 import type {
   AiVerdict,
   LeadDTO,
@@ -348,21 +349,13 @@ export async function saveAiReviews(
 }
 
 export async function clearLeads(userId: string): Promise<number> {
-  // Mark as dismissed rather than deleting — dismissed leads are excluded from
-  // queries and won't reappear on future scrapes.
-  const rows = unwrap(
-    await supabase
-      .from('user_leads')
-      .update({ status: 'dismissed', updated_at: new Date().toISOString() })
-      .eq('user_id', userId)
-      .neq('status', 'dismissed')
-      .neq('bookmarked', true)
-      .select('lead_id'),
-    'clearing your leads',
-  ) as { lead_id: string }[];
-
+  const { data, error } = await supabase.rpc('clear_leads_for_user', { p_user_id: userId });
+  if (error) {
+    logger.error(`clearLeads RPC failed: ${error.message}`, error.details);
+    throw new HttpError(500, 'Database error while clearing your leads');
+  }
   cache.invalidatePrefix(`leads:${userId}`);
-  return rows.length;
+  return (data as number) ?? 0;
 }
 
 export async function totalLeadCount(): Promise<number> {

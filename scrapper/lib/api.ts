@@ -84,6 +84,14 @@ export async function getUserConfig(userId: string): Promise<UserConfig> {
   return config;
 }
 
+/**
+ * Inject a config so scrapers can run without the API server (CLI / tests).
+ * Stays in cache until `clearConfigCache` — it does not expire.
+ */
+export function seedUserConfig(userId: string, config: UserConfig): void {
+  configCache.set(userId, { value: config, expiresAt: Number.POSITIVE_INFINITY });
+}
+
 /** Forget a cached config (after a run fails, or in tests). */
 export function clearConfigCache(userId?: string): void {
   if (userId) configCache.delete(userId);

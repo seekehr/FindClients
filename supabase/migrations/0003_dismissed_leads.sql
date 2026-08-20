@@ -4,6 +4,13 @@
 -- deleted. Dismissed leads are excluded from all queries and ignored on
 -- future scrapes.
 
+-- Allow 'dismissed' in the user_leads status check constraint.
+alter table public.user_leads
+  drop constraint if exists user_leads_status_check;
+alter table public.user_leads
+  add constraint user_leads_status_check
+  check (status in ('new', 'viewed', 'contacted', 'won', 'archived', 'dismissed'));
+
 -- Update list_leads to exclude dismissed leads.
 drop function if exists public.list_leads(uuid, text, text, text, boolean, text, integer, integer);
 
