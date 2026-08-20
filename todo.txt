@@ -1,4 +1,6 @@
-v1 works. Now test the website thoroughly, and test Upwork scrapping.
+test Upwork scrapping.
+
+IMP: test manual captcha solving while ss. one known bug is that it sends ss while image is loading. (might be fixed idk)
 
 Make it automatically log you in (save login cookies) when website loads. Also add more 
 information to the twitter leads and other stuff.

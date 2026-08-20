@@ -4,7 +4,8 @@
   "private": true,
   "description": "Platform scrapers for FindClients. Loaded at runtime by ../server.",
   "scripts": {
-    "cli": "tsx cli.ts"
+    "cli": "tsx cli.ts",
+    "test-captcha": "tsx test-captcha.ts"
   },
   "dependencies": {
     "playwright": "^1.62.0"

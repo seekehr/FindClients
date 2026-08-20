@@ -1,16 +1,8 @@
 import type { Platform, RawLead, SessionCookie, UserConfig } from '../types';
+import type { CaptchaPage } from '../../../scrapper/lib/captcha';
 
 // Re-exported so the scrapper workspace has one import site for these.
-export type { Platform, RawLead, SessionCookie, UserConfig };
-
-/** Minimal Playwright Page surface used by the captcha flow. */
-export interface CaptchaPage {
-  screenshot(opts?: { type?: string }): Promise<Buffer>;
-  mouse: { click(x: number, y: number): Promise<void> };
-  url(): string;
-  title(): Promise<string>;
-  viewportSize(): { width: number; height: number } | null;
-}
+export type { Platform, RawLead, SessionCookie, UserConfig, CaptchaPage };
 
 /**
  * Context handed to every scraper run. Scraping is per-user: each run is driven

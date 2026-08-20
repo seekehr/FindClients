@@ -108,15 +108,25 @@ export default function CaptchaModal() {
           <p className="text-sm text-foreground/60 mb-3">
             Click on the image below to solve the CAPTCHA. Your clicks are relayed to the scraper browser.
           </p>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            ref={imgRef}
-            src={`data:image/png;base64,${screenshot}`}
-            alt="CAPTCHA challenge"
-            className={`max-w-full rounded-lg border border-border cursor-crosshair ${clicking ? 'opacity-70' : ''}`}
-            onClick={handleClick}
-            draggable={false}
-          />
+          <div className="relative inline-block">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              ref={imgRef}
+              src={`data:image/png;base64,${screenshot}`}
+              alt="CAPTCHA challenge"
+              className={`max-w-full rounded-lg border border-border ${clicking ? 'cursor-wait' : 'cursor-crosshair'}`}
+              onClick={handleClick}
+              draggable={false}
+            />
+            {clicking && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-lg">
+                <div className="flex flex-col items-center gap-2 text-white">
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                  <span className="text-sm font-medium">Waiting for page to update…</span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

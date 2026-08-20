@@ -96,7 +96,7 @@ async function runOne(
         cookies,
         limit: config.leadsPerRun,
         log: (msg) => logger.info(`[${scraper.name}] ${msg}`),
-        onCaptcha: (page, platform) => registerCaptcha(page, platform, userId),
+        onCaptcha: (page, platform) => registerCaptcha(page, { platform, userId }),
       });
     } catch (err) {
       await markCredentialError(userId, scraper.platform, (err as Error).message);
