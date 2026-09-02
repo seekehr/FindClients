@@ -9,6 +9,21 @@ export const PLATFORMS: Platform[] = ['upwork', 'twitter', 'discord', 'reddit', 
 
 export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived';
 
+/**
+ * Models the lead qualifier may be pointed at.
+ *
+ * Google Gemini only, and an allow-list rather than free text: the user brings
+ * their own key, so a typo here would burn a scrape cycle failing on every
+ * lead and read as "the AI is broken" rather than "that model does not exist".
+ * Mirrors the CHECK constraint in supabase/migrations/0005_user_gemini_api_key.sql.
+ */
+export const AI_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
+
+export type AiModel = (typeof AI_MODELS)[number];
+
+/** Screening is a short judgment call on every lead — cheap and fast by default. */
+export const DEFAULT_AI_MODEL: AiModel = 'gemini-2.5-flash';
+
 export type Plan = 'free' | 'pro' | 'agency';
 
 /**
@@ -141,11 +156,21 @@ export interface UserConfig {
   upworkFetchDetails: boolean;
   upworkMaxAgeHours: number;
 
-  // AI qualification — the user's own definition of a lead worth their time.
+  // AI qualification — the user's own definition of a lead worth their time,
+  // reviewed with the user's own Gemini API key.
   aiEnabled: boolean;
   /** Free-text criteria the model scores each lead against. */
   aiPrompt: string;
   aiModel: string;
+  /**
+   * Whether this user has stored a Gemini API key. The key itself is never
+   * part of this DTO: `UserConfig` is returned by GET /api/config *and* handed
+   * to the scrapers over /api/internal, so anything on it is effectively
+   * public to the client. Read the key with `getAiApiKey` instead.
+   */
+  aiApiKeySet: boolean;
+  /** Masked tail of the stored key ("…aB3d"), so the user can tell which one it is. */
+  aiApiKeyHint: string;
   /** Leads scoring below this (0–100) are rejected. */
   aiMinScore: number;
   /** Archive rejected leads instead of leaving them in the inbox. */

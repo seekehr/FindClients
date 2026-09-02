@@ -1,213 +1,112 @@
 # FindClients
 
-A self-hosted lead-discovery platform for freelancers. It scrapes Upwork and Twitter/X for opportunities matching your keywords, optionally qualifies them with Claude AI, and surfaces them in a dashboard with notifications.
-
-## Repository layout
+Self-hosted lead discovery for freelancers. Scrapes Upwork and Twitter/X, optionally qualifies leads with Google Gemini (each user brings their own API key), and surfaces them in a dashboard.
 
 | Folder | What it is |
 | --- | --- |
-| [`website/`](website) | Next.js 16 frontend (React 19, Tailwind CSS 4, shadcn/ui). |
-| [`server/`](server) | Express API server — auth, config, leads, scheduling, notifications, AI qualification. |
-| [`scrapper/`](scrapper) | Playwright-based scrapers for Twitter/X and Upwork. |
-| [`supabase/`](supabase) | Postgres schema (two SQL migrations). |
+| [`website/`](website) | Next.js 16 frontend (React 19, Tailwind 4, shadcn/ui) |
+| [`server/`](server) | Express API — auth, config, leads, scheduler, notifications, AI |
+| [`scrapper/`](scrapper) | Playwright scrapers + CAPTCHA session manager ([details](scrapper/README.md)) |
+| [`supabase/`](supabase) | Postgres schema — 4 SQL migrations |
 
-There is no root `package.json`; each workspace is independent.
+No root `package.json`; each workspace is independent. All read the root `.env`.
 
-## Quick start
+## Setup
 
-### 1. Configure
+**1. Env** — copy `.env.example` → `.env`:
 
-Copy [`.env.example`](.env.example) to `.env` and fill in at minimum:
-
-| Variable | Required | Purpose |
+| Variable | Required | Notes |
 | --- | --- | --- |
-| `SUPABASE_URL` | Yes | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Yes | Service-role key (bypasses RLS) |
-| `ENCRYPTION_KEY` | Recommended | AES-256-GCM key for cookie encryption (has an insecure default) |
-| `ANTHROPIC_API_KEY` | No | Enables AI lead qualification via Claude |
-| `INTERNAL_API_KEY` | No | Shared secret for scraper-to-server auth (empty = disabled) |
+| `SUPABASE_URL` | Yes | |
+| `SUPABASE_SERVICE_KEY` | Yes | **Must be the legacy `eyJ…` service_role JWT** — see gotcha below |
+| `ENCRYPTION_KEY` | Recommended | AES-256-GCM key for cookie storage (insecure default) |
+| `INTERNAL_API_KEY` | No | Scraper↔server shared secret; empty disables `/api/internal` |
 
-See `.env.example` for the full list of optional variables (scheduler cron, CORS origins, proxy lists, scraper tuning, etc.).
+**2. Migrations** — Supabase dashboard → SQL Editor, run **in order**. All idempotent.
 
-### 2. Create the database schema
-
-In the Supabase dashboard, open **SQL Editor**, paste and run both migrations in order:
-
-1. [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) — core tables, RLS policies, provisioning triggers
-2. [`supabase/migrations/0002_ai_and_metadata.sql`](supabase/migrations/0002_ai_and_metadata.sql) — AI columns and lead metadata
-
-Both are idempotent.
-
-### 3. Run it
-
-```bash
-# Backend (starts API server + scheduler + scrapers)
-cd server && npm install && npm run dev            # http://localhost:4000
-
-# Scrapers need a browser engine
-cd scrapper && npm install && npx playwright install chromium
-
-# Frontend (new terminal)
-cd website && npm install && npm run dev           # http://localhost:3000
+```
+0001_init.sql            core tables, RLS, provisioning triggers
+0002_ai_and_metadata.sql AI columns + lead metadata
+0003_dismissed_leads.sql 'dismissed' status + list_leads excludes it
+0004_clear_leads_rpc.sql clear_leads_for_user() RPC
+0005_user_gemini_api_key.sql  per-user encrypted Gemini key; Claude → Gemini models
 ```
 
-Open http://localhost:3000, sign up, configure keywords and platforms on the **Config** page, then go to **Connections** to paste your platform session cookies. The scheduler scrapes automatically every 2 minutes (configurable via `SCRAPE_CRON`), and new leads appear on the Leads page.
+**3. Run**
+
+```bash
+cd server   && npm install && npm run dev    # :4000 — API + scheduler + scrapers
+cd scrapper && npm install && npx playwright install chromium
+cd website  && npm install && npm run dev    # :3000
+```
+
+Sign up → **Config** (keywords, platforms) → **Connections** (paste session cookies). A scrape fires immediately on server start, then every 2 min (`SCRAPE_CRON`).
+
+## Gotchas
+
+- **Supabase key format.** The new `sb_secret_*` keys do **not** bypass RLS with `@supabase/supabase-js` 2.112.2 — you get `new row violates row-level security policy`. Use the legacy `service_role` JWT (`eyJ…`). [`db/supabase.ts`](server/src/db/supabase.ts) also pins `Authorization: Bearer <key>` explicitly, because the client otherwise drops it when `persistSession: false`.
+- **`user_leads.status` check constraint** must include `'dismissed'` (migration 0003). Missing it makes "Clear leads" fail.
+- **Clear leads is a soft delete.** It dismisses rather than deletes so leads don't reappear on the next scrape, and it must *insert* dismissed rows for pool leads with no `user_leads` row — hence the RPC. Bookmarked leads are never cleared.
+- **Upwork ignores user config entirely** — hardcoded feed URL, no age cutoff, only `.env` runtime settings. Twitter still reads `user_config`.
 
 ## How it works
 
-### Scraping pipeline
+**Scrape cycle** — scheduler → `runScrapeCycle()` → loads scrapers from `scrapper/index.ts` → **all scrapers run in parallel** (`Promise.all`), users sequential within each scraper (avoids too many browsers). Leads de-duped by `source_hash` (SHA-1 of `platform::url`) into the shared `leads` pool; per-user state lands in `user_leads`. Audit trail in `scrape_runs`. Overlapping cycles are skipped with a warning.
 
-1. **Scheduler** (`node-cron`, default every 2 minutes) triggers `runScrapeCycle()`.
-2. **Loader** dynamically imports scrapers from `scrapper/index.ts`.
-3. For each scraper × each user with a connection for that platform:
-   - User's encrypted cookies are decrypted and injected into a headless Chromium browser.
-   - The scraper navigates the platform, extracts leads, and returns `RawLead[]`.
-4. Leads are de-duplicated by `source_hash` (SHA-1 of `platform::url`) and inserted into the shared `leads` pool.
-5. Per-user state is created in `user_leads` (status, bookmarks, AI verdict).
-6. If AI is enabled, leads are qualified via the Anthropic API (see below).
-7. Notifications are fanned out to all users whose filters match the new leads.
+**AI qualification** — opt-in per user, on the user's **own Google Gemini API key**, entered on the Config page and stored AES-256-GCM encrypted in `user_config.ai_api_key`. There is no server-wide key: every review is billed to the user who asked for it, and a user with no key saved gets qualification skipped (logged), never leads silently passed. The key is never returned by any route — `GET /api/config` hands back `aiApiKeySet` and a masked hint, and `getAiApiKey()` is the only reader, called by the runner. Gemini only; models `gemini-2.5-pro | gemini-2.5-flash | gemini-2.5-flash-lite`, default `gemini-2.5-flash`, called over plain REST (no SDK). 0–100 score + qualified/rejected + reason, stored per-user. 4 concurrent. `ai_auto_archive` archives rejected leads the user hasn't touched. Already-reviewed and dismissed leads are skipped (`leadsAlreadyReviewed`).
 
-An audit trail is kept in the `scrape_runs` table.
+**Auth** — Supabase Auth brokered by the API. Login/register/refresh set HTTP-only cookies (`fc_token` 1h, `fc_refresh` 30d); logout clears them. `requireAuth` reads the `Authorization` header first, then falls back to the cookie. The frontend sends `credentials: 'include'` and mirrors tokens in localStorage for backwards compatibility, so a returning visitor is logged in automatically. `getUser()` results cached 60s.
 
-### Twitter/X scraper
+**Credentials** — session cookies encrypted AES-256-GCM (random IV per record, key = SHA-256 of `ENCRYPTION_KEY`). Never returned by the API, only masked status. `/api/internal` decrypts them for scrapers behind the shared secret.
 
-- Injects the user's `auth_token` cookie and navigates to Twitter's live search.
-- Searches each configured keyword, scrolls to collect tweets, and extracts: text, author, timestamp, likes, reposts, replies, views, hashtags.
-- Filters by minimum likes, minimum views, and post age.
-- Supports rotating proxies (`X_PROXY_LIST` env var) and configurable user agent.
-- Adds random human-like delays (1–7 seconds) between actions.
+**CAPTCHA** — headless runs hand the live Playwright page to the dashboard: screenshot → you click → clicks relayed to the real browser → scraper resumes. See [`scrapper/README.md`](scrapper/README.md).
 
-### Upwork scraper
+**Logging** — no morgan, no debug level. `logger` has only `info`/`warn`/`error`. Scrape lifecycle lines (`[Upwork] scrape started/finished`) plus scraper `ctx.log` output are surfaced; everything else is errors only.
 
-- Injects session cookies and navigates to the user's configured jobs feed URL.
-- Parses job tiles and paginates via the "Load More Jobs" button (up to 20 clicks by default).
-- Extracts: title, URL, description, rate/budget, proposals count, posted time, client spend, payment verification, country, rating, skills.
-- Optionally visits each job's detail page for richer client info (hire rate, rating).
-- Detects CAPTCHA challenges and stops gracefully, returning what was collected.
+**Caching / rate limits** — in-memory TTL cache (Redis stand-in): leads 15s, auth 60s. Fixed-window limiter by IP: auth 20/60s, manual scrape 3/30s.
 
-### AI lead qualification
+## API
 
-When `ANTHROPIC_API_KEY` is set and a user enables AI in their config:
+Under `/api`. User routes take a Supabase token via `Authorization: Bearer` **or** the `fc_token` cookie.
 
-- Uses the Anthropic SDK with structured JSON output.
-- Default model: `claude-opus-5` (users can choose `claude-sonnet-5` or `claude-haiku-4-5`).
-- Each lead is scored 0–100 with a qualified/rejected verdict and a reason.
-- The user's custom AI prompt (set on the Config page) is included as screening criteria.
-- Results are stored per-user in `user_leads` (`ai_verdict`, `ai_score`, `ai_reason`).
-- If `ai_auto_archive` is on, rejected leads the user hasn't touched are archived automatically.
-- Leads can be filtered by AI verdict in the dashboard.
-- Batch size: 4 concurrent reviews.
-
-### Authentication
-
-- **Supabase Auth** manages identity. The browser never holds the service key.
-- Registration auto-confirms emails in dev (`SUPABASE_AUTO_CONFIRM_EMAILS=true`).
-- The `requireAuth` middleware validates tokens by calling `supabase.auth.getUser()` with 60-second in-memory caching.
-- A Postgres trigger on `auth.users` INSERT auto-creates rows in `profiles`, `user_config`, and `subscriptions`.
-
-### Credential storage
-
-- Platform session cookies are encrypted with **AES-256-GCM** (random 12-byte IV per record).
-- The encryption key is derived from the `ENCRYPTION_KEY` env var via SHA-256.
-- Cookies are never returned by the API — only masked status info (cookie count, connection status, timestamps).
-- The internal API (`/api/internal`) decrypts cookies for scraper use, authenticated by a shared secret.
-
-### Notifications
-
-| Channel | Status |
+| Group | Routes |
 | --- | --- |
-| In-app (stored in `notifications` table) | Implemented |
-| Discord webhooks (per-user webhook URL) | Implemented |
-| Email | Not implemented (config flag exists, logs only) |
-| Push | Not implemented (config flag exists, no code) |
+| Health | `GET /health` (no auth) |
+| Auth | `POST /auth/{register,login,refresh,logout,change-password}`, `GET/PATCH/DELETE /auth/me` |
+| Leads | `GET /leads` (platform, q, status, bookmarked, ai, page, limit) · `GET/PATCH /leads/:id` · `PUT/DELETE /leads/:id/bookmark` · **`DELETE /leads`** (clear all, keeps bookmarks) |
+| Bookmarks | `GET /bookmarks` |
+| Config | `GET/PUT /config` |
+| Credentials | `GET /credentials` · `PUT/DELETE /credentials/:platform` |
+| Scrape | `POST /scrape/run` · `GET /scrape/{status,runs}` |
+| CAPTCHA | `GET /scrape/captcha` · `POST /scrape/captcha/{click,dismiss}` · `GET /scrape/captcha/screenshot` |
+| Analytics | `GET /analytics/{overview,platforms,trend,scrape-runs}` |
+| Notifications | `GET /notifications` · `POST /notifications/read-all` · `POST /notifications/:id/read` |
+| Billing | `GET /billing/{plans,subscription}` · `POST /billing/subscribe` (demo, no payment) |
+| Internal | `GET /internal/users/:userId/config` · `GET /internal/platforms[/:platform/connections]` |
 
-Notifications are filtered per-user by platform, keywords, excluded keywords, and minimum budget.
+## Schema
 
-### Caching and rate limiting
-
-- **In-memory TTL cache** (stand-in for Redis). Default TTL 30 seconds.
-- Used for: lead list caching (15s), auth token resolution (60s), rate limiting.
-- **Fixed-window rate limiter** keyed by IP: auth routes (20 req/60s), manual scrape trigger (3 req/30s).
-
-## API routes
-
-All routes are under `/api`. User routes require a Supabase Bearer token.
-
-| Route | Auth | Description |
-| --- | --- | --- |
-| `GET /health` | None | Server status, uptime, lead count |
-| `POST /auth/register` | None | Create account |
-| `POST /auth/login` | None | Get access + refresh tokens |
-| `POST /auth/refresh` | None | Refresh access token |
-| `GET /auth/me` | User | Current user profile |
-| `PATCH /auth/me` | User | Update profile |
-| `POST /auth/change-password` | User | Change password |
-| `POST /auth/logout` | User | Invalidate session |
-| `DELETE /auth/me` | User | Delete account |
-| `GET /leads` | User | Paginated leads (filter by platform, search, status, bookmarked, AI verdict) |
-| `GET /leads/:id` | User | Single lead with AI data |
-| `PATCH /leads/:id` | User | Update lead status |
-| `PUT /leads/:id/bookmark` | User | Bookmark a lead |
-| `DELETE /leads/:id/bookmark` | User | Remove bookmark |
-| `GET /bookmarks` | User | Paginated bookmarked leads |
-| `GET /config` | User | User config + connected platforms + AI availability |
-| `PUT /config` | User | Update config (partial) |
-| `PUT /credentials/:platform` | User | Connect platform (paste cookie string) |
-| `GET /credentials` | User | List connections (masked) |
-| `DELETE /credentials/:platform` | User | Disconnect platform |
-| `POST /scrape/run` | User | Trigger manual scrape (rate-limited) |
-| `GET /scrape/status` | User | Is a scrape running? |
-| `GET /scrape/runs` | User | Scrape history |
-| `GET /analytics/overview` | User | Dashboard stats |
-| `GET /analytics/platforms` | User | Leads by platform |
-| `GET /analytics/trend` | User | Leads per day (configurable window) |
-| `GET /analytics/scrape-runs` | User | Recent scrape runs |
-| `GET /notifications` | User | Notification feed (filter by unread) |
-| `POST /notifications/read-all` | User | Mark all read |
-| `POST /notifications/:id/read` | User | Mark one read |
-| `GET /billing/plans` | None | Available plans |
-| `GET /billing/subscription` | User | Current subscription |
-| `POST /billing/subscribe` | User | Switch plan (demo — no payment) |
-| `GET /internal/users/:userId/config` | Internal | User config for scrapers |
-| `GET /internal/platforms/:platform/connections` | Internal | Decrypted cookies for a platform |
-| `GET /internal/platforms` | Internal | Available platforms |
-
-## Database schema
-
-Postgres on Supabase with Row Level Security on every table.
+RLS on every table; the server bypasses it with the service key, so **every query must scope by `user_id` explicitly**.
 
 | Table | Purpose |
 | --- | --- |
 | `profiles` | 1:1 mirror of `auth.users` (email, name, plan) |
-| `user_config` | Per-user scraping, notification, and AI settings |
+| `user_config` | Per-user scraping / notification / AI settings |
 | `subscriptions` | Plan, usage counters, period dates |
-| `leads` | Shared pool of discovered leads (de-duped by `source_hash`) |
-| `user_leads` | Per-user lead state: status, bookmarks, notes, AI verdict/score/reason |
-| `credentials` | Encrypted session cookies per user per platform |
-| `notifications` | Per-user notification feed |
-| `scrape_runs` | Audit log of every scrape execution |
+| `leads` | Shared pool, de-duped by `source_hash` |
+| `user_leads` | Per-user state: status, bookmark, notes, AI verdict/score/reason |
+| `credentials` | Encrypted cookies per user per platform |
+| `notifications` | Per-user feed |
+| `scrape_runs` | Audit log of every run |
 
-## Tech stack
+A trigger on `auth.users` INSERT auto-creates `profiles`, `user_config`, `subscriptions`.
 
-| Layer | Technology |
-| --- | --- |
-| Frontend | Next.js 16, React 19, Tailwind CSS 4, shadcn/ui, Lucide icons |
-| Backend | Node.js (>= 22.5), Express, TypeScript (via tsx) |
-| Scrapers | Playwright (headless Chromium) |
-| Database | Supabase Postgres |
-| Auth | Supabase Auth |
-| AI | Anthropic SDK (Claude) |
-| Validation | Zod |
-| Security | Helmet, AES-256-GCM encryption, CORS |
+`list_leads(p_user_id, p_platform, p_status, p_q, p_bookmarked, p_ai, p_limit, p_offset)` is the read path — it LEFT JOINs `user_leads`, so **a pool lead with no `user_leads` row still shows as `new`**. It excludes `status = 'dismissed'`.
 
-## What's not yet implemented
+## Not implemented
 
-- **Discord scraper** — platform is defined in types but no scraper exists.
-- **Email notifications** — config flag exists but sends nothing.
-- **Push notifications** — config flag exists, no code.
-- **Billing / Stripe** — plans exist but switching is instant with no payment processing.
-- **Reddit, LinkedIn, Freelancer scrapers** — not started.
+Discord/Reddit/LinkedIn scrapers · email + push notifications (config flags exist, no delivery) · Stripe (plan switching is instant, no payment).
 
 ## Disclaimer
 
-Scraping real platforms may violate their Terms of Service and can put the connected account at risk. This tool is for personal use at your own discretion.
+Scraping these platforms may violate their ToS and can put the connected account at risk. Personal use, at your own discretion.

@@ -128,7 +128,7 @@ All variables live in the global [`../.env`](../.env.example). Highlights:
 | `SUPABASE_URL`      | — (required)                | Your project URL                     |
 | `SUPABASE_SERVICE_KEY` | — (required)             | Service key. **Server only** — bypasses RLS |
 | `SUPABASE_AUTO_CONFIRM_EMAILS` | `true`           | Skip the verification email on sign-up |
-| `ENCRYPTION_KEY`    | dev key                     | Encrypts stored session cookies. **Change in production** |
+| `ENCRYPTION_KEY`    | dev key                     | Encrypts stored session cookies **and each user's Gemini API key**. **Change in production** |
 | `SCHEDULER_ENABLED` | `true`                      | Background scraping on/off           |
 | `SCRAPE_CRON`       | `*/2 * * * *`               | Scrape cadence                       |
 | `INTERNAL_API_KEY`  | — (unset = disabled)        | Shared secret for `/api/internal`    |
@@ -136,6 +136,15 @@ All variables live in the global [`../.env`](../.env.example). Highlights:
 Scraper keywords, thresholds, limits, feed URLs and Discord webhooks are **not**
 environment variables — they are per-user and live in `public.user_config`,
 edited on the app's Config page.
+
+Neither is the AI key. Lead qualification runs on each user's **own Google
+Gemini API key**, entered on the Config page and stored encrypted in
+`user_config.ai_api_key`. There is no server-wide AI key to set: the operator
+pays for no reviews, and one user's quota cannot affect another's. The key is
+never returned by any route — `GET /api/config` reports `aiApiKeySet` plus a
+masked hint, and `getAiApiKey()` in `config.service.ts` is the only reader.
+Changing `ENCRYPTION_KEY` makes every stored key unreadable; the app then
+reports qualification as unavailable and asks users to re-enter theirs.
 
 ## Notes for production
 

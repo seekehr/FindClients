@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { env } from '../config/env';
 import { logger } from '../utils/logger';
-import type { AiVerdict, LeadDTO, UserConfig } from '../types';
+import { AI_MODELS, DEFAULT_AI_MODEL, type AiVerdict, type LeadDTO, type UserConfig } from '../types';
 
 /**
  * AI lead qualification.
@@ -18,39 +16,53 @@ import type { AiVerdict, LeadDTO, UserConfig } from '../types';
  * gets. Everything else here — the output contract, the scoring scale, the
  * refusal to guess when the model is unavailable — is scaffolding around it.
  *
+ * The key is the user's too. Google Gemini is the only supported provider, and
+ * every request is billed to the key that user entered on their Config page —
+ * there is no server-wide key and no shared quota, so one user's spending or
+ * rate limit cannot affect anyone else's reviews.
+ *
  * Design notes:
  *  - One call per lead. Leads are independent, and a per-lead call keeps one
  *    bad post from derailing the batch's other verdicts.
- *  - Failures return `error`, never `rejected`. A timeout is not evidence that
- *    a lead is bad, and silently dropping leads because a key expired is the
- *    worst outcome this feature could have.
- *  - The user's criteria sit in the system prompt (stable across a run, so it
- *    caches) and the lead itself in the user turn (volatile).
+ *  - Failures return `error`, never `rejected`. A timeout, a bad key or a
+ *    safety block is not evidence that a lead is bad, and silently dropping
+ *    leads because a key expired is the worst outcome this feature could have.
+ *  - Plain `fetch` against the REST API rather than an SDK: one endpoint, one
+ *    request shape, and no dependency to keep in step with the server's.
  */
 
-/** What the model must return. Kept small — a verdict, a number, a sentence. */
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+/** How long one lead's review may take before we give up on it. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * What the model must return. Kept small — a verdict, a number, a sentence.
+ * This is Gemini's `responseSchema`: the OpenAPI 3.0 subset, which has no
+ * `additionalProperties`, so the shape is pinned by `required` alone.
+ */
 const REVIEW_SCHEMA = {
-  type: 'object',
+  type: 'OBJECT',
   properties: {
     score: {
-      type: 'integer',
+      type: 'INTEGER',
       description:
         'How well this lead matches the criteria, 0-100. 0 = clearly not a fit, ' +
         '100 = exactly the work described. Be decisive: most leads are not close calls.',
     },
     qualified: {
-      type: 'boolean',
+      type: 'BOOLEAN',
       description: 'True only if the user should spend time on this lead.',
     },
     reason: {
-      type: 'string',
+      type: 'STRING',
       description:
         'One sentence, addressed to the user, explaining the verdict. Cite the ' +
         'specific detail that decided it. No preamble.',
     },
   },
   required: ['score', 'qualified', 'reason'],
-  additionalProperties: false,
+  propertyOrdering: ['score', 'qualified', 'reason'],
 } as const;
 
 const SYSTEM_INSTRUCTIONS = `You screen freelance leads that were found by keyword-matching scrapers on Upwork, X/Twitter and Discord. The scrapers have no judgment, so most of what reaches you is noise: people advertising their own services, job-board reposts, unpaid "exposure" work, and unrelated chatter that merely contained a matching phrase.
@@ -68,16 +80,27 @@ export interface LeadReview {
   model: string;
 }
 
-/** Is qualification usable at all on this deployment? */
-export function aiAvailable(): boolean {
-  return Boolean(env.anthropicApiKey);
+/** Shape of a `generateContent` response, narrowed to what we read. */
+interface GeminiResponse {
+  candidates?: {
+    content?: { parts?: { text?: string }[] };
+    finishReason?: string;
+  }[];
+  promptFeedback?: { blockReason?: string };
+  error?: { message?: string; status?: string };
 }
 
-let client: Anthropic | null = null;
+function isAiModel(model: string): boolean {
+  return (AI_MODELS as readonly string[]).includes(model);
+}
 
-function getClient(): Anthropic {
-  if (!client) client = new Anthropic({ apiKey: env.anthropicApiKey });
-  return client;
+/**
+ * Thinking costs the user money and buys nothing on a screening call, so it is
+ * switched off where the model allows it. 2.5 Pro cannot disable thinking, so
+ * it keeps the dynamic default.
+ */
+function thinkingConfig(model: string): Record<string, unknown> | undefined {
+  return model === 'gemini-2.5-pro' ? undefined : { thinkingBudget: 0 };
 }
 
 /** Render one lead as the compact fact sheet the model scores. */
@@ -102,52 +125,68 @@ function renderLead(lead: LeadDTO): string {
   return lines.join('\n');
 }
 
-async function reviewOne(lead: LeadDTO, config: UserConfig): Promise<LeadReview> {
-  const model = config.aiModel || 'claude-opus-5';
+/**
+ * One `generateContent` call. Returns the model's JSON text.
+ *
+ * The key travels in the `x-goog-api-key` header rather than a `?key=` query
+ * parameter so it cannot end up in a proxy log or an error string.
+ */
+async function generate(model: string, apiKey: string, leadText: string, criteria: string) {
+  const response = await fetch(`${API_BASE}/${model}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: `${SYSTEM_INSTRUCTIONS}\n\nThe user's criteria for a qualified lead:\n\n${criteria}` }],
+      },
+      contents: [{ role: 'user', parts: [{ text: leadText }] }],
+      generationConfig: {
+        // Screening is a judgment call against fixed criteria, not a creative
+        // task: the same lead should get the same verdict twice.
+        temperature: 0,
+        maxOutputTokens: 4000,
+        responseMimeType: 'application/json',
+        responseSchema: REVIEW_SCHEMA,
+        thinkingConfig: thinkingConfig(model),
+      },
+    }),
+  });
+
+  const body = (await response.json().catch(() => ({}))) as GeminiResponse;
+
+  if (!response.ok) {
+    // Google's message is the useful part ("API key not valid", "quota
+    // exceeded"); the status code alone tells the user nothing actionable.
+    throw new Error(body.error?.message ?? `Gemini returned HTTP ${response.status}`);
+  }
+
+  // A safety block is not a verdict on the lead — surface it so the lead stays
+  // visible rather than being quietly rejected.
+  if (body.promptFeedback?.blockReason) {
+    throw new Error(`the request was blocked (${body.promptFeedback.blockReason})`);
+  }
+
+  const candidate = body.candidates?.[0];
+  const text = (candidate?.content?.parts ?? [])
+    .map((part) => part.text ?? '')
+    .join('')
+    .trim();
+
+  if (!text) {
+    const finish = candidate?.finishReason ?? 'no candidates';
+    throw new Error(`the model returned nothing (${finish})`);
+  }
+  return text;
+}
+
+async function reviewOne(lead: LeadDTO, config: UserConfig, apiKey: string): Promise<LeadReview> {
+  const model = isAiModel(config.aiModel) ? config.aiModel : DEFAULT_AI_MODEL;
 
   try {
-    const response = await getClient().messages.create({
-      model,
-      max_tokens: 4000,
-      // Screening is a judgment call, not a research task: low effort keeps
-      // it fast and cheap, and the verdicts do not improve above it.
-      output_config: {
-        effort: 'low',
-        format: { type: 'json_schema', schema: REVIEW_SCHEMA },
-      },
-      system: [
-        {
-          type: 'text',
-          text: SYSTEM_INSTRUCTIONS,
-          cache_control: { type: 'ephemeral' },
-        },
-        {
-          type: 'text',
-          // Stable for the whole run, so it caches with the instructions above.
-          text: `The user's criteria for a qualified lead:\n\n${config.aiPrompt.trim()}`,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: renderLead(lead) }],
-    });
-
-    // A safety refusal is not a verdict on the lead — record it as an error so
-    // the lead stays visible rather than being quietly rejected.
-    if (response.stop_reason === 'refusal') {
-      return {
-        verdict: 'error',
-        score: null,
-        reason: 'The model declined to review this lead.',
-        model,
-      };
-    }
-
-    const text = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('');
-
+    const text = await generate(model, apiKey, renderLead(lead), config.aiPrompt.trim());
     const parsed = JSON.parse(text) as { score: number; qualified: boolean; reason: string };
+
     // The schema cannot express a numeric range, so clamp it here.
     const score = Math.max(0, Math.min(100, Math.round(Number(parsed.score))));
     const passesThreshold = Number.isFinite(score) ? score >= config.aiMinScore : false;
@@ -187,7 +226,7 @@ async function inBatches<T, R>(
 }
 
 /**
- * Review every lead against this user's criteria.
+ * Review every lead against this user's criteria, using this user's own key.
  *
  * Returns a verdict per lead id. An empty map means qualification did not run
  * (switched off, no key, no criteria) — which callers must treat as "unknown",
@@ -196,13 +235,14 @@ async function inBatches<T, R>(
 export async function qualifyLeads(
   leads: LeadDTO[],
   config: UserConfig,
+  apiKey: string,
   log: (msg: string) => void = () => undefined,
 ): Promise<Map<string, LeadReview>> {
   const verdicts = new Map<string, LeadReview>();
   if (!leads.length || !config.aiEnabled) return verdicts;
 
-  if (!aiAvailable()) {
-    log('AI qualification is on for this user but ANTHROPIC_API_KEY is not set — skipping');
+  if (!apiKey) {
+    log('AI qualification is on for this user but no Gemini API key is saved — skipping');
     return verdicts;
   }
   if (!config.aiPrompt.trim()) {
@@ -212,8 +252,8 @@ export async function qualifyLeads(
 
   const started = Date.now();
   // Four at a time: enough to keep a scrape cycle brisk, low enough to stay
-  // clear of rate limits when several users' cycles overlap.
-  const reviews = await inBatches(leads, 4, (lead) => reviewOne(lead, config));
+  // clear of the free tier's per-minute limits on a single user's key.
+  const reviews = await inBatches(leads, 4, (lead) => reviewOne(lead, config, apiKey));
   leads.forEach((lead, i) => verdicts.set(lead.id, reviews[i]));
 
   const qualified = reviews.filter((r) => r.verdict === 'qualified').length;

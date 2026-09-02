@@ -1,13 +1,20 @@
 import { supabase, unwrap } from '../db/supabase';
 import { logger } from '../utils/logger';
 import { HttpError } from '../utils/http';
-import type { Platform, UserConfig } from '../types';
+import { encryptSecret, decryptSecret } from '../utils/crypto';
+import { DEFAULT_AI_MODEL, type Platform, type UserConfig } from '../types';
 
 /**
  * Per-user configuration, stored in public.user_config (one row per user,
  * created by the sign-up trigger). This is what the website's Config page
  * reads and writes, and what the scrape runner hands to each scraper — so a
  * change here actually changes what gets scraped on the next cycle.
+ *
+ * One value in this table is a secret: `ai_api_key`, the user's own Gemini
+ * key. It is stored encrypted and kept off `UserConfig` entirely, because
+ * `UserConfig` goes to the browser (GET /api/config) and to the scrapers
+ * (GET /api/internal/users/:id/config). Read it with `getAiApiKey`, which is
+ * called only by the qualifier.
  */
 
 interface ConfigRow {
@@ -34,10 +41,30 @@ interface ConfigRow {
   ai_model: string;
   ai_min_score: number;
   ai_auto_archive: boolean;
+  /** AES-256-GCM ciphertext of the user's Gemini key. '' when unset. */
+  ai_api_key: string;
   updated_at: string;
 }
 
+/**
+ * Open a stored key, or return '' if it cannot be opened.
+ *
+ * A ciphertext written under a different ENCRYPTION_KEY is unrecoverable, so
+ * treating it as "no key" is the honest answer: the Config page then asks for
+ * a key instead of claiming one is saved while every review fails.
+ */
+function readApiKey(row: ConfigRow): string {
+  if (!row.ai_api_key) return '';
+  try {
+    return decryptSecret(row.ai_api_key);
+  } catch {
+    logger.warn(`Could not decrypt the Gemini API key for ${row.user_id} — treating it as unset`);
+    return '';
+  }
+}
+
 function toDTO(row: ConfigRow): UserConfig {
+  const apiKey = readApiKey(row);
   return {
     emailNotifications: row.email_notifications,
     pushNotifications: row.push_notifications,
@@ -63,16 +90,23 @@ function toDTO(row: ConfigRow): UserConfig {
 
     aiEnabled: row.ai_enabled ?? false,
     aiPrompt: row.ai_prompt ?? '',
-    aiModel: row.ai_model || 'claude-opus-5',
+    aiModel: row.ai_model || DEFAULT_AI_MODEL,
     aiMinScore: row.ai_min_score ?? 60,
     aiAutoArchive: row.ai_auto_archive ?? true,
+    aiApiKeySet: Boolean(apiKey),
+    // Enough to recognise a key, far too little to use one.
+    aiApiKeyHint: apiKey ? `••••${apiKey.slice(-4)}` : '',
 
     updatedAt: row.updated_at,
   };
 }
 
-/** Camel-cased patch → snake_cased column names. Undefined keys are dropped. */
-const COLUMNS: Record<keyof ConfigPatch, keyof ConfigRow> = {
+/**
+ * Camel-cased patch → snake_cased column names. Undefined keys are dropped.
+ * `aiApiKey` is absent on purpose: it needs encrypting, so updateConfig maps
+ * it by hand rather than copying it straight through.
+ */
+const COLUMNS: Record<Exclude<keyof ConfigPatch, 'aiApiKey'>, keyof ConfigRow> = {
   emailNotifications: 'email_notifications',
   pushNotifications: 'push_notifications',
   newLeadsNotification: 'new_leads_notify',
@@ -97,7 +131,13 @@ const COLUMNS: Record<keyof ConfigPatch, keyof ConfigRow> = {
   aiAutoArchive: 'ai_auto_archive',
 };
 
-export type ConfigPatch = Partial<Omit<UserConfig, 'updatedAt'>>;
+/**
+ * A config update. `aiApiKey` is write-only — it has no counterpart on
+ * `UserConfig` because the key never travels back out. Sending '' clears it.
+ */
+export type ConfigPatch = Partial<Omit<UserConfig, 'updatedAt' | 'aiApiKeySet' | 'aiApiKeyHint'>> & {
+  aiApiKey?: string;
+};
 
 export async function getConfig(userId: string): Promise<UserConfig> {
   const { data, error } = await supabase
@@ -126,9 +166,16 @@ export async function getConfig(userId: string): Promise<UserConfig> {
 
 export async function updateConfig(userId: string, patch: ConfigPatch): Promise<UserConfig> {
   const update: Record<string, unknown> = {};
-  for (const [key, column] of Object.entries(COLUMNS) as [keyof ConfigPatch, string][]) {
+  for (const [key, column] of Object.entries(COLUMNS) as [keyof typeof COLUMNS, string][]) {
     const value = patch[key];
     if (value !== undefined) update[column] = value;
+  }
+
+  // The Gemini key is encrypted on the way in and never stored in the clear.
+  // An empty string is a deliberate "forget my key", not a no-op.
+  if (patch.aiApiKey !== undefined) {
+    const key = patch.aiApiKey.trim();
+    update.ai_api_key = key ? encryptSecret(key) : '';
   }
 
   // Nothing to change — return the current row rather than a no-op UPDATE.
@@ -149,6 +196,28 @@ export async function updateConfig(userId: string, patch: ConfigPatch): Promise<
   ) as ConfigRow;
 
   return toDTO(row);
+}
+
+/**
+ * This user's Gemini API key, decrypted. '' when they have not set one (or the
+ * stored value cannot be opened — see `readApiKey`).
+ *
+ * Deliberately a separate call from `getConfig`: the key must reach the
+ * qualifier and nothing else, and keeping it off the config DTO means it
+ * cannot leak through /api/config or /api/internal by accident.
+ */
+export async function getAiApiKey(userId: string): Promise<string> {
+  const { data, error } = await supabase
+    .from('user_config')
+    .select('user_id, ai_api_key')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error('Failed to load the stored AI key', error.message);
+    return '';
+  }
+  return data ? readApiKey(data as ConfigRow) : '';
 }
 
 /** Every user who has scraping switched on — the scrape cycle's work list. */

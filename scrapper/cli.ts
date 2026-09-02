@@ -141,11 +141,15 @@ function userConfigFromCli(file: CliConfig): UserConfig {
       uw.jobsUrl ?? 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
     upworkFetchDetails: uw.fetchDetails ?? false,
     upworkMaxAgeHours: uw.maxAgeHours ?? 5,
+    // The CLI never qualifies: it prints what the scrapers found. Reviewing
+    // would need the user's own Gemini key, which lives in the database.
     aiEnabled: false,
     aiPrompt: '',
-    aiModel: 'claude-opus-5',
+    aiModel: 'gemini-2.5-flash',
     aiMinScore: 60,
     aiAutoArchive: true,
+    aiApiKeySet: false,
+    aiApiKeyHint: '',
     updatedAt: new Date().toISOString(),
   };
 }

@@ -8,7 +8,7 @@ import {
 } from '../services/lead.service';
 import { qualifyLeads } from '../services/ai.service';
 import { notifyNewLeads } from '../services/notification.service';
-import { getConfig } from '../services/config.service';
+import { getAiApiKey, getConfig } from '../services/config.service';
 import {
   getConnectionsForPlatform,
   markCredentialError,
@@ -31,7 +31,9 @@ async function reviewForUser(
   const toReview = leads.filter((l) => !alreadyDone.has(l.id));
   if (!toReview.length) return;
 
-  const verdicts = await qualifyLeads(toReview, config, log);
+  // Fetched here rather than carried on `config`, so the key is read only when
+  // there is actually something to review and never rides along to a scraper.
+  const verdicts = await qualifyLeads(toReview, config, await getAiApiKey(userId), log);
   if (!verdicts.size) return;
 
   const rows: AiReviewToSave[] = [];

@@ -14,8 +14,22 @@ import {
   Check,
   AlertTriangle,
   RotateCcw,
+  Sparkles,
+  Eye,
+  EyeOff,
+  ExternalLink,
 } from 'lucide-react'
-import { ApiError, configApi, type UserConfig } from '@/lib/api'
+import { ApiError, configApi, type AiInfo, type ConfigPatch, type UserConfig } from '@/lib/api'
+
+/** Where to get the key the AI section asks for. */
+const GEMINI_KEY_URL = 'https://aistudio.google.com/apikey'
+
+/** The models the server accepts, with what each one is actually for. */
+const MODEL_LABELS: Record<string, string> = {
+  'gemini-2.5-pro': 'Gemini 2.5 Pro — most accurate, slowest and priciest',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash — recommended balance',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite — cheapest, roughest',
+}
 
 /** Platforms that have a working scraper today. */
 const PLATFORM_LABELS: Record<string, string> = {
@@ -121,6 +135,44 @@ function NumberField({
   )
 }
 
+function TextArea({
+  label,
+  hint,
+  placeholder,
+  value,
+  rows = 6,
+  maxLength,
+  onChange,
+}: {
+  label: string
+  hint?: string
+  placeholder?: string
+  value: string
+  rows?: number
+  maxLength?: number
+  onChange: (v: string) => void
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium mb-1">{label}</label>
+      <textarea
+        value={value}
+        rows={rows}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground placeholder:text-foreground/40 leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/50"
+      />
+      {hint && (
+        <p className="text-xs text-foreground/50 mt-1">
+          {hint}
+          {maxLength ? ` ${value.length}/${maxLength}.` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** Free-form list of short strings, entered as chips. */
 function ChipInput({
   label,
@@ -213,10 +265,19 @@ function ChipInput({
 export default function ConfigPage() {
   const [config, setConfig] = useState<UserConfig | null>(null)
   const [platforms, setPlatforms] = useState<string[]>([])
+  const [ai, setAi] = useState<AiInfo>({ available: false, models: [] })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+
+  // The API key is held apart from `config` because it only ever travels one
+  // way: the server sends back a masked hint, never the key, so it cannot be
+  // an editable field on the config object like everything else here.
+  const [apiKeyDraft, setApiKeyDraft] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
+  /** The user asked to forget the stored key — applied on the next save. */
+  const [clearApiKey, setClearApiKey] = useState(false)
 
   // The last version persisted on the server, so we can diff and reset.
   const baseline = useRef<UserConfig | null>(null)
@@ -224,10 +285,11 @@ export default function ConfigPage() {
   useEffect(() => {
     configApi
       .get()
-      .then(({ config, platforms }) => {
+      .then(({ config, platforms, ai }) => {
         setConfig(config)
         baseline.current = config
         setPlatforms(platforms)
+        setAi(ai)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load your config'))
       .finally(() => setLoading(false))
@@ -238,18 +300,31 @@ export default function ConfigPage() {
     setConfig((prev) => (prev ? { ...prev, ...changes } : prev))
   }
 
+  const keyDirty = apiKeyDraft.trim() !== '' || clearApiKey
   const dirty =
-    !!config && !!baseline.current && JSON.stringify(config) !== JSON.stringify(baseline.current)
+    !!config &&
+    !!baseline.current &&
+    (JSON.stringify(config) !== JSON.stringify(baseline.current) || keyDirty)
 
   async function save() {
     if (!config) return
     setSaving(true)
     setError('')
     try {
-      const { updatedAt, ...body } = config
-      const { config: fresh } = await configApi.update(body)
+      // aiApiKeySet / aiApiKeyHint are server-derived views of the stored key,
+      // so they are dropped rather than sent back.
+      const { updatedAt, aiApiKeySet, aiApiKeyHint, ...body } = config
+      const patch: ConfigPatch = { ...body }
+      if (apiKeyDraft.trim()) patch.aiApiKey = apiKeyDraft.trim()
+      else if (clearApiKey) patch.aiApiKey = ''
+
+      const { config: fresh } = await configApi.update(patch)
       setConfig(fresh)
       baseline.current = fresh
+      setApiKeyDraft('')
+      setClearApiKey(false)
+      setShowApiKey(false)
+      setAi((prev) => ({ ...prev, available: fresh.aiApiKeySet }))
       setSaved(true)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save your config')
@@ -260,6 +335,9 @@ export default function ConfigPage() {
 
   function reset() {
     if (baseline.current) setConfig(baseline.current)
+    setApiKeyDraft('')
+    setClearApiKey(false)
+    setShowApiKey(false)
     setSaved(false)
     setError('')
   }
@@ -475,6 +553,153 @@ export default function ConfigPage() {
               </div>
             </div>
           </div>
+        </Section>
+
+        {/* AI qualification */}
+        <Section
+          icon={<Sparkles className="w-5 h-5" />}
+          title="AI qualification"
+          description="Have Gemini read every scraped lead and judge it against your own criteria, before it reaches your inbox."
+        >
+          {/* The key comes first: nothing else in this section works without it. */}
+          <div>
+            <label className="block text-sm font-medium mb-1" htmlFor="gemini-api-key">
+              Gemini API key
+            </label>
+
+            {config.aiApiKeySet && !clearApiKey && !apiKeyDraft && (
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+                <span className="text-sm text-foreground/70">
+                  A key is saved{' '}
+                  <span className="font-mono text-foreground/50">{config.aiApiKeyHint}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClearApiKey(true)
+                    setSaved(false)
+                  }}
+                  className="text-sm font-medium text-destructive hover:opacity-70"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+
+            {clearApiKey && (
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2">
+                <span className="text-sm text-destructive">
+                  Your key will be deleted when you save.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setClearApiKey(false)}
+                  className="text-sm font-medium hover:opacity-70"
+                >
+                  Undo
+                </button>
+              </div>
+            )}
+
+            <div className="relative">
+              <input
+                id="gemini-api-key"
+                type={showApiKey ? 'text' : 'password'}
+                value={apiKeyDraft}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={
+                  config.aiApiKeySet && !clearApiKey ? 'Enter a new key to replace it' : 'AIza…'
+                }
+                onChange={(e) => {
+                  setApiKeyDraft(e.target.value)
+                  setSaved(false)
+                }}
+                className="w-full pl-3 pr-11 py-2 rounded-lg border border-border bg-secondary text-foreground placeholder:text-foreground/40 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              <button
+                type="button"
+                aria-label={showApiKey ? 'Hide the key' : 'Show the key'}
+                onClick={() => setShowApiKey((v) => !v)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-foreground/40 hover:text-foreground/70"
+              >
+                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
+            <p className="text-xs text-foreground/50 mt-1">
+              Your own key — reviews are billed to your Google account, not ours. Stored encrypted
+              and never shown again after you save.{' '}
+              <a
+                href={GEMINI_KEY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-0.5 text-primary hover:underline"
+              >
+                Get a key <ExternalLink className="w-3 h-3" />
+              </a>
+            </p>
+          </div>
+
+          <Toggle
+            label="Qualify leads with AI"
+            hint="Off means every scraped lead reaches you unjudged."
+            checked={config.aiEnabled}
+            onChange={(aiEnabled) => patch({ aiEnabled })}
+          />
+
+          {config.aiEnabled && !ai.available && !apiKeyDraft && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
+              Qualification is on but no Gemini key is saved, so it will be skipped on every
+              scrape. Add your key above.
+            </div>
+          )}
+
+          <TextArea
+            label="What counts as a qualified lead"
+            hint="Written in your own words — this is the only description of your ideal client the model gets. Be specific about the work you take and what you always reject."
+            placeholder="I build Shopify stores for small brands. Qualified: the poster is hiring, the work is Shopify or front-end, and the budget is at least $500. Reject: agencies recruiting, unpaid or revenue-share offers, and anyone advertising their own services."
+            value={config.aiPrompt}
+            rows={7}
+            maxLength={4000}
+            onChange={(aiPrompt) => patch({ aiPrompt })}
+          />
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Model</label>
+              <select
+                value={config.aiModel}
+                onChange={(e) => patch({ aiModel: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                {ai.models.map((m) => (
+                  <option key={m} value={m}>
+                    {MODEL_LABELS[m] ?? m}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-foreground/50 mt-1">
+                One call per lead, charged to your key.
+              </p>
+            </div>
+
+            <NumberField
+              label="Minimum score"
+              hint="Leads scoring below this (0–100) are rejected."
+              value={config.aiMinScore}
+              min={0}
+              max={100}
+              onChange={(aiMinScore) => patch({ aiMinScore })}
+            />
+          </div>
+
+          <Toggle
+            label="Archive rejected leads"
+            hint="Keeps your inbox to what passed. Rejected leads stay searchable under the Archived filter."
+            checked={config.aiAutoArchive}
+            onChange={(aiAutoArchive) => patch({ aiAutoArchive })}
+          />
         </Section>
 
         {/* Notifications */}

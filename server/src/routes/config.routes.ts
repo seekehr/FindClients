@@ -3,24 +3,12 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/http';
 import { requireAuth } from '../middleware/auth';
 import { getConfig, updateConfig } from '../services/config.service';
-import { aiAvailable } from '../services/ai.service';
-import { PLATFORMS } from '../types';
+import { AI_MODELS, PLATFORMS } from '../types';
 
 export const configRouter = Router();
 configRouter.use(requireAuth);
 
 const platform = z.enum(['upwork', 'twitter', 'discord', 'reddit', 'linkedin']);
-
-/**
- * Models the qualifier may be pointed at. An allow-list rather than free text:
- * a typo here would fail on every lead of every scrape cycle, and the failure
- * would look like "the AI is broken", not "that model does not exist".
- */
-const AI_MODELS = [
-  'claude-opus-5',
-  'claude-sonnet-5',
-  'claude-haiku-4-5',
-] as const;
 
 /**
  * Bounds mirror the CHECK constraints in supabase/migrations/0001_init.sql, so
@@ -57,18 +45,35 @@ const patchSchema = z
     aiModel: z.enum(AI_MODELS),
     aiMinScore: z.number().int().min(0).max(100),
     aiAutoArchive: z.boolean(),
+    /**
+     * The user's own Google Gemini key. Write-only: it is stored encrypted and
+     * never returned — the client gets `aiApiKeySet` and a masked hint back.
+     * '' clears the stored key. The character class rejects the most common
+     * paste mistakes (a trailing newline, a copied "key=" prefix, a whole URL)
+     * before they turn into a 400 from Google on every lead.
+     */
+    aiApiKey: z.union([
+      z.literal(''),
+      z
+        .string()
+        .trim()
+        .min(20, 'That does not look like a Gemini API key.')
+        .max(200)
+        .regex(/^[A-Za-z0-9_-]+$/, 'A Gemini API key contains only letters, digits, - and _.'),
+    ]),
   })
   .partial();
 
 configRouter.get(
   '/',
   asyncHandler(async (req, res) => {
+    const config = await getConfig(req.user!.id);
     res.json({
-      config: await getConfig(req.user!.id),
+      config,
       platforms: PLATFORMS,
       // The Config page needs to distinguish "you switched this off" from
-      // "this server has no API key", which no per-user setting can express.
-      ai: { available: aiAvailable(), models: AI_MODELS },
+      // "you have not given us a key yet", which `aiEnabled` alone cannot say.
+      ai: { available: config.aiApiKeySet, models: AI_MODELS },
     });
   }),
 );

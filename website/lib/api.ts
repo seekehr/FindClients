@@ -194,8 +194,35 @@ export interface UserConfig {
   upworkFetchDetails: boolean
   upworkMaxAgeHours: number
 
+  aiEnabled: boolean
+  aiPrompt: string
+  aiModel: string
+  aiMinScore: number
+  aiAutoArchive: boolean
+  /** Whether a Gemini key is stored. The key itself never leaves the server. */
+  aiApiKeySet: boolean
+  /** Masked tail of the stored key ("••••aB3d"), or '' when there is none. */
+  aiApiKeyHint: string
+
   updatedAt: string
 }
+
+/**
+ * What GET /api/config says about qualification beyond the saved settings:
+ * `available` is false until the user saves their own Gemini API key.
+ */
+export interface AiInfo {
+  available: boolean
+  models: string[]
+}
+
+/**
+ * A config save. `aiApiKey` is write-only — there is no matching field on
+ * `UserConfig` because the server never sends a key back. Send '' to clear it.
+ */
+export type ConfigPatch = Partial<
+  Omit<UserConfig, 'updatedAt' | 'aiApiKeySet' | 'aiApiKeyHint'>
+> & { aiApiKey?: string }
 
 export interface ScrapeRun {
   id: string
@@ -236,8 +263,8 @@ export const authApi = {
 }
 
 export const configApi = {
-  get: () => api<{ config: UserConfig; platforms: string[] }>('/config'),
-  update: (patch: Partial<Omit<UserConfig, 'updatedAt'>>) =>
+  get: () => api<{ config: UserConfig; platforms: string[]; ai: AiInfo }>('/config'),
+  update: (patch: ConfigPatch) =>
     api<{ config: UserConfig }>('/config', { method: 'PUT', body: patch }),
 }
 
