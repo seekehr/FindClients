@@ -7,19 +7,20 @@
  *
  * Run from the `scrapper/` folder:
  *
- *   # Against the session already stored for a user in the app
- *   node ../server/node_modules/tsx/dist/cli.mjs twitter/__smoke.ts --user <userId>
+ *   # Against the session you connected in the app
+ *   node ../server/node_modules/tsx/dist/cli.mjs twitter/__smoke.ts --saved
  *
  *   # Against a cookie header you paste yourself
  *   X_COOKIE="auth_token=…; ct0=…" \
  *     node ../server/node_modules/tsx/dist/cli.mjs twitter/__smoke.ts --keyword "looking to hire"
  *
- * `--user` needs the API server running. `X_HEADLESS=false` shows the browser.
+ * `--saved` reads data/ directly, so the app need not be running.
+ * `X_HEADLESS=false` shows the browser.
  */
 
 import { chromium } from 'playwright';
 import { loadRootEnv } from '../lib/env';
-import { getPlatformConnections } from '../lib/api';
+import { readSavedCookies } from '../lib/local';
 import { loadTwitterRuntimeConfig } from './config';
 import { extractTweetFromArticle } from './index';
 import type { SessionCookie } from '../../server/src/scrapers/types';
@@ -49,7 +50,7 @@ function parseCookieHeader(header: string): SessionCookie[] {
 }
 
 async function main() {
-  const userId = arg('user');
+  const useSaved = process.argv.includes('--saved');
   const keyword = arg('keyword') ?? 'looking for a developer';
 
   let cookies: SessionCookie[] = [];
@@ -59,15 +60,13 @@ async function main() {
     cookies = parseCookieHeader(process.env.X_COOKIE);
     source = `X_COOKIE env (${cookies.length} cookie(s))`;
   }
-  if (userId) {
-    const connections = await getPlatformConnections('twitter');
-    const conn = connections.find((c) => c.userId === userId);
-    if (!conn) {
-      console.error(`No X connection stored for user ${userId}.`);
+  if (useSaved) {
+    cookies = readSavedCookies('twitter');
+    if (!cookies.length) {
+      console.error('No X session saved. Connect X on the Connections page first.');
       process.exit(1);
     }
-    cookies = conn.cookies;
-    source = `stored session for ${userId} (${cookies.length} cookie(s))`;
+    source = `saved session (${cookies.length} cookie(s))`;
   }
 
   const runtime = loadTwitterRuntimeConfig();

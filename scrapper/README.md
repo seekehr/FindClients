@@ -4,20 +4,20 @@ Platform scrapers for FindClients. The server loads [`index.ts`](./index.ts) at 
 
 | Path | What |
 | --- | --- |
-| `twitter/` | X live-search scraper. **Reads `user_config`** (keywords, thresholds) |
-| `upwork/` | Upwork feed scraper. **Ignores user config** — `.env` runtime settings only |
+| `twitter/` | X live-search scraper — keywords, like/view thresholds, age window |
+| `upwork/` | Upwork feed scraper — feed URL, age window, optional detail enrichment |
 | `lib/captcha.ts` | CAPTCHA session manager — remote solving for headless runs |
-| `lib/api.ts` | HTTP client for the server's `/api/internal` |
-| `cli.ts` | Standalone runner, no server needed |
+| `lib/local.ts` | Reads `data/config.json` and `data/credentials.json` for standalone tools |
+| `cli.ts` | Standalone runner, no app needed |
 | `test-captcha.ts` | Headless CAPTCHA test against the 2captcha demo |
 
 ```bash
-npm install && npx playwright install chromium   # one-time
+npm run setup    # from the repository root — installs this and downloads Chromium
 ```
 
 ## Sessions
 
-Both scrapers run on the **connecting user's cookies**, pasted on the app's Connections page, stored encrypted, and handed over as `ScrapeContext.cookies`. No env auth tokens, no local Chrome/CDP. No connection → the scraper returns `[]`.
+Both scrapers run on **your** cookies, pasted on the app's Connections page, saved to `data/credentials.json`, and handed over as `ScrapeContext.cookies`. Each launches its own Chromium — there is no local Chrome to start and no remote-debugging port to open. No saved session → the scraper logs it and returns `[]`.
 
 ## The contract
 
@@ -31,7 +31,7 @@ export const myScraper: Scraper = {
 };
 ```
 
-`ScrapeContext` carries `userId`, `cookies`, `limit`, `log`, and two CAPTCHA fields:
+`ScrapeContext` carries `config` (your saved settings), `cookies`, `limit`, `log`, and two CAPTCHA fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -40,7 +40,7 @@ export const myScraper: Scraper = {
 
 `RawLead`: `{ title, platform, description, budget?, timeline?, url?, author?, tags?, postedAt? }` — `url` drives de-duplication, so prefer a stable permalink.
 
-Keep scrapers side-effect free (fetch → parse → return, never touch the DB). Throwing is safe: the server records it in `scrape_runs` and other scrapers keep running.
+Keep scrapers side-effect free (fetch → parse → return, never write anything). Throwing is safe: the server records the failure in `data/runs.json` and the remaining scrapers still run.
 
 ## CAPTCHA handling
 
@@ -52,7 +52,7 @@ Keep scrapers side-effect free (fetch → parse → return, never touch the DB).
 
 `lib/captcha.ts` owns all of this; the server only exposes the HTTP routes. It types pages as a minimal structural `CaptchaPage` interface (screenshot / mouse / url / title / viewportSize) so the server needs no Playwright dependency — Playwright's `Page` satisfies it.
 
-Detection is keyword-based on URL + title (`captcha`, `challenge`, `verify`, `robot`, `blocked`); solved = those keywords are gone. Override per-site with `registerCaptcha(page, { platform, userId, isSolved })`. After each relayed click it waits for `networkidle` (5s cap) plus 2.5s so new tiles finish loading before the next screenshot.
+Detection is keyword-based on URL + title (`captcha`, `challenge`, `verify`, `robot`, `blocked`); solved = those keywords are gone. Override per-site with `registerCaptcha(page, { platform, isSolved })`. After each relayed click it waits for `networkidle` (5s cap) plus 2.5s so new tiles finish loading before the next screenshot.
 
 ```bash
 npm run test-captcha           # → open http://localhost:3333 and click to solve
@@ -69,21 +69,17 @@ npm run cli
 
 Reads [`cli_config.json`](./cli_config.example.json) (copy from the example). Paste a raw Cookie header into `upwork.cookie` / `twitter.cookie` in this folder. `headless: false` makes the browser visible and sets `interactive`, so CAPTCHAs pause for you.
 
-## Getting user config
+## Getting your config
 
-Scrapers never touch the DB — they ask the server over HTTP through [`lib/api.ts`](./lib/api.ts):
+It arrives on the context — `ctx.config` — already read from `data/config.json` by the server. Both scrapers use it: Twitter for keywords and thresholds, Upwork for the feed URL, age window and whether to enrich from detail pages.
 
-```ts
-const config = await getUserConfig(ctx.userId);   // GET /api/internal/users/:userId/config
-```
+That used to be an authenticated HTTP call to the server's `/api/internal`, so a scraper could run on a different machine from the API. Nothing does, so it was a network round trip into the same process.
 
-Authenticated with `INTERNAL_API_KEY`; `INTERNAL_API_URL` says where the server is. Cached 30s, so a Config-page change lands on the next run. `lib/env.ts` reads the root `.env` directly, so this works loaded in-process **or** standalone.
-
-**Twitter uses this. Upwork deliberately does not** — it scrapes `find-work/most-recent` with no age filter, so a config with a narrow `maxAgeHours` can't silently zero out the run.
+For the standalone tools, [`lib/local.ts`](./lib/local.ts) reads `data/` off disk directly, which is why the smoke tests work with the app stopped.
 
 ## Env
 
-Runtime (machine-level) settings only; search settings live in `user_config`.
+Runtime (machine-level) settings only. What to search for lives in `data/config.json`.
 
 | Var | Default |
 | --- | --- |

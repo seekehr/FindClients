@@ -135,7 +135,7 @@ export default function ConnectionsPage() {
           <div>
             <h1 className="text-4xl font-bold mb-2">Connections</h1>
             <p className="text-foreground/60">
-              Connect your accounts so FindClients can monitor leads on your behalf.
+              Connect your accounts so FindClients can find leads for you.
             </p>
           </div>
           <Button
@@ -163,8 +163,9 @@ export default function ConnectionsPage() {
         <div className="flex items-start gap-3 rounded-xl border border-border/40 bg-secondary/50 p-4">
           <ShieldCheck className="w-5 h-5 text-primary mt-0.5 shrink-0" />
           <p className="text-sm text-foreground/70">
-            Your session is <strong>encrypted at rest</strong> and never shown again after you save
-            it. We never ask for your password. You can disconnect any time.
+            Your session is saved to <strong>data/credentials.json</strong> on this machine and
+            never leaves it. Nothing is uploaded anywhere. We never ask for your password, and you
+            can disconnect any time.
           </p>
         </div>
 

@@ -50,7 +50,7 @@ export default function DashboardPage() {
         {/* Header */}
         <div>
           <h1 className="text-4xl font-bold mb-2">Dashboard</h1>
-          <p className="text-foreground/60">Welcome back! Here&apos;s your lead overview.</p>
+          <p className="text-foreground/60">Your lead overview.</p>
         </div>
 
         {loading ? (

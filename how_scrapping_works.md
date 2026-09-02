@@ -2,49 +2,65 @@
 
 ## When
 
-- **Cron** — every 2 min (`SCRAPE_CRON`), [scheduler/index.ts:22](server/src/scheduler/index.ts:22)
-- **Server startup** — one immediate run
-- **"Scrape now"** — `POST /api/scrape/run`, one user, returns 202
+- **Scheduled** — every 30 minutes by default (`SCRAPE_CRON`), plus up to 2 minutes of random jitter (`SCRAPE_JITTER_MS`), [scheduler/index.ts](server/src/scheduler/index.ts)
+- **"Scrape now"** — `POST /api/scrape/run`, returns 202 immediately and runs in the background
+- **Startup** — only if you set `SCRAPE_ON_START=true`
 
-A `running` flag skips overlapping ticks. Runs take minutes, so most ticks are skipped.
-Off switch: `SCHEDULER_ENABLED=false`, or `user_config.scrape_enabled = false` per user.
+A `running` flag skips a cycle if one is already in progress, and "Scrape now" returns 409 rather than queueing. Runs take minutes, so this matters.
 
-## Why it auto-starts
+Off switches: `SCHEDULER_ENABLED=false` in `.env`, or **Scraping enabled** on the Config page.
 
-Config is written at **sign-up**, not scrape time. New accounts default to
-`scrape_enabled = true` + 5 keywords ([0001_init.sql:61](supabase/migrations/0001_init.sql:61)).
-That's why the log searches phrases you never typed.
-
-## How
+## The cycle
 
 ```
-runScrapeCycle()
-  ├─ per scraper (parallel): every user with saved cookies
-  │    └─ per user (serial): load their config → scrape → insert → AI review
-  └─ notifyNewLeads()
+runScrapeCycle()                       server/src/scrapers/runner.ts
+  ├─ read config.json
+  ├─ per scraper, one at a time:
+  │    ├─ skip if the platform isn't enabled in your config
+  │    ├─ skip if you haven't connected an account for it
+  │    ├─ scrape()  → raw leads
+  │    ├─ insertLeads()  → de-dupe into leads.json
+  │    └─ AI review of anything without a verdict yet
+  └─ notifyNewLeads()  → in-app feed + Discord webhook
 ```
 
-- **Eligibility = a `credentials` row.** No cookies, no scrape.
-- **Keywords aren't passed in.** The scraper fetches its own config over HTTP
-  (`GET /api/internal/users/:id/config`), so it can run out-of-process.
-- **Per-user** (DB): keywords, thresholds, limits. **Per-machine** (`.env`): headless, UA, proxies, cron.
-- **After:** dedupe on `sha1(platform + url||title)` into a *global* pool → AI review with the
-  user's own Gemini key → notifications.
+**Serial, not parallel.** Each scraper launches its own Chromium. Two of those competing for a machine you are actively working on is the difference between a background task and a laptop that stops responding.
 
-## Gotchas
+**Config is passed in, not fetched.** `ScrapeContext.config` carries your settings straight into `scrape()`. This used to be an authenticated HTTP call to the server's own `/api/internal` route — a boundary that existed so a scraper could run on a different machine. Nothing does, so the scraper was making a network round trip to the process it was already inside.
 
-1. **Upwork ignores `user_config`** — feed URL hardcoded ([upwork/index.ts:299](scrapper/upwork/index.ts:299)); `upwork_jobs_url`, `upwork_max_age_hours`, `upwork_fetch_details` do nothing.
-2. **Keywords 3–5 never run** — total capped at `leadsPerRun` (25), 15 per keyword → 15+10 and done.
-3. **Upwork leads rarely notify** — notifications need a keyword match; Upwork jobs come from a feed, not a search.
-4. **`ctx.since` never set** — every cycle re-scrapes the same window, dedup catches it.
-5. **AI summary log swallowed** — `reviewForUser` passes `() => {}` ([runner.ts:110](server/src/scrapers/runner.ts:110)).
-6. **"Scrape now" can be dropped** if a background cycle is mid-run.
-7. **CAPTCHA sessions are in-memory** — die on restart, break with >1 instance.
-8. **Lead pool is global** — users see leads their own cookies never fetched.
+**Eligibility is a saved session.** No cookies for a platform, no scrape of it.
 
-## Log
+## De-duplication
 
-`found` = scraped, `inserted` = new to the pool. High found / zero inserted is dedup working, not breakage.
+Every lead gets `sha1(platform + (url || title))`. Already in `leads.json` → skipped. Listed in `dismissed.json` → skipped, which is what makes "Clear leads" stick instead of being undone by the next cycle. Bookmarked leads are never cleared.
 
-Upwork `feed not visible yet — nudging` = stale cookies or a challenge page. Burns ~35s per
-attempt, 3 attempts, holding the cycle open.
+`inserted` (genuinely new) drives notifications. `all` (new *and* already-known) is what the AI pass runs over, so switching qualification on later reviews the backlog rather than only new arrivals.
+
+## Where each setting comes from
+
+| Kind | Lives in | Examples |
+| --- | --- | --- |
+| What to look for | `data/config.json`, edited on the Config page | keywords, thresholds, limits, Upwork feed URL, AI criteria and key |
+| How this machine runs a browser | root `.env` | headless, user agent, proxies, timeouts, cron |
+
+Adding a `KEYWORDS` variable to `.env` would do nothing. That split is why.
+
+## Reading the log
+
+```
+[Upwork] scrape started
+[Upwork] collected 40 job(s)
+[Upwork] dropped 12 job(s) older than 5h
+[Upwork] scrape finished — found 28, inserted 3
+```
+
+`found` = returned by the scraper. `inserted` = new to `leads.json`. **High found, zero inserted is de-duplication working, not breakage** — it means the feed had nothing new since last time, which is the normal steady state.
+
+`feed not visible yet — nudging` means stale cookies or a challenge page. It burns ~35s per attempt, three attempts, holding the cycle open. Re-paste your cookies on the Connections page.
+
+## Known rough edges
+
+1. **Keywords past the first two rarely run.** Twitter collects up to `twitterLimitPerKeyword` (15) per keyword but stops at `leadsPerRun` (25) overall — so keyword 1 gets 15, keyword 2 gets 10, and keywords 3+ never execute. Raise `leadsPerRun` or cut your keyword list.
+2. **Upwork leads rarely notify.** Notifications require a keyword match, but Upwork jobs come from a feed rather than a keyword search, so most of them match nothing in your list.
+3. **`ctx.since` is never set.** Every cycle re-scrapes the same window and relies on de-duplication to absorb it. Harmless, but it is why `found` stays high.
+4. **CAPTCHA sessions live in memory.** They do not survive a restart — if you restart mid-challenge, the run is lost and the next cycle starts over.

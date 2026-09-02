@@ -10,7 +10,7 @@
  * Run from the `scrapper/` folder:
  *
  *   # 1. Against the session already stored for a user in the app
- *   node ../server/node_modules/tsx/dist/cli.mjs upwork/__smoke.ts --user <userId>
+ *   node ../server/node_modules/tsx/dist/cli.mjs upwork/__smoke.ts --saved
  *
  *   # 2. Against a cookie header you paste yourself
  *   UPWORK_COOKIE="master_access_token=…; oauth2_global_js_token=…" \
@@ -19,23 +19,21 @@
  *   # 3. No session at all — checks the feed is reachable and what it serves
  *   node ../server/node_modules/tsx/dist/cli.mjs upwork/__smoke.ts
  *
- * `--user` needs the API server running (it reads the session over
- * /api/internal). `UPWORK_HEADLESS=false` lets you watch the browser work.
+ * `--saved` uses the session and settings you connected in the app (read
+ * straight from data/, so the app does not need to be running).
+ * `UPWORK_HEADLESS=false` lets you watch the browser work.
  */
 
 import { chromium } from 'playwright';
 import { loadRootEnv } from '../lib/env';
-import { getPlatformConnections, getUserConfig } from '../lib/api';
+import { readSavedConfig, readSavedCookies } from '../lib/local';
 import { loadUpworkConfig, loadUpworkRuntimeConfig } from './config';
 import { parseJobTile, upworkScraper } from './index';
 import type { SessionCookie } from '../../server/src/scrapers/types';
 
 loadRootEnv();
 
-const argUser = (() => {
-  const i = process.argv.indexOf('--user');
-  return i >= 0 ? process.argv[i + 1] : undefined;
-})();
+const useSaved = process.argv.includes('--saved');
 
 /** Parse a raw `Cookie:` header into the cookie shape Playwright wants. */
 function parseCookieHeader(header: string): SessionCookie[] {
@@ -128,22 +126,16 @@ async function main() {
     source = `UPWORK_COOKIE env (${cookies.length} cookie(s))`;
   }
 
-  if (argUser) {
-    const connections = await getPlatformConnections('upwork');
-    const conn = connections.find((c) => c.userId === argUser);
-    if (!conn) {
-      console.error(
-        `No Upwork connection stored for user ${argUser}. ` +
-          'Connect Upwork on the app\'s Connections page first.',
-      );
+  const saved = readSavedConfig();
+
+  if (useSaved) {
+    cookies = readSavedCookies('upwork');
+    if (!cookies.length) {
+      console.error('No Upwork session saved. Connect Upwork on the Connections page first.');
       process.exit(1);
     }
-    cookies = conn.cookies;
-    jobsUrl = conn.config.upworkJobsUrl || jobsUrl;
-    source = `stored session for ${argUser} (${cookies.length} cookie(s))`;
-  } else if (argUser === undefined && process.env.SMOKE_USER_CONFIG) {
-    const config = await getUserConfig(process.env.SMOKE_USER_CONFIG);
-    jobsUrl = config.upworkJobsUrl || jobsUrl;
+    jobsUrl = saved?.upworkJobsUrl || jobsUrl;
+    source = `saved session (${cookies.length} cookie(s))`;
   }
 
   const cfg = loadUpworkConfig({ jobsUrl, maxAgeHours: 24, fetchDetails: false });
@@ -155,15 +147,13 @@ async function main() {
 
   console.log('');
   console.log('── full scrape() ───────────────────────────────');
-  if (cookies.length && !argUser) {
-    // scrape() reads the running user's saved search settings over
-    // /api/internal, and a pasted cookie header has no user behind it.
-    console.log('skipped: pass --user <userId> to exercise scrape() with a stored session.');
+  if (!saved) {
+    console.log('skipped: no data/config.json yet — start the app once to create it.');
     return;
   }
   const started = Date.now();
   const leads = await upworkScraper.scrape({
-    userId: argUser ?? '00000000-0000-0000-0000-000000000000',
+    config: { ...saved, upworkJobsUrl: jobsUrl },
     cookies,
     limit: 10,
     log: (m) => console.log('   ', m),

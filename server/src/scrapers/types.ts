@@ -1,23 +1,22 @@
-import type { Platform, RawLead, SessionCookie, UserConfig } from '../types';
+import type { AppConfig, Platform, RawLead, SessionCookie } from '../types';
 import type { CaptchaPage } from '../../../scrapper/lib/captcha';
 
 // Re-exported so the scrapper workspace has one import site for these.
-export type { Platform, RawLead, SessionCookie, UserConfig, CaptchaPage };
+export type { AppConfig, Platform, RawLead, SessionCookie, CaptchaPage };
 
 /**
- * Context handed to every scraper run. Scraping is per-user: each run is driven
- * by one connected user's session cookies (pasted from their browser).
+ * Context handed to every scraper run.
  *
- * Note what is deliberately *absent*: the user's configuration. Scrapers fetch
- * that themselves from the server's `/api/internal` endpoint (see
- * `scrapper/lib/api.ts`), so they depend on an HTTP contract rather than on
- * being handed state by their caller — which is what lets them run
- * out-of-process without changing.
+ * The config is passed in rather than fetched. It used to arrive over an
+ * authenticated HTTP call to the server's own `/api/internal` route — a
+ * service boundary that existed so a scraper could run on a different machine
+ * from the API. Nothing runs on a different machine any more, so the scraper
+ * was making a network round trip to the process it was already inside of.
  */
 export interface ScrapeContext {
-  /** The user this run is scraping on behalf of. */
-  userId: string;
-  /** The user's decrypted session cookies for this platform, ready to inject. */
+  /** Your saved settings — keywords, thresholds, limits, the Upwork feed. */
+  config: AppConfig;
+  /** Your session cookies for this platform, ready to inject. */
   cookies: SessionCookie[];
   /** Only return leads posted at/after this time, when the source supports it. */
   since?: Date;
@@ -25,14 +24,14 @@ export interface ScrapeContext {
   limit: number;
   log: (msg: string) => void;
   /**
-   * When true the scraper may pause on a CAPTCHA and wait for the user to solve
-   * it in the visible browser window. Only set in non-headless / CLI mode.
+   * When true the scraper may pause on a CAPTCHA and wait for it to be solved
+   * in the visible browser window. Only set in non-headless / CLI mode.
    */
   interactive?: boolean;
   /**
    * Called when a CAPTCHA is detected. Hands off the Playwright page for remote
-   * solving (screenshot → user clicks → relay). Returns true if solved.
-   * When not provided, the scraper waits interactively or skips.
+   * solving (screenshot → click → relay). Returns true if solved. When not
+   * provided, the scraper waits interactively or skips.
    */
   onCaptcha?: (page: CaptchaPage, platform: string) => Promise<boolean>;
 }

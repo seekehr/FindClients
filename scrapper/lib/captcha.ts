@@ -13,7 +13,6 @@ interface CaptchaSession {
   resolve: (solved: boolean) => void;
   createdAt: number;
   platform: string;
-  userId: string;
   isSolved?: (page: CaptchaPage) => Promise<boolean>;
 }
 
@@ -54,7 +53,6 @@ async function defaultIsSolved(page: CaptchaPage): Promise<boolean> {
 
 export interface RegisterOptions {
   platform: string;
-  userId: string;
   isSolved?: (page: CaptchaPage) => Promise<boolean>;
 }
 
@@ -72,7 +70,6 @@ export async function registerCaptcha(
       resolve,
       createdAt: Date.now(),
       platform: opts.platform,
-      userId: opts.userId,
       isSolved: opts.isSolved,
     });
 
@@ -92,19 +89,18 @@ export async function registerCaptcha(
   });
 }
 
-export function getActiveCaptcha(userId: string): CaptchaChallenge | null {
+export function getActiveCaptcha(): CaptchaChallenge | null {
+  // One person, one browser: there is at most one challenge waiting at a time.
   for (const [sessionId, s] of sessions) {
-    if (s.userId === userId) {
-      const viewport = s.page.viewportSize() ?? { width: 1280, height: 900 };
-      return {
-        sessionId,
-        platform: s.platform,
-        screenshot: s.screenshot.toString('base64'),
-        width: viewport.width,
-        height: viewport.height,
-        createdAt: s.createdAt,
-      };
-    }
+    const viewport = s.page.viewportSize() ?? { width: 1280, height: 900 };
+    return {
+      sessionId,
+      platform: s.platform,
+      screenshot: s.screenshot.toString('base64'),
+      width: viewport.width,
+      height: viewport.height,
+      createdAt: s.createdAt,
+    };
   }
   return null;
 }

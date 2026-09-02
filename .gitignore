@@ -1,19 +1,21 @@
-# v0 sandbox internal files
-__v0_runtime_loader.js
-__v0_devtools.tsx
-__v0_jsx-dev-runtime.ts
-.snowflake/
-.v0-trash/
-.vercel/
+# Your data — leads, config, saved sessions. Never commit this.
+data/
 
-# Environment variables
-.env*.local
+# Environment — everything except the committed template.
+# Broad on purpose: .env.backup, .env.old and friends hold real keys too.
+.env*
+!.env.example
 
-# Common ignores
+# Dependencies and build output
 node_modules
 .next/
-.DS_Store
+dist/
 
-.env
+# Editor / OS
+.DS_Store
 .claude/
 .cursor/
+*.log
+
+# Build metadata
+*.tsbuildinfo

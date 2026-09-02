@@ -1,7 +1,6 @@
 {
   "headless": false,
   "limit": 10,
-  "userId": "cli-test",
   "upwork": {
     "jobsUrl": "https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop",
     "fetchDetails": false,

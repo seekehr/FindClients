@@ -21,7 +21,6 @@ import {
 
 const PORT = Number(process.env.TEST_CAPTCHA_PORT) || 3333;
 const DEMO_URL = 'https://2captcha.com/demo/recaptcha-v2';
-const USER_ID = 'test-captcha';
 
 const HTML = `<!DOCTYPE html>
 <html>
@@ -198,7 +197,7 @@ async function main() {
     }
 
     if (url.pathname === '/api/captcha' && req.method === 'GET') {
-      jsonRes(res, 200, { challenge: getActiveCaptcha(USER_ID) });
+      jsonRes(res, 200, { challenge: getActiveCaptcha() });
       return;
     }
 
@@ -247,7 +246,7 @@ async function main() {
   });
 
   console.log('Registering CAPTCHA with solver…');
-  const solved = await registerCaptcha(page, { platform: 'test', userId: USER_ID });
+  const solved = await registerCaptcha(page, { platform: 'test' });
 
   console.log(solved ? '\nCAPTCHA was solved successfully!' : '\nCAPTCHA was NOT solved (timed out or dismissed).');
 

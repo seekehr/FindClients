@@ -1,11 +1,9 @@
-import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'FindClients - Lead Monitoring Platform',
-  description: 'Monitor and manage leads from Upwork, Twitter, Discord, and more',
-  generator: 'v0.app',
+  title: 'FindClients',
+  description: 'Self-hosted lead discovery for freelancers.',
   icons: {
     icon: [
       {
@@ -42,7 +40,6 @@ export default function RootLayout({
     <html lang="en" className="bg-background">
       <body className="antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )

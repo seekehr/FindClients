@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { AI_MODELS, DEFAULT_AI_MODEL, type AiVerdict, type LeadDTO, type UserConfig } from '../types';
+import { AI_MODELS, DEFAULT_AI_MODEL, type AiVerdict, type LeadDTO, type AppConfig } from '../types';
 
 /**
  * AI lead qualification.
@@ -180,7 +180,7 @@ async function generate(model: string, apiKey: string, leadText: string, criteri
   return text;
 }
 
-async function reviewOne(lead: LeadDTO, config: UserConfig, apiKey: string): Promise<LeadReview> {
+async function reviewOne(lead: LeadDTO, config: AppConfig, apiKey: string): Promise<LeadReview> {
   const model = isAiModel(config.aiModel) ? config.aiModel : DEFAULT_AI_MODEL;
 
   try {
@@ -234,7 +234,7 @@ async function inBatches<T, R>(
  */
 export async function qualifyLeads(
   leads: LeadDTO[],
-  config: UserConfig,
+  config: AppConfig,
   apiKey: string,
   log: (msg: string) => void = () => undefined,
 ): Promise<Map<string, LeadReview>> {

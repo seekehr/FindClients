@@ -1,67 +1,12 @@
-// Lightweight API client for the FindClients backend.
+// API client for the FindClients backend.
 //
-// Authentication is Supabase Auth, brokered by the API server: /auth/login and
-// /auth/register return a Supabase access token (short-lived) plus a refresh
-// token. `api()` transparently refreshes an expired access token once and
-// replays the request, so callers never have to think about token lifetime.
+// There is no authentication. The server runs on your machine, bound to
+// localhost, and serves this page — so a request from here is already coming
+// from the only person allowed to make it. When the app is started with
+// `npm start` the site and the API share one origin and one port, which is why
+// the default base URL is a bare `/api`.
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
-
-const TOKEN_KEY = 'fc_token'
-const REFRESH_KEY = 'fc_refresh'
-const USER_KEY = 'fc_user'
-
-export interface SessionUser {
-  id: string
-  email: string
-  fullName: string
-  plan: string
-}
-
-export interface AuthResponse {
-  user: SessionUser
-  token?: string
-  refreshToken?: string
-  expiresAt?: number | null
-  needsEmailConfirmation?: boolean
-}
-
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-export function getRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null
-  return localStorage.getItem(REFRESH_KEY)
-}
-
-export function getStoredUser(): SessionUser | null {
-  if (typeof window === 'undefined') return null
-  const raw = localStorage.getItem(USER_KEY)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as SessionUser
-  } catch {
-    return null
-  }
-}
-
-export function setSession(auth: AuthResponse) {
-  if (auth.token) localStorage.setItem(TOKEN_KEY, auth.token)
-  if (auth.refreshToken) localStorage.setItem(REFRESH_KEY, auth.refreshToken)
-  localStorage.setItem(USER_KEY, JSON.stringify(auth.user))
-}
-
-export function setStoredUser(user: SessionUser) {
-  localStorage.setItem(USER_KEY, JSON.stringify(user))
-}
-
-export function clearSession() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(REFRESH_KEY)
-  localStorage.removeItem(USER_KEY)
-}
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api'
 
 export class ApiError extends Error {
   status: number
@@ -74,71 +19,41 @@ export class ApiError extends Error {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
-  /** Internal: set when replaying a request after a token refresh. */
-  _retried?: boolean
-}
-
-/** In-flight refresh, shared so concurrent 401s trigger only one round trip. */
-let refreshInFlight: Promise<boolean> | null = null
-
-async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshInFlight) {
-    refreshInFlight = (async () => {
-      try {
-        const refreshToken = getRefreshToken()
-        const res = await fetch(`${API_URL}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(refreshToken ? { refreshToken } : {}),
-        })
-        if (!res.ok) return false
-        const data = (await res.json()) as AuthResponse
-        setSession(data)
-        return true
-      } catch {
-        return false
-      } finally {
-        setTimeout(() => (refreshInFlight = null), 0)
-      }
-    })()
-  }
-  return refreshInFlight
 }
 
 export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const token = getToken()
-  if (token) headers.Authorization = `Bearer ${token}`
-
   let res: Response
   try {
     res = await fetch(`${API_URL}${path}`, {
       method: opts.method ?? 'GET',
-      headers,
-      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     })
   } catch {
-    throw new ApiError(0, `Cannot reach the API at ${API_URL}. Is the server running?`)
+    throw new ApiError(0, `Cannot reach the API at ${API_URL}. Is the app running?`)
   }
 
   const data = await res.json().catch(() => ({}))
-
   if (!res.ok) {
-    if (res.status === 401 && !opts._retried) {
-      if (await refreshAccessToken()) {
-        return api<T>(path, { ...opts, _retried: true })
-      }
-    }
-    if (res.status === 401) clearSession()
     throw new ApiError(res.status, (data as { error?: string })?.error ?? res.statusText)
   }
-
   return data as T
 }
 
 // ── Types ─────────────────────────────────────────────────
+export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived'
+
+/** Platform-specific extras a scraper collected (client hire rate, views, …). */
+export type LeadMetadata = Record<string, string | number | boolean | null>
+
+export interface LeadAiReview {
+  verdict: 'qualified' | 'rejected' | 'error' | null
+  score: number | null
+  reason: string
+  model: string
+  checkedAt: string | null
+}
+
 export interface Lead {
   id: string
   title: string
@@ -149,10 +64,13 @@ export interface Lead {
   url: string | null
   author: string | null
   tags: string[]
+  metadata: LeadMetadata
   postedAt: string
   postedTime: string
-  status: string
+  status: LeadStatus
   bookmarked: boolean
+  ai: LeadAiReview
+  createdAt: string
 }
 
 export interface Paginated<T> {
@@ -170,10 +88,8 @@ export interface Connection {
   lastError: string | null
 }
 
-/** Mirrors UserConfig on the server (public.user_config). */
+/** Mirrors AppConfig on the server (data/config.json). */
 export interface UserConfig {
-  emailNotifications: boolean
-  pushNotifications: boolean
   newLeadsNotification: boolean
   discordWebhookUrl: string
 
@@ -199,9 +115,9 @@ export interface UserConfig {
   aiModel: string
   aiMinScore: number
   aiAutoArchive: boolean
-  /** Whether a Gemini key is stored. The key itself never leaves the server. */
+  /** Whether a Gemini key is saved. The key itself never leaves the server. */
   aiApiKeySet: boolean
-  /** Masked tail of the stored key ("••••aB3d"), or '' when there is none. */
+  /** Masked tail of the saved key ("••••aB3d"), or '' when there is none. */
   aiApiKeyHint: string
 
   updatedAt: string
@@ -209,7 +125,7 @@ export interface UserConfig {
 
 /**
  * What GET /api/config says about qualification beyond the saved settings:
- * `available` is false until the user saves their own Gemini API key.
+ * `available` is false until a Gemini API key is saved.
  */
 export interface AiInfo {
   available: boolean
@@ -235,40 +151,38 @@ export interface ScrapeRun {
   finishedAt: string | null
 }
 
-// ── Endpoint helpers ──────────────────────────────────────
-export const authApi = {
-  login: (email: string, password: string) =>
-    api<AuthResponse>('/auth/login', { method: 'POST', body: { email, password } }),
-
-  register: (email: string, password: string, fullName: string) =>
-    api<AuthResponse>('/auth/register', {
-      method: 'POST',
-      body: { email, password, fullName },
-    }),
-
-  me: () => api<{ user: SessionUser }>('/auth/me'),
-
-  updateProfile: (patch: { fullName?: string; email?: string }) =>
-    api<{ user: SessionUser }>('/auth/me', { method: 'PATCH', body: patch }),
-
-  changePassword: (currentPassword: string, newPassword: string) =>
-    api<{ ok: boolean }>('/auth/change-password', {
-      method: 'POST',
-      body: { currentPassword, newPassword },
-    }),
-
-  logout: () => api<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
-
-  deleteAccount: () => api<{ ok: boolean }>('/auth/me', { method: 'DELETE' }),
+export interface ScrapeStatus {
+  running: boolean
+  runs: { id: string; platform: string; startedAt: string }[]
+  lastFinishedAt: string | null
 }
 
+export interface CaptchaChallenge {
+  sessionId: string
+  platform: string
+  screenshot: string
+  width: number
+  height: number
+  createdAt: number
+}
+
+export interface Notification {
+  id: string
+  type: string
+  title: string
+  message: string
+  leadId: string | null
+  read: boolean
+  createdAt: string
+}
+
+// ── Endpoint helpers ──────────────────────────────────────
 export const configApi = {
   get: () => api<{ config: UserConfig; platforms: string[]; ai: AiInfo }>('/config'),
   update: (patch: ConfigPatch) =>
     api<{ config: UserConfig }>('/config', { method: 'PUT', body: patch }),
+  reset: () => api<{ config: UserConfig }>('/config/reset', { method: 'POST' }),
 }
-
-export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived'
 
 export const leadsApi = {
   list: (params: Record<string, string | number | undefined> = {}) => {
@@ -297,7 +211,10 @@ export const bookmarksApi = {
 export const credentialsApi = {
   list: () => api<{ platforms: string[]; connections: Connection[] }>('/credentials'),
   connect: (platform: string, cookies: string) =>
-    api<{ connection: Connection }>(`/credentials/${platform}`, { method: 'PUT', body: { cookies } }),
+    api<{ connection: Connection }>(`/credentials/${platform}`, {
+      method: 'PUT',
+      body: { cookies },
+    }),
   disconnect: (platform: string) => api(`/credentials/${platform}`, { method: 'DELETE' }),
 }
 
@@ -314,28 +231,24 @@ export const analyticsApi = {
     }>('/analytics/overview'),
   platforms: () =>
     api<{ data: { platform: string; count: number; percentage: number }[] }>('/analytics/platforms'),
-  trend: (days = 14) => api<{ data: { date: string; count: number }[] }>(`/analytics/trend?days=${days}`),
+  trend: (days = 14) =>
+    api<{ data: { date: string; count: number }[] }>(`/analytics/trend?days=${days}`),
   scrapeRuns: () => api<{ data: ScrapeRun[] }>('/analytics/scrape-runs'),
 }
 
-export interface ScrapeStatus {
-  running: boolean
-  runs: { id: string; platform: string; startedAt: string }[]
-  lastFinishedAt: string | null
-}
-
-export interface CaptchaChallenge {
-  sessionId: string
-  platform: string
-  screenshot: string
-  width: number
-  height: number
-  createdAt: number
+export const notificationsApi = {
+  list: (unreadOnly = false) =>
+    api<{ data: Notification[]; unread: number }>(
+      `/notifications${unreadOnly ? '?unread=true' : ''}`,
+    ),
+  markRead: (id: string) => api<{ ok: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
+  markAllRead: () => api<{ ok: boolean }>('/notifications/read-all', { method: 'POST' }),
 }
 
 export const scrapeApi = {
-  run: () => api<{ ok: boolean; summary: unknown }>('/scrape/run', { method: 'POST' }),
+  run: () => api<{ ok: boolean; started: boolean }>('/scrape/run', { method: 'POST' }),
   status: () => api<ScrapeStatus>('/scrape/status'),
+  runs: () => api<{ data: ScrapeRun[] }>('/scrape/runs'),
   captcha: () => api<{ challenge: CaptchaChallenge | null }>('/scrape/captcha'),
   captchaClick: (sessionId: string, x: number, y: number) =>
     api<{ screenshot: string; solved: boolean }>('/scrape/captcha/click', {

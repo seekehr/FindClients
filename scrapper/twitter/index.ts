@@ -7,7 +7,6 @@ import {
 } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext, SessionCookie } from '../../server/src/scrapers/types';
 import { loadTwitterConfig, type TwitterConfig } from './config';
-import { getUserConfig } from '../lib/api';
 
 /**
  * X/Twitter scraper — a TypeScript translation of a Playwright-based reference
@@ -302,19 +301,18 @@ export const twitterScraper: Scraper = {
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> {
     const hasAuth = ctx.cookies.some((c) => c.name === 'auth_token');
     if (!hasAuth) {
-      ctx.log('no X auth_token cookie for this user — skipping');
+      ctx.log('no X auth_token cookie — connect your X account first');
       return [];
     }
 
-    // Ask the server for this user's saved config. Search settings come from
-    // there; only the browser runtime comes from the environment.
-    const userConfig = await getUserConfig(ctx.userId);
+    // Search settings come from your saved config; only the browser runtime
+    // (headless, proxies, user agent) comes from the environment.
     const config = loadTwitterConfig({
-      keywords: userConfig.keywords,
-      scrapeLimitPerKeyword: userConfig.twitterLimitPerKeyword,
-      minimumPostLikes: userConfig.twitterMinLikes,
-      minimumPostViews: userConfig.twitterMinViews,
-      maxPostAgeHours: userConfig.maxPostAgeHours,
+      keywords: ctx.config.keywords,
+      scrapeLimitPerKeyword: ctx.config.twitterLimitPerKeyword,
+      minimumPostLikes: ctx.config.twitterMinLikes,
+      minimumPostViews: ctx.config.twitterMinViews,
+      maxPostAgeHours: ctx.config.maxPostAgeHours,
     });
 
     const keywords = config.keywords;

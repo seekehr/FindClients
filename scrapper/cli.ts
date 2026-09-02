@@ -10,9 +10,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadRootEnv } from './lib/env';
-import { seedUserConfig } from './lib/api';
 import { scrapers } from './index';
-import type { SessionCookie, UserConfig } from '../server/src/scrapers/types';
+import type { AppConfig, SessionCookie } from '../server/src/scrapers/types';
 
 loadRootEnv();
 
@@ -38,7 +37,6 @@ interface PlatformCliConfig {
 interface CliConfig {
   headless?: boolean;
   limit?: number;
-  userId?: string;
   upwork?: PlatformCliConfig;
   twitter?: PlatformCliConfig;
 }
@@ -117,12 +115,15 @@ function loadConfig(filePath: string): CliConfig {
   }
 }
 
-function userConfigFromCli(file: CliConfig): UserConfig {
+/**
+ * Build the config the scrapers expect out of cli_config.json, so the CLI
+ * drives exactly the same code path the app does without reading the app's
+ * data/config.json.
+ */
+function configFromCli(file: CliConfig): AppConfig {
   const tw = file.twitter ?? {};
   const uw = file.upwork ?? {};
   return {
-    emailNotifications: false,
-    pushNotifications: false,
     newLeadsNotification: false,
     discordWebhookUrl: '',
     platforms: ['upwork', 'twitter'],
@@ -142,7 +143,7 @@ function userConfigFromCli(file: CliConfig): UserConfig {
     upworkFetchDetails: uw.fetchDetails ?? false,
     upworkMaxAgeHours: uw.maxAgeHours ?? 5,
     // The CLI never qualifies: it prints what the scrapers found. Reviewing
-    // would need the user's own Gemini key, which lives in the database.
+    // would need your Gemini key, which lives in data/config.json.
     aiEnabled: false,
     aiPrompt: '',
     aiModel: 'gemini-2.5-flash',
@@ -157,7 +158,7 @@ function userConfigFromCli(file: CliConfig): UserConfig {
 async function runOne(
   platform: string,
   cfg: CliConfig,
-  userId: string,
+  config: AppConfig,
   limit: number,
   configDir: string,
 ): Promise<void> {
@@ -188,7 +189,7 @@ async function runOne(
   const headless = cfg.headless ?? true;
   const started = Date.now();
   const leads = await scraper.scrape({
-    userId,
+    config,
     cookies,
     limit,
     log: (m) => console.log('  ', m),
@@ -203,14 +204,13 @@ async function runOne(
 async function main() {
   const configPath = path.resolve(ROOT, 'cli_config.json');
   const cfg = loadConfig(configPath);
-  const userId = cfg.userId || 'cli-test';
   const limit = cfg.limit || 10;
   const headless = cfg.headless ?? true;
 
   process.env.UPWORK_HEADLESS = headless ? 'true' : 'false';
   process.env.X_HEADLESS = headless ? 'true' : 'false';
 
-  seedUserConfig(userId, userConfigFromCli(cfg));
+  const config = configFromCli(cfg);
 
   console.log('config  :', configPath);
   console.log('headless:', headless);
@@ -218,7 +218,7 @@ async function main() {
 
   const configDir = path.dirname(configPath);
   for (const scraper of scrapers) {
-    await runOne(scraper.platform, cfg, userId, limit, configDir);
+    await runOne(scraper.platform, cfg, config, limit, configDir);
     console.log('');
   }
 }

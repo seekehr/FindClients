@@ -1,16 +1,16 @@
 {
-  "name": "my-project",
-  "version": "0.1.0",
+  "name": "findclients-website",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
-    "@vercel/analytics": "1.6.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",

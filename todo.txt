@@ -1,18 +1,8 @@
-Im confused. if each individual user will have different keywords and stuff scraped, how does it automatically start scraping without user feedback/input?
+Okay, so we're basically re-writing everything to make project open-source and
+essentially remove all the billing/auth/landing page (make a minimal one that serves
+as basically a tutorial page) etc slop. So we can also remove unnecessary
+features like the captcha solver, since now we can just open a browser window
+and have the user solve captcha manually. Also, we should try to automate things like
+the debug Chrome window for Upwork.
 
-test Upwork scrapping.
-
-IMP: test manual captcha solving in website, it works in test. 
-one known bug is that it sends ss while image is loading. (might be fixed idk)
-
-Make it automatically log you in (save login cookies) when website loads. 
-Also add more information to the twitter leads and other stuff.
-
-REALLY IMP: Implement the AI checking part with user-config'd prompt that analyzes 
-each lead to make sure it's qualified.
-
-6. Remove unnecessary info from landing page (eg the sidebar)
-6.5. Test Website
-7. Test X scrapper works (add its auth token too)
-8. Test Upwork scrapper works (it requires cookies + headless chrome browser)
 FINAL STEP: Take a list of vibe-coded website features and ask claude to remove them from this website

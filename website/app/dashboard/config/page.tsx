@@ -371,7 +371,7 @@ export default function ConfigPage() {
         <div>
           <h1 className="text-4xl font-bold mb-2">Config</h1>
           <p className="text-foreground/60">
-            Everything here is stored on your account and drives the next scrape cycle.
+            Everything here is saved to data/config.json and drives the next scrape cycle.
           </p>
         </div>
 
@@ -456,11 +456,11 @@ export default function ConfigPage() {
         <Section
           icon={<Radar className="w-5 h-5" />}
           title="Scraping"
-          description="How hard the scrapers work on your behalf."
+          description="How hard the scrapers work."
         >
           <Toggle
             label="Scraping enabled"
-            hint="Turn off to pause all scraping for your account."
+            hint="Turn off to pause all scraping."
             checked={config.scrapeEnabled}
             onChange={(scrapeEnabled) => patch({ scrapeEnabled })}
           />
@@ -714,17 +714,6 @@ export default function ConfigPage() {
             checked={config.newLeadsNotification}
             onChange={(newLeadsNotification) => patch({ newLeadsNotification })}
           />
-          <Toggle
-            label="Email notifications"
-            checked={config.emailNotifications}
-            onChange={(emailNotifications) => patch({ emailNotifications })}
-          />
-          <Toggle
-            label="Push notifications"
-            checked={config.pushNotifications}
-            onChange={(pushNotifications) => patch({ pushNotifications })}
-          />
-
           <div>
             <label className="block text-sm font-medium mb-1">Discord webhook</label>
             <input

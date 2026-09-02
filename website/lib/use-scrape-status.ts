@@ -9,7 +9,7 @@ const ACTIVE_POLL_MS = 5_000
 const EMPTY: ScrapeStatus = { running: false, runs: [], lastFinishedAt: null }
 
 /**
- * Tracks whether a scrape is in flight for the signed-in user.
+ * Tracks whether a scrape is in flight.
  *
  * Polls slowly when idle and quickly while a run is active, and calls
  * `onFinished` on the running → idle edge so a page can refresh the data a

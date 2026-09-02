@@ -2,11 +2,10 @@ import { logger } from '../utils/logger';
 import type { Scraper } from './types';
 
 /**
- * Dynamically load the user-implemented scrapers from the top-level
- * `scrapper/` folder. Wrapped in try/catch so a missing or broken user scraper
- * never takes the server down.
+ * Load the scrapers from the top-level `scrapper/` folder. Wrapped in
+ * try/catch so a broken scraper never takes the whole app down with it.
  */
-export async function loadUserScrapers(): Promise<Scraper[]> {
+export async function loadScrapers(): Promise<Scraper[]> {
   try {
     const mod = (await import('../../../scrapper/index.js')) as unknown as {
       scrapers?: Scraper[];

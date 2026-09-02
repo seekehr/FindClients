@@ -1,228 +1,161 @@
-import { supabase, unwrap } from '../db/supabase';
-import { cache } from '../cache';
+import crypto from 'node:crypto';
+import { dismissedStore, leadsStore } from '../store';
 import { sourceHash } from '../utils/ids';
 import { relativeTime } from '../utils/time';
 import { sanitizeMetadata, sanitizeNullable, sanitizeText } from '../utils/text';
-import { badRequest, HttpError } from '../utils/http';
-import { logger } from '../utils/logger';
-import type {
-  AiVerdict,
-  LeadDTO,
-  LeadMetadata,
-  LeadRow,
-  LeadStatus,
-  Platform,
-  RawLead,
+import { badRequest } from '../utils/http';
+import {
+  LEAD_STATUSES,
+  type AiVerdict,
+  type Lead,
+  type LeadDTO,
+  type LeadStatus,
+  type RawLead,
 } from '../types';
 
-const VALID_STATUS: LeadStatus[] = ['new', 'viewed', 'contacted', 'won', 'archived'];
+/**
+ * Leads, stored as one array in data/leads.json and filtered in memory.
+ *
+ * This replaced a Postgres pool joined to per-user rows through a plpgsql
+ * function. With one person's leads on one machine, `Array.prototype.filter`
+ * is both faster than the round trip it replaced and considerably easier to
+ * be sure about.
+ */
 
-/** One row as returned by the list_leads / get_lead SQL functions. */
-interface LeadWithUserState {
-  id: string;
-  title: string;
-  platform: Platform;
-  description: string;
-  budget: string | null;
-  timeline: string | null;
-  url: string | null;
-  author: string | null;
-  tags: string[] | null;
-  metadata: LeadMetadata | null;
-  posted_at: string;
-  created_at: string;
-  status: LeadStatus;
-  bookmarked: boolean;
-  ai_verdict: AiVerdict | null;
-  ai_score: number | null;
-  ai_reason: string | null;
-  ai_checked_at: string | null;
-  total_count?: number;
+function toDTO(lead: Lead): LeadDTO {
+  return { ...lead, postedTime: relativeTime(lead.postedAt) };
 }
 
-function toDTO(row: LeadWithUserState): LeadDTO {
-  return {
-    id: row.id,
-    title: row.title,
-    platform: row.platform,
-    description: row.description,
-    budget: row.budget,
-    timeline: row.timeline,
-    url: row.url,
-    author: row.author,
-    tags: row.tags ?? [],
-    metadata: row.metadata ?? {},
-    postedAt: row.posted_at,
-    postedTime: relativeTime(row.posted_at),
-    status: row.status ?? 'new',
-    bookmarked: row.bookmarked ?? false,
-    ai: {
-      verdict: row.ai_verdict ?? null,
-      score: row.ai_score ?? null,
-      reason: row.ai_reason ?? '',
-      checkedAt: row.ai_checked_at ?? null,
-    },
-    createdAt: row.created_at,
-  };
+/** Newest first — the only order the UI ever wants. */
+function byNewest(a: Lead, b: Lead): number {
+  return new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime();
 }
 
 export interface ListLeadsParams {
-  userId: string;
   platform?: string;
   q?: string;
   status?: string;
   bookmarked?: boolean;
-  /** 'qualified' | 'rejected' | 'unchecked' — this user's AI verdict. */
+  /** 'qualified' | 'rejected' | 'unchecked' */
   ai?: string;
   page?: number;
   limit?: number;
 }
 
-export async function listLeads(params: ListLeadsParams) {
+export function listLeads(params: ListLeadsParams) {
   const page = Math.max(1, params.page ?? 1);
   const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+  const needle = params.q?.trim().toLowerCase();
 
-  const rows = unwrap(
-    await supabase.rpc('list_leads', {
-      p_user_id: params.userId,
-      p_platform: params.platform ?? null,
-      p_status: params.status ?? null,
-      p_q: params.q ?? null,
-      p_bookmarked: params.bookmarked ?? false,
-      p_ai: params.ai ?? null,
-      p_limit: limit,
-      p_offset: (page - 1) * limit,
-    }),
-    'listing leads',
-  ) as LeadWithUserState[];
+  const matched = leadsStore.data.filter((lead) => {
+    if (params.platform && lead.platform !== params.platform) return false;
+    if (params.status && lead.status !== params.status) return false;
+    if (params.bookmarked && !lead.bookmarked) return false;
 
-  // total_count is a window function over the filtered set, so it is the same
-  // on every row and absent only when the page is empty.
-  const total = rows.length ? Number(rows[0].total_count ?? 0) : 0;
+    if (params.ai === 'unchecked' && lead.ai.verdict !== null) return false;
+    if (params.ai === 'qualified' && lead.ai.verdict !== 'qualified') return false;
+    if (params.ai === 'rejected' && lead.ai.verdict !== 'rejected') return false;
+
+    if (needle) {
+      const haystack = [lead.title, lead.description, lead.author ?? '', lead.tags.join(' ')]
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    return true;
+  });
+
+  matched.sort(byNewest);
+
+  const total = matched.length;
+  const start = (page - 1) * limit;
 
   return {
-    data: rows.map(toDTO),
+    data: matched.slice(start, start + limit).map(toDTO),
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) || 1 },
   };
 }
 
-export async function getLead(userId: string, id: string): Promise<LeadDTO | null> {
-  // A malformed id would make Postgres reject the uuid cast; treat it as absent.
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-
-  const rows = unwrap(
-    await supabase.rpc('get_lead', { p_user_id: userId, p_lead_id: id }),
-    'loading a lead',
-  ) as LeadWithUserState[];
-  return rows.length ? toDTO(rows[0]) : null;
+function find(id: string): Lead | undefined {
+  return leadsStore.data.find((lead) => lead.id === id);
 }
 
-async function upsertUserLead(
-  userId: string,
-  leadId: string,
-  patch: { status?: LeadStatus; bookmarked?: boolean },
-) {
-  const { data: existing } = await supabase
-    .from('user_leads')
-    .select('status, bookmarked')
-    .eq('user_id', userId)
-    .eq('lead_id', leadId)
-    .maybeSingle();
-
-  const current = existing as { status: LeadStatus; bookmarked: boolean } | null;
-  const status = patch.status ?? current?.status ?? 'new';
-  const bookmarked = patch.bookmarked ?? current?.bookmarked ?? false;
-
-  unwrap(
-    await supabase
-      .from('user_leads')
-      .upsert(
-        { user_id: userId, lead_id: leadId, status, bookmarked, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,lead_id' },
-      )
-      .select('status, bookmarked')
-      .single(),
-    'saving your lead',
-  );
-
-  cache.invalidatePrefix(`leads:${userId}`);
-  return { status, bookmarked };
+export function getLead(id: string): LeadDTO | null {
+  const lead = find(id);
+  return lead ? toDTO(lead) : null;
 }
 
-export function setLeadStatus(userId: string, leadId: string, status: LeadStatus) {
-  if (!VALID_STATUS.includes(status)) throw badRequest(`Invalid status: ${status}`);
-  return upsertUserLead(userId, leadId, { status });
+export function setLeadStatus(id: string, status: LeadStatus) {
+  if (!LEAD_STATUSES.includes(status)) throw badRequest(`Invalid status: ${status}`);
+  const lead = find(id);
+  if (!lead) return null;
+  lead.status = status;
+  lead.updatedAt = new Date().toISOString();
+  leadsStore.save();
+  return { status: lead.status, bookmarked: lead.bookmarked };
 }
 
-export function setBookmark(userId: string, leadId: string, bookmarked: boolean) {
-  return upsertUserLead(userId, leadId, { bookmarked });
-}
-
-/** A lead row as it comes back from the pool, before per-user state exists. */
-function rowToFreshDTO(row: LeadRow): LeadDTO {
-  return {
-    id: row.id,
-    title: row.title,
-    platform: row.platform,
-    description: row.description,
-    budget: row.budget,
-    timeline: row.timeline,
-    url: row.url,
-    author: row.author,
-    tags: row.tags ?? [],
-    metadata: row.metadata ?? {},
-    postedAt: row.posted_at,
-    postedTime: relativeTime(row.posted_at),
-    status: 'new',
-    bookmarked: false,
-    ai: { verdict: null, score: null, reason: '', checkedAt: null },
-    createdAt: row.created_at,
-  };
+export function setBookmark(id: string, bookmarked: boolean) {
+  const lead = find(id);
+  if (!lead) return null;
+  lead.bookmarked = bookmarked;
+  lead.updatedAt = new Date().toISOString();
+  leadsStore.save();
+  return { status: lead.status, bookmarked: lead.bookmarked };
 }
 
 export interface InsertLeadsResult {
-  /** Leads that were not already in the shared pool. Drives notifications. */
+  /** Leads that were genuinely new. Drives notifications. */
   inserted: LeadDTO[];
   /**
-   * Every lead this batch referred to, new or not. A lead another user's
-   * scrape found yesterday is still new *to this user*, so this is what the
-   * per-user AI qualification pass runs over.
+   * Every lead this batch referred to, new or not. A lead found last week but
+   * never reviewed — because qualification was switched off at the time — is
+   * still waiting for a verdict, so this is what the AI pass runs over.
    */
   all: LeadDTO[];
 }
 
 /**
- * Insert leads discovered by a scraper, skipping ones already in the pool.
- *
- * De-duplication is the source_hash unique index: `ignoreDuplicates` turns the
- * insert into ON CONFLICT DO NOTHING, and the returned `inserted` rows are
- * exactly the ones that were genuinely new — which is what the caller fans
- * notifications out over.
+ * Store leads discovered by a scraper, skipping ones already known and ones
+ * that were explicitly cleared away.
  */
-export async function insertLeads(raw: RawLead[]): Promise<InsertLeadsResult> {
+export function insertLeads(raw: RawLead[]): InsertLeadsResult {
   if (!raw.length) return { inserted: [], all: [] };
 
-  const nowIso = new Date().toISOString();
+  const now = new Date().toISOString();
+  const byHash = new Map(leadsStore.data.map((lead) => [lead.sourceHash, lead]));
+  const dismissed = new Set(dismissedStore.data);
+
+  const inserted: Lead[] = [];
+  const all: Lead[] = [];
   const seen = new Set<string>();
-  const rows: Omit<LeadRow, 'id' | 'created_at'>[] = [];
 
   for (const r of raw) {
     const hash = sourceHash(r.platform, r.url, r.title);
-    // A single scrape run can surface the same post twice; Postgres rejects a
-    // statement that conflicts with itself, so collapse duplicates up front.
+
+    // One run can surface the same post twice (two keywords, one tweet).
     if (seen.has(hash)) continue;
     seen.add(hash);
 
-    // A scraper may report a date we can't parse; fall back to "now" rather
+    // Cleared away on purpose — do not drag it back in.
+    if (dismissed.has(hash)) continue;
+
+    const existing = byHash.get(hash);
+    if (existing) {
+      all.push(existing);
+      continue;
+    }
+
+    // A scraper may report a date we cannot parse; fall back to "now" rather
     // than throwing and losing every other lead in the batch.
     const parsed = r.postedAt ? new Date(r.postedAt) : null;
-    const postedAt =
-      parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : nowIso;
+    const postedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : now;
 
-    // A scraper can hand us text Postgres will refuse — a lone surrogate from
-    // slicing an emoji in half, or a NUL byte. Left alone, one bad field fails
-    // the whole batch and the entire run's leads are lost.
-    rows.push({
+    // Scraped text can contain a lone surrogate from slicing an emoji in half,
+    // or a stray NUL. Left alone it would make the whole file unparseable on
+    // the next boot, costing every lead in it.
+    const lead: Lead = {
+      id: crypto.randomUUID(),
       title: sanitizeText(r.title),
       platform: r.platform,
       description: sanitizeText(r.description ?? ''),
@@ -232,53 +165,33 @@ export async function insertLeads(raw: RawLead[]): Promise<InsertLeadsResult> {
       author: sanitizeNullable(r.author),
       tags: (r.tags ?? []).map(sanitizeText),
       metadata: sanitizeMetadata(r.metadata),
-      source_hash: hash,
-      posted_at: postedAt,
-    });
+      sourceHash: hash,
+      postedAt,
+      createdAt: now,
+      updatedAt: now,
+      status: 'new',
+      bookmarked: false,
+      ai: { verdict: null, score: null, reason: '', model: '', checkedAt: null },
+    };
+
+    leadsStore.data.push(lead);
+    byHash.set(hash, lead);
+    inserted.push(lead);
+    all.push(lead);
   }
 
-  const inserted = unwrap(
-    await supabase
-      .from('leads')
-      .upsert(rows, { onConflict: 'source_hash', ignoreDuplicates: true })
-      .select(),
-    'saving discovered leads',
-  ) as LeadRow[];
+  if (inserted.length) leadsStore.save();
 
-  if (inserted.length) cache.clear();
-
-  // Re-read the whole batch by hash. `ignoreDuplicates` deliberately says
-  // nothing about the rows it skipped, and those are exactly the leads that
-  // are old to the pool but new to this user.
-  const hashes = rows.map((r) => r.source_hash);
-  const all = unwrap(
-    await supabase.from('leads').select('*').in('source_hash', hashes),
-    'loading discovered leads',
-  ) as LeadRow[];
-
-  return { inserted: inserted.map(rowToFreshDTO), all: all.map(rowToFreshDTO) };
+  return { inserted: inserted.map(toDTO), all: all.map(toDTO) };
 }
 
-/** Which of these leads has this user already reviewed or dismissed? */
-export async function leadsAlreadyReviewed(
-  userId: string,
-  leadIds: string[],
-): Promise<Set<string>> {
-  if (!leadIds.length) return new Set();
-
-  const rows = unwrap(
-    await supabase
-      .from('user_leads')
-      .select('lead_id, status, ai_checked_at')
-      .eq('user_id', userId)
-      .in('lead_id', leadIds),
-    'loading reviewed leads',
-  ) as { lead_id: string; status: string; ai_checked_at: string | null }[];
-
+/** Which of these leads already carry a verdict? */
+export function leadsAlreadyReviewed(leadIds: string[]): Set<string> {
+  const wanted = new Set(leadIds);
   return new Set(
-    rows
-      .filter((r) => r.status === 'dismissed' || r.ai_checked_at !== null)
-      .map((r) => r.lead_id),
+    leadsStore.data
+      .filter((lead) => wanted.has(lead.id) && lead.ai.checkedAt !== null)
+      .map((lead) => lead.id),
   );
 }
 
@@ -293,74 +206,61 @@ export interface AiReviewToSave {
 }
 
 /**
- * Record this user's AI verdicts. Upserts into user_leads, so a lead the user
- * has already bookmarked or moved along their pipeline keeps that state — the
- * verdict is extra information about the lead, not a reset of it.
+ * Record AI verdicts. A verdict is extra information about a lead, not a reset
+ * of it: a lead already bookmarked or moved along the pipeline keeps that.
  */
-export async function saveAiReviews(
-  userId: string,
-  reviews: AiReviewToSave[],
-): Promise<void> {
+export function saveAiReviews(reviews: AiReviewToSave[]): void {
   if (!reviews.length) return;
-
-  const { data: existingRows } = await supabase
-    .from('user_leads')
-    .select('lead_id, status, bookmarked')
-    .eq('user_id', userId)
-    .in('lead_id', reviews.map((r) => r.leadId));
-
-  const existing = new Map(
-    ((existingRows ?? []) as { lead_id: string; status: LeadStatus; bookmarked: boolean }[]).map(
-      (row) => [row.lead_id, row],
-    ),
-  );
-
   const now = new Date().toISOString();
-  const rows = reviews.map((review) => {
-    const current = existing.get(review.leadId);
-    // Only archive a lead the user has not touched. Someone who already marked
-    // a lead "contacted" has overruled the model by acting on it.
-    const shouldArchive =
-      review.archive && review.verdict === 'rejected' && (current?.status ?? 'new') === 'new';
+  let changed = false;
 
-    return {
-      user_id: userId,
-      lead_id: review.leadId,
-      status: shouldArchive ? 'archived' : current?.status ?? 'new',
-      bookmarked: current?.bookmarked ?? false,
-      ai_verdict: review.verdict,
-      ai_score: review.score,
-      ai_reason: sanitizeText(review.reason),
-      ai_model: review.model,
-      ai_checked_at: now,
-      updated_at: now,
+  for (const review of reviews) {
+    const lead = find(review.leadId);
+    if (!lead) continue;
+
+    lead.ai = {
+      verdict: review.verdict,
+      score: review.score,
+      reason: sanitizeText(review.reason),
+      model: review.model,
+      checkedAt: now,
     };
-  });
 
-  unwrap(
-    await supabase
-      .from('user_leads')
-      .upsert(rows, { onConflict: 'user_id,lead_id' })
-      .select('lead_id'),
-    'saving AI reviews',
-  );
-
-  cache.invalidatePrefix(`leads:${userId}`);
-}
-
-export async function clearLeads(userId: string): Promise<number> {
-  const { data, error } = await supabase.rpc('clear_leads_for_user', { p_user_id: userId });
-  if (error) {
-    logger.error(`clearLeads RPC failed: ${error.message}`, error.details);
-    throw new HttpError(500, 'Database error while clearing your leads');
+    // Only archive a lead you have not touched. Marking one "contacted" is
+    // overruling the model by acting on it.
+    if (review.archive && review.verdict === 'rejected' && lead.status === 'new') {
+      lead.status = 'archived';
+    }
+    lead.updatedAt = now;
+    changed = true;
   }
-  cache.invalidatePrefix(`leads:${userId}`);
-  return (data as number) ?? 0;
+
+  if (changed) leadsStore.save();
 }
 
-export async function totalLeadCount(): Promise<number> {
-  const { count, error } = await supabase
-    .from('leads')
-    .select('id', { count: 'exact', head: true });
-  return error ? 0 : (count ?? 0);
+/**
+ * Clear every lead except bookmarks.
+ *
+ * Their source hashes are remembered so the next scrape does not simply find
+ * the same posts and put them all back.
+ */
+export function clearLeads(): number {
+  const keep: Lead[] = [];
+  const dismissed = new Set(dismissedStore.data);
+
+  for (const lead of leadsStore.data) {
+    if (lead.bookmarked) keep.push(lead);
+    else dismissed.add(lead.sourceHash);
+  }
+
+  const removed = leadsStore.data.length - keep.length;
+  if (!removed) return 0;
+
+  leadsStore.data = keep;
+  dismissedStore.data = [...dismissed];
+  return removed;
+}
+
+export function totalLeadCount(): number {
+  return leadsStore.data.length;
 }

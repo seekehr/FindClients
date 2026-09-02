@@ -1,4 +1,3 @@
-import { supabase } from '../db/supabase';
 import { logger } from '../utils/logger';
 import {
   insertLeads,
@@ -8,205 +7,143 @@ import {
 } from '../services/lead.service';
 import { qualifyLeads } from '../services/ai.service';
 import { notifyNewLeads } from '../services/notification.service';
+import { finishRun, startRun } from '../services/analytics.service';
 import { getAiApiKey, getConfig } from '../services/config.service';
 import {
-  getConnectionsForPlatform,
+  getConnection,
   markCredentialError,
   markCredentialUsed,
 } from '../services/credential.service';
-import { loadUserScrapers } from './loader';
+import { loadScrapers } from './loader';
 import { registerCaptcha } from '../services/captcha.service';
-import type { LeadDTO, RawLead, SessionCookie, UserConfig } from '../types';
+import type { AppConfig, LeadDTO } from '../types';
 import type { Scraper } from './types';
 
-async function reviewForUser(
-  userId: string,
-  leads: LeadDTO[],
-  config: UserConfig,
-  log: (msg: string) => void,
-): Promise<void> {
+/**
+ * One scrape cycle: run every enabled scraper you have connected an account
+ * for, store what they find, qualify it, and announce it.
+ *
+ * Scrapers run one after another rather than in parallel. Each one drives its
+ * own Chromium instance, and two of those competing for the machine you are
+ * working on is the difference between a background task and a laptop that
+ * stops responding.
+ */
+
+async function review(leads: LeadDTO[], config: AppConfig, log: (msg: string) => void) {
   if (!config.aiEnabled || !leads.length) return;
 
-  const alreadyDone = await leadsAlreadyReviewed(userId, leads.map((l) => l.id));
+  const alreadyDone = leadsAlreadyReviewed(leads.map((l) => l.id));
   const toReview = leads.filter((l) => !alreadyDone.has(l.id));
   if (!toReview.length) return;
 
-  // Fetched here rather than carried on `config`, so the key is read only when
-  // there is actually something to review and never rides along to a scraper.
-  const verdicts = await qualifyLeads(toReview, config, await getAiApiKey(userId), log);
+  // Read the key only when there is actually something to review, so it is
+  // never held in memory during the scrape itself.
+  const verdicts = await qualifyLeads(toReview, config, getAiApiKey(), log);
   if (!verdicts.size) return;
 
   const rows: AiReviewToSave[] = [];
-  for (const [leadId, review] of verdicts) {
+  for (const [leadId, verdict] of verdicts) {
     rows.push({
       leadId,
-      verdict: review.verdict,
-      score: review.score,
-      reason: review.reason,
-      model: review.model,
+      verdict: verdict.verdict,
+      score: verdict.score,
+      reason: verdict.reason,
+      model: verdict.model,
       archive: config.aiAutoArchive,
     });
   }
 
-  await saveAiReviews(userId, rows);
+  saveAiReviews(rows);
 }
 
 let running = false;
 
-interface RunSummary {
+export interface RunSummary {
   totalFound: number;
   totalInserted: number;
-  perPlatform: Record<string, { runs: number; found: number; inserted: number }>;
-  skipped: number;
+  perPlatform: Record<string, { found: number; inserted: number }>;
+  skipped: string[];
 }
 
-export interface RunOptions {
-  /** Limit the cycle to one user (the manual "Scrape now" button). */
-  userId?: string;
-}
+async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: number; inserted: LeadDTO[] }> {
+  const cookies = getConnection(scraper.platform);
+  if (!cookies) return { found: 0, inserted: [] };
 
-async function runOne(
-  scraper: Scraper,
-  userId: string,
-  cookies: SessionCookie[],
-  config: UserConfig,
-): Promise<{ inserted: LeadDTO[]; found: number; error?: string }> {
-  // Open the audit row first so a run is visible while it is still going.
-  // A failure here must not stop the scrape, but it must not be silent either —
-  // without the row there is no record that the run ever happened.
-  const { data: run, error: runError } = await supabase
-    .from('scrape_runs')
-    .insert({ user_id: userId, platform: scraper.platform, status: 'running' })
-    .select('id')
-    .single();
-
-  if (runError) {
-    logger.error(
-      `[${scraper.name}] could not record a scrape run for ${userId}: ${runError.message}`,
-      runError.details ?? runError.hint ?? '',
-    );
-  }
-  const runId = (run as { id: string } | null)?.id;
-
-  logger.info(`[${scraper.name}] scrape started`);
+  const run = startRun(scraper.platform);
+  const log = (msg: string) => logger.info(`[${scraper.name}] ${msg}`);
+  log('scrape started');
 
   try {
-    let raw: RawLead[];
+    let raw;
     try {
       raw = await scraper.scrape({
-        userId,
+        config,
         cookies,
         limit: config.leadsPerRun,
-        log: (msg) => logger.info(`[${scraper.name}] ${msg}`),
-        onCaptcha: (page, platform) => registerCaptcha(page, { platform, userId }),
+        log,
+        onCaptcha: (page, platform) => registerCaptcha(page, { platform }),
       });
     } catch (err) {
-      await markCredentialError(userId, scraper.platform, (err as Error).message);
+      markCredentialError(scraper.platform, (err as Error).message);
       throw err;
     }
 
-    const { inserted, all } = await insertLeads(raw);
+    const { inserted, all } = insertLeads(raw);
+    await review(all, config, log);
 
-    await reviewForUser(userId, all, config, () => {});
-
-    if (runId) {
-      const { error } = await supabase
-        .from('scrape_runs')
-        .update({
-          status: 'success',
-          found: raw.length,
-          inserted: inserted.length,
-          finished_at: new Date().toISOString(),
-        })
-        .eq('id', runId);
-      if (error) logger.error(`Could not close scrape run ${runId}: ${error.message}`);
-    }
-    await markCredentialUsed(userId, scraper.platform);
-    logger.info(`[${scraper.name}] scrape finished — found ${raw.length}, inserted ${inserted.length}`);
-    return { inserted, found: raw.length };
+    finishRun(run.id, { status: 'success', found: raw.length, inserted: inserted.length });
+    markCredentialUsed(scraper.platform);
+    log(`scrape finished — found ${raw.length}, inserted ${inserted.length}`);
+    return { found: raw.length, inserted };
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
-    if (runId) {
-      const { error } = await supabase
-        .from('scrape_runs')
-        .update({ status: 'error', error: message, finished_at: new Date().toISOString() })
-        .eq('id', runId);
-      if (error) logger.error(`Could not close scrape run ${runId}: ${error.message}`);
-    }
+    finishRun(run.id, { status: 'error', error: message });
     logger.error(`[${scraper.name}] scrape failed`, message);
-    return { inserted: [], found: 0, error: message };
+    return { found: 0, inserted: [] };
   }
 }
 
-/**
- * Run every scraper for every user who has connected that platform, using that
- * user's own configuration (keywords, limits, platform selection, tuning).
- * Leads flow into the shared pool, de-duplicated by source_hash; notifications
- * then fan out to each user by their own filters.
- */
-export async function runScrapeCycle(options: RunOptions = {}): Promise<RunSummary> {
+export async function runScrapeCycle(): Promise<RunSummary> {
+  const summary: RunSummary = {
+    totalFound: 0,
+    totalInserted: 0,
+    perPlatform: {},
+    skipped: [],
+  };
+
   if (running) {
-    logger.warn('Scrape cycle already in progress — skipping this tick');
-    return { totalFound: 0, totalInserted: 0, perPlatform: {}, skipped: 0 };
+    logger.warn('A scrape is already in progress — skipping this one');
+    return summary;
   }
   running = true;
 
-  const summary: RunSummary = { totalFound: 0, totalInserted: 0, perPlatform: {}, skipped: 0 };
-  const allNew: LeadDTO[] = [];
-  // One config read per user per cycle, not per scraper.
-  const configs = new Map<string, UserConfig>();
-
-  async function configFor(userId: string): Promise<UserConfig | null> {
-    if (!configs.has(userId)) {
-      try {
-        configs.set(userId, await getConfig(userId));
-      } catch (err) {
-        logger.warn(`Could not load config for ${userId}`, (err as Error).message);
-        return null;
-      }
-    }
-    return configs.get(userId) ?? null;
-  }
-
   try {
-    const scrapers = await loadUserScrapers();
+    const config = getConfig();
 
-    async function runScraper(scraper: Scraper) {
-      let connections = await getConnectionsForPlatform(scraper.platform);
-      if (options.userId) connections = connections.filter((c) => c.userId === options.userId);
-
-      const bucket = { runs: 0, found: 0, inserted: 0 };
-      summary.perPlatform[scraper.platform] = bucket;
-
-      if (!connections.length) return;
-
-      for (const conn of connections) {
-        const config = await configFor(conn.userId);
-        if (!config) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        if (!config.scrapeEnabled) {
-          summary.skipped += 1;
-          continue;
-        }
-        if (config.platforms.length && !config.platforms.includes(scraper.platform)) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        const { inserted, found } = await runOne(scraper, conn.userId, conn.cookies, config);
-        bucket.runs += 1;
-        bucket.found += found;
-        bucket.inserted += inserted.length;
-        summary.totalFound += found;
-        summary.totalInserted += inserted.length;
-        allNew.push(...inserted);
-      }
+    if (!config.scrapeEnabled) {
+      logger.info('Scraping is switched off in your config — nothing to do');
+      return summary;
     }
 
-    await Promise.all(scrapers.map(runScraper));
+    const scrapers = await loadScrapers();
+    const allNew: LeadDTO[] = [];
+
+    for (const scraper of scrapers) {
+      if (config.platforms.length && !config.platforms.includes(scraper.platform)) {
+        summary.skipped.push(`${scraper.platform} (not enabled in your config)`);
+        continue;
+      }
+      if (!getConnection(scraper.platform)) {
+        summary.skipped.push(`${scraper.platform} (no account connected)`);
+        continue;
+      }
+
+      const { found, inserted } = await runOne(scraper, config);
+      summary.perPlatform[scraper.platform] = { found, inserted: inserted.length };
+      summary.totalFound += found;
+      summary.totalInserted += inserted.length;
+      allNew.push(...inserted);
+    }
 
     if (allNew.length) await notifyNewLeads(allNew);
   } finally {
@@ -214,4 +151,9 @@ export async function runScrapeCycle(options: RunOptions = {}): Promise<RunSumma
   }
 
   return summary;
+}
+
+/** Whether a cycle is in flight, for the manual "Scrape now" button. */
+export function isScraping(): boolean {
+  return running;
 }

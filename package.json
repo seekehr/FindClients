@@ -1,0 +1,17 @@
+{
+  "name": "findclients",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted lead discovery for freelancers. Scrapes Upwork and X, qualifies with Gemini, runs entirely on your machine.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "start": "node scripts/start.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --prefix website",
+    "typecheck": "npm run typecheck --prefix server"
+  }
+}

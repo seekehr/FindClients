@@ -1,27 +1,22 @@
 import { chromium, type ElementHandle, type Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
-import { loadUpworkRuntimeConfig, type UpworkRuntimeConfig } from './config';
+import { loadUpworkConfig, type UpworkRuntimeConfig } from './config';
 
 /**
- * Upwork scraper — a TypeScript translation of a Playwright reference
- * scraper + monitor. It launches a headless Chromium, injects the connecting
- * user's Upwork session cookies (provided per-user through the app), pages
- * through the "most recent" feed until jobs exceed the age cutoff, optionally
- * enriches each job from its detail page, and maps everything to `RawLead`s.
+ * Upwork scraper.
  *
- * Design notes vs. the reference:
- *  - The reference had two scripts (deep scrape + polling monitor) and connected
- *    to a local Chrome over CDP. Here they collapse into ONE idempotent
- *    `scrape()` driven by per-user cookies — the server's scheduler provides the
- *    polling, and the server de-duplicates by URL, so re-seeing a job is a no-op
- *    and only genuinely new jobs surface.
- *  - Side-effect free: no CSV/JSON files, no Discord calls — persistence and
- *    notifications are the server's job.
- *  - CAPTCHAs can't be solved from a headless server process, so instead of
- *    blocking on stdin we detect them, log, and return what we have.
+ * Launches its own Chromium and injects the Upwork session cookies you saved
+ * on the Connections page — there is no Chrome to start by hand and no
+ * remote-debugging port to open. It pages through the configured feed until
+ * jobs exceed the age cutoff, optionally enriches each one from its detail
+ * page, and maps everything to `RawLead`s.
  *
- * Requires: the user's Upwork cookies (via ScrapeContext.cookies). Without them
- * the scraper returns [] (logged), so the pipeline stays healthy.
+ * Side-effect free by design: no files written, no webhooks called. Storing,
+ * de-duplicating and announcing leads is the server's job, which is what makes
+ * re-seeing the same job on the next cycle a no-op.
+ *
+ * Without cookies the scraper returns [] and says so in the log, rather than
+ * throwing and taking the cycle down with it.
  */
 
 export interface UpworkJob {
@@ -180,7 +175,7 @@ async function handleChallenge(
   if (!(await looksLikeChallenge(page))) return false;
   if (ctx.interactive) return !(await waitForCaptchaSolved(page, ctx.log));
   if (ctx.onCaptcha) {
-    ctx.log('CAPTCHA detected — waiting for user to solve via dashboard');
+    ctx.log('CAPTCHA detected — waiting for you to solve it in the dashboard');
     const solved = await ctx.onCaptcha(page, 'upwork');
     if (solved) {
       ctx.log('CAPTCHA solved via dashboard — resuming');
@@ -290,15 +285,21 @@ export const upworkScraper: Scraper = {
 
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> {
     if (!ctx.cookies.length) {
-      ctx.log('no Upwork session cookies for this user — skipping');
+      ctx.log('no Upwork session cookies — connect your Upwork account first');
       return [];
     }
 
-    const cfg = loadUpworkRuntimeConfig();
+    // Search settings come from your saved config; only the browser runtime
+    // (headless, user agent, timeouts) comes from the environment.
+    const cfg = loadUpworkConfig({
+      jobsUrl: ctx.config.upworkJobsUrl,
+      maxAgeHours: ctx.config.upworkMaxAgeHours,
+      fetchDetails: ctx.config.upworkFetchDetails,
+    });
 
     const browser = await chromium.launch({ headless: cfg.headless });
 
-    const feedUrl = 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop';
+    const feedUrl = cfg.jobsUrl;
 
     const seen = new Set<string>();
     const jobs: UpworkJob[] = [];
@@ -377,7 +378,7 @@ export const upworkScraper: Scraper = {
 
       ctx.log(`collected ${jobs.length} job(s)`);
 
-      if (jobs.length) {
+      if (cfg.fetchDetails && jobs.length) {
         detailPage = await context.newPage();
         for (const job of jobs) {
           if (await handleChallenge(detailPage, ctx)) break;
@@ -388,7 +389,21 @@ export const upworkScraper: Scraper = {
         }
       }
 
-      return jobs.map(jobToLead);
+      // The feed is ordered newest-first but keeps going back for as long as you
+      // click "Load More", so the age window is applied here rather than by
+      // asking Upwork for it. A job whose "posted" text we could not parse is
+      // kept: dropping a real lead is worse than showing a stale one.
+      const leads = jobs.map(jobToLead);
+      if (cfg.maxAgeHours <= 0) return leads;
+
+      const cutoff = Date.now() - cfg.maxAgeHours * 60 * 60 * 1000;
+      const fresh = leads.filter(
+        (lead) => !lead.postedAt || new Date(lead.postedAt).getTime() >= cutoff,
+      );
+      if (fresh.length < leads.length) {
+        ctx.log(`dropped ${leads.length - fresh.length} job(s) older than ${cfg.maxAgeHours}h`);
+      }
+      return fresh;
     } finally {
       if (detailPage) await detailPage.close().catch(() => undefined);
       // Closing a CDP connection detaches Playwright without closing your Chrome.

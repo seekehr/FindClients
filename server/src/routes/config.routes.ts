@@ -1,23 +1,21 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/http';
-import { requireAuth } from '../middleware/auth';
-import { getConfig, updateConfig } from '../services/config.service';
+import { getConfig, resetConfig, updateConfig } from '../services/config.service';
 import { AI_MODELS, PLATFORMS } from '../types';
 
 export const configRouter = Router();
-configRouter.use(requireAuth);
 
 const platform = z.enum(['upwork', 'twitter', 'discord', 'reddit', 'linkedin']);
 
 /**
- * Bounds mirror the CHECK constraints in supabase/migrations/0001_init.sql, so
- * a bad value is rejected with a readable 400 instead of a Postgres error.
+ * Bounds are enforced here because nothing downstream will. There is no
+ * database with CHECK constraints any more — this schema is the only thing
+ * standing between a typo on the Config page and a scraper looping 100,000
+ * times, so it is deliberately strict.
  */
 const patchSchema = z
   .object({
-    emailNotifications: z.boolean(),
-    pushNotifications: z.boolean(),
     newLeadsNotification: z.boolean(),
     discordWebhookUrl: z.union([z.literal(''), z.string().url().max(500)]),
 
@@ -39,18 +37,18 @@ const patchSchema = z
     upworkMaxAgeHours: z.number().int().min(1).max(720),
 
     aiEnabled: z.boolean(),
-    // Long enough for real criteria with examples, short enough that it can't
+    // Long enough for real criteria with examples, short enough that it cannot
     // be used to smuggle a novel into every review call.
     aiPrompt: z.string().max(4000),
     aiModel: z.enum(AI_MODELS),
     aiMinScore: z.number().int().min(0).max(100),
     aiAutoArchive: z.boolean(),
     /**
-     * The user's own Google Gemini key. Write-only: it is stored encrypted and
-     * never returned — the client gets `aiApiKeySet` and a masked hint back.
-     * '' clears the stored key. The character class rejects the most common
-     * paste mistakes (a trailing newline, a copied "key=" prefix, a whole URL)
-     * before they turn into a 400 from Google on every lead.
+     * Your Google Gemini key. Write-only: the client gets `aiApiKeySet` and a
+     * masked hint back, never the key. '' clears it. The character class
+     * rejects the most common paste mistakes (a trailing newline, a copied
+     * "key=" prefix, a whole URL) before they turn into a 400 from Google on
+     * every single lead.
      */
     aiApiKey: z.union([
       z.literal(''),
@@ -66,13 +64,13 @@ const patchSchema = z
 
 configRouter.get(
   '/',
-  asyncHandler(async (req, res) => {
-    const config = await getConfig(req.user!.id);
+  asyncHandler(async (_req, res) => {
+    const config = getConfig();
     res.json({
       config,
       platforms: PLATFORMS,
       // The Config page needs to distinguish "you switched this off" from
-      // "you have not given us a key yet", which `aiEnabled` alone cannot say.
+      // "you have not saved a key yet", which `aiEnabled` alone cannot say.
       ai: { available: config.aiApiKeySet, models: AI_MODELS },
     });
   }),
@@ -81,7 +79,13 @@ configRouter.get(
 configRouter.put(
   '/',
   asyncHandler(async (req, res) => {
-    const patch = patchSchema.parse(req.body);
-    res.json({ config: await updateConfig(req.user!.id, patch) });
+    res.json({ config: updateConfig(patchSchema.parse(req.body)) });
+  }),
+);
+
+configRouter.post(
+  '/reset',
+  asyncHandler(async (_req, res) => {
+    res.json({ config: resetConfig() });
   }),
 );

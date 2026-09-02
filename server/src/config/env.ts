@@ -2,19 +2,16 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 
 /**
- * Environment loading.
+ * Machine-level settings, read from the `.env` at the repository root.
  *
- * The single source of truth is the GLOBAL `.env` at the repository root, so
- * the server, the scrapers it loads, and the website all read the same values.
- * A `server/.env`, if present, is layered on top for local-only overrides.
- *
- * dotenv never overwrites variables that are already set, so real environment
- * variables (CI, Docker, hosting provider) still win over both files.
+ * Note how little is here. Everything about *what* to scrape — keywords,
+ * thresholds, limits, the Upwork feed, the AI criteria and key — lives in
+ * data/config.json and is edited in the app. This file only describes the
+ * machine: which port, which browser mode, how often.
  */
 const serverDir = path.resolve(__dirname, '..', '..');
 const repoRoot = path.resolve(serverDir, '..');
 
-dotenv.config({ path: path.join(serverDir, '.env') });
 dotenv.config({ path: path.join(repoRoot, '.env') });
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -22,60 +19,65 @@ function bool(value: string | undefined, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
-/** Fail fast on a missing required variable rather than 500-ing on first use. */
-function required(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(
-      `Missing required environment variable ${name}. ` +
-        `Copy .env.example to .env at the repository root and fill it in.`,
-    );
-  }
-  return value;
+function num(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
-
-const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, '');
-// SUPABASE_KEY is the older name this project used; still accepted.
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_KEY;
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   isProd: process.env.NODE_ENV === 'production',
-  port: Number(process.env.PORT ?? 4000),
-
-  corsOrigin: (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
-
-  // ── Supabase ──
-  supabaseUrl: required('SUPABASE_URL', supabaseUrl),
-  supabaseServiceKey: required('SUPABASE_SERVICE_KEY', supabaseServiceKey),
-  supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? '',
-  /** Create users pre-confirmed instead of sending a verification email. */
-  autoConfirmEmails: bool(process.env.SUPABASE_AUTO_CONFIRM_EMAILS, true),
-
-  // Key for encrypting stored session cookies at rest. CHANGE IN PRODUCTION.
-  encryptionKey: process.env.ENCRYPTION_KEY ?? 'dev-insecure-encryption-key-change-me',
+  port: num(process.env.PORT, 4000),
 
   /**
-   * Shared secret for the service-to-service API under /api/internal, which the
-   * scrapers call to fetch the config and session they should run with. Empty
-   * disables those routes entirely rather than leaving them unauthenticated.
+   * Which interface to listen on. Loopback by default, deliberately: this
+   * server has no authentication, so binding it to every interface would hand
+   * anyone on the same network your leads, your saved sessions and a button
+   * that starts a scrape. Change it only if you understand that.
    */
-  internalApiKey: process.env.INTERNAL_API_KEY ?? '',
+  host: process.env.HOST ?? '127.0.0.1',
 
-  // Note: there is deliberately no AI key here. Lead qualification runs on the
-  // *user's* own Google Gemini key, entered on the Config page and stored
-  // encrypted in public.user_config — see config.service.ts and ai.service.ts.
-  // A server-wide key would mean the operator paying for every user's reviews,
-  // and one missing value switching the feature off for everybody.
+  /**
+   * Where the JSON data files live. Everything the app remembers is in this
+   * one folder, so backing up FindClients means copying it.
+   */
+  dataDir: process.env.DATA_DIR
+    ? path.resolve(repoRoot, process.env.DATA_DIR)
+    : path.join(repoRoot, 'data'),
+
+  /**
+   * Serve the built Next.js app from this same process, so there is one
+   * command and one port. Set SERVE_WEBSITE=false to run `next dev` separately.
+   */
+  serveWebsite: bool(process.env.SERVE_WEBSITE, true),
 
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, true),
-  scrapeCron: process.env.SCRAPE_CRON ?? '*/2 * * * *',
 
-  // Note: there are deliberately no scraper keyword/threshold settings here.
-  // Those are per-user and live in public.user_config — see config.service.ts.
+  /**
+   * How often to scrape. Every 30 minutes by default.
+   *
+   * This is the single most important setting for not getting your Upwork or X
+   * account flagged. Scraping runs from your own IP with your own logged-in
+   * session, which looks like ordinary use — right up until it happens every
+   * two minutes, forever, at exactly the same offset. Slower is safer, and the
+   * leads are not going anywhere.
+   */
+  scrapeCron: process.env.SCRAPE_CRON ?? '*/30 * * * *',
+
+  /**
+   * Random delay before each scheduled cycle actually starts, so runs don't
+   * land on a perfectly regular clock tick. 0 disables it.
+   */
+  scrapeJitterMs: num(process.env.SCRAPE_JITTER_MS, 120_000),
+
+  /**
+   * Scrape once immediately at startup. Off by default: restarting the app
+   * should not be a reason to hit the platforms again, and during development
+   * that means a scrape on every file save.
+   */
+  scrapeOnStart: bool(process.env.SCRAPE_ON_START, false),
 
   repoRoot,
   serverDir,
+  websiteDir: path.join(repoRoot, 'website'),
 } as const;

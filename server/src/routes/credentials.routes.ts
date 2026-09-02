@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, badRequest } from '../utils/http';
-import { requireAuth } from '../middleware/auth';
 import {
   CREDENTIAL_PLATFORMS,
   connectCredential,
@@ -11,16 +10,12 @@ import {
 } from '../services/credential.service';
 
 export const credentialsRouter = Router();
-credentialsRouter.use(requireAuth);
 
-// List which platforms the user has connected (masked — no secrets).
+// Which platforms are connected (masked — never the cookies themselves).
 credentialsRouter.get(
   '/',
-  asyncHandler(async (req, res) => {
-    res.json({
-      platforms: CREDENTIAL_PLATFORMS,
-      connections: await listCredentials(req.user!.id),
-    });
+  asyncHandler(async (_req, res) => {
+    res.json({ platforms: CREDENTIAL_PLATFORMS, connections: listCredentials() });
   }),
 );
 
@@ -35,7 +30,7 @@ credentialsRouter.put(
     const platform = req.params.platform;
     if (!isCredentialPlatform(platform)) throw badRequest(`Unsupported platform: ${platform}`);
     const { cookies } = connectSchema.parse(req.body);
-    res.json({ connection: await connectCredential(req.user!.id, platform, cookies) });
+    res.json({ connection: connectCredential(platform, cookies) });
   }),
 );
 
@@ -44,7 +39,7 @@ credentialsRouter.delete(
   asyncHandler(async (req, res) => {
     const platform = req.params.platform;
     if (!isCredentialPlatform(platform)) throw badRequest(`Unsupported platform: ${platform}`);
-    await disconnectCredential(req.user!.id, platform);
+    disconnectCredential(platform);
     res.json({ ok: true });
   }),
 );

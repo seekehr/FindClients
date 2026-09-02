@@ -5,10 +5,10 @@ import path from 'node:path';
  * Make the repository-wide `.env` available to the scrapers.
  *
  * When the server loads these scrapers in-process, `process.env` is already
- * populated and this is a no-op. When a scraper runs standalone (a worker, a
- * one-off script, a test), it still needs `INTERNAL_API_URL` and
- * `INTERNAL_API_KEY` to reach the server — so parse the root `.env` ourselves
- * rather than adding a dotenv dependency to this workspace.
+ * populated and this is a no-op. When one runs standalone (the CLI, a smoke
+ * test), it still needs the browser runtime settings — headless, user agent,
+ * proxies — so parse the root `.env` ourselves rather than adding a dotenv
+ * dependency to this workspace.
  *
  * Real environment variables always win over the file.
  */

@@ -7,10 +7,9 @@ import { fileURLToPath } from 'node:url'
  * same global config file as the server and scrapers. Next.js only looks inside
  * `website/`, so we parse the root file ourselves.
  *
- * Only NEXT_PUBLIC_* keys are forwarded — everything else in the global file is
- * server-side (including the Supabase service key) and must never be inlined
- * into the browser bundle. A real environment variable always wins, as does a
- * value in website/.env.local.
+ * Only NEXT_PUBLIC_* keys are forwarded — everything else in that file is for
+ * the server process and has no business in the browser bundle. A real
+ * environment variable always wins, as does a value in website/.env.local.
  */
 function loadRootPublicEnv() {
   const rootEnv = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env')
@@ -29,14 +28,13 @@ loadRootPublicEnv()
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: {
     unoptimized: true,
   },
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api',
+    // Same origin by default: `npm start` serves this build and the API from
+    // one process on one port. `npm run dev` overrides it with the API's port.
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? '/api',
   },
 }
 

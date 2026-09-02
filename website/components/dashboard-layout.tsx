@@ -2,9 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
-import { Menu, X, LogOut, Bell } from 'lucide-react'
-import { useRequireAuth, useLogout } from '@/lib/use-auth'
+import { useEffect, useState } from 'react'
+import { Menu, X, Bell } from 'lucide-react'
+import { notificationsApi, type Notification } from '@/lib/api'
 import CaptchaModal from './captcha-modal'
 
 interface DashboardLayoutProps {
@@ -12,38 +12,55 @@ interface DashboardLayoutProps {
 }
 
 const menuItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: '' },
-  { label: 'Leads', href: '/dashboard/leads', icon: '' },
-  { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: '' },
-  { label: 'Connections', href: '/dashboard/connections', icon: '' },
-  { label: 'Analytics', href: '/dashboard/analytics', icon: '' },
-  { label: 'Config', href: '/dashboard/config', icon: '' },
-  { label: 'Settings', href: '/dashboard/settings', icon: '' },
+  { label: 'Dashboard', href: '/dashboard' },
+  { label: 'Leads', href: '/dashboard/leads' },
+  { label: 'Bookmarks', href: '/dashboard/bookmarks' },
+  { label: 'Connections', href: '/dashboard/connections' },
+  { label: 'Analytics', href: '/dashboard/analytics' },
+  { label: 'Config', href: '/dashboard/config' },
 ]
 
-function initials(name: string, email: string) {
-  const src = (name || email || '?').trim()
-  const parts = src.split(/\s+/)
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
-  return src.slice(0, 2).toUpperCase()
-}
+/** How often to check for new-lead notifications. */
+const POLL_MS = 30_000
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [unread, setUnread] = useState(0)
+  const [feedOpen, setFeedOpen] = useState(false)
   const pathname = usePathname()
-  const { user, checked } = useRequireAuth()
-  const logout = useLogout()
 
-  // Avoid a flash of protected content before the auth check resolves.
-  if (!checked) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background text-foreground/50">
-        Loading…
-      </div>
-    )
+  useEffect(() => {
+    let cancelled = false
+
+    const load = () =>
+      notificationsApi
+        .list()
+        .then(({ data, unread }) => {
+          if (cancelled) return
+          setNotifications(data)
+          setUnread(unread)
+        })
+        // The app not being up yet is not worth an error in the UI chrome.
+        .catch(() => undefined)
+
+    void load()
+    const timer = setInterval(load, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [])
+
+  async function openFeed() {
+    const next = !feedOpen
+    setFeedOpen(next)
+    if (next && unread > 0) {
+      await notificationsApi.markAllRead().catch(() => undefined)
+      setUnread(0)
+      setNotifications((current) => current.map((n) => ({ ...n, read: true })))
+    }
   }
-
-  const displayName = user?.fullName || user?.email || 'Account'
 
   return (
     <div className="flex h-screen bg-background">
@@ -53,9 +70,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0 fixed lg:relative w-64 h-screen bg-card border-r border-border/40 transition-transform duration-300 z-40 flex flex-col`}
       >
-        {/* Logo */}
         <div className="p-6 border-b border-border/40">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <span className="text-primary-foreground font-bold text-lg">F</span>
             </div>
@@ -63,7 +79,6 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </Link>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {menuItems.map((item) => {
             const active = pathname === item.href
@@ -78,28 +93,19 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                     : 'text-foreground/70 hover:bg-primary/10 hover:text-primary'
                 }`}
               >
-                <span className="text-lg">{item.icon}</span>
                 <span className="font-medium">{item.label}</span>
               </Link>
             )
           })}
         </nav>
 
-        {/* User section */}
-        <div className="p-4 border-t border-border/40 space-y-2">
-          <button
-            onClick={() => void logout()}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-foreground/70 hover:bg-destructive/10 hover:text-destructive transition"
-          >
-            <LogOut className="w-5 h-5" />
-            <span className="font-medium">Sign out</span>
-          </button>
+        <div className="p-4 border-t border-border/40 text-xs text-foreground/40">
+          Running locally · your data never leaves this machine
         </div>
       </aside>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar */}
         <header className="h-16 border-b border-border/40 bg-card/50 backdrop-blur-sm flex items-center px-6 gap-4">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -110,26 +116,40 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <div className="flex-1" />
 
-          {/* User profile */}
-          <div className="flex items-center gap-4">
-            <button className="p-2 hover:bg-secondary rounded-lg transition relative">
+          <div className="relative">
+            <button
+              onClick={() => void openFeed()}
+              className="p-2 hover:bg-secondary rounded-lg transition relative"
+              aria-label="Notifications"
+            >
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
+              {unread > 0 && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
+              )}
             </button>
-            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-secondary">
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                <span className="text-sm font-bold">{initials(user?.fullName ?? '', user?.email ?? '')}</span>
+
+            {feedOpen && (
+              <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-auto rounded-lg border border-border/40 bg-card shadow-lg z-50">
+                {notifications.length === 0 ? (
+                  <p className="p-4 text-sm text-foreground/50">Nothing yet.</p>
+                ) : (
+                  notifications.map((n) => (
+                    <div key={n.id} className="p-4 border-b border-border/40 last:border-0">
+                      <p className="text-sm font-medium">{n.title}</p>
+                      {n.message && (
+                        <p className="text-xs text-foreground/60 mt-1 line-clamp-2">{n.message}</p>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
-              <span className="hidden sm:inline text-sm font-medium">{displayName}</span>
-            </div>
+            )}
           </div>
         </header>
 
-        {/* Page content */}
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
 
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 bg-black/50 lg:hidden z-30"

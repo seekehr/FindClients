@@ -1,162 +1,59 @@
-# FindClients — API Server
+# server/
 
-The backend for FindClients: authentication, lead management, analytics,
-notifications, billing, and the scraping scheduler.
+The backend: REST API, JSON storage, scrape scheduler, AI qualification — and, in production, the built website too, so the whole app is one process on one port.
 
 ## Stack
 
-- **Node 22.5+ / TypeScript** (run with [`tsx`](https://github.com/privatenumber/tsx))
+- **Node 22.5+ / TypeScript**, run with [`tsx`](https://github.com/privatenumber/tsx) (no build step)
 - **Express** — REST API
-- **Supabase Postgres** — data, via `@supabase/supabase-js` and the service key
-- **Supabase Auth** — identity, brokered by this server
+- **JSON files** — storage, see [`src/store/`](src/store)
 - **node-cron** — scheduler
 - **zod** — request validation
 
-## Quick start
+No database, no ORM, no auth library.
 
-Configuration comes from the **global `.env` at the repository root** (see
-[`../.env.example`](../.env.example)); a `server/.env` is optional and only
-layers local overrides on top. Apply
-[`../supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql)
-in your Supabase SQL Editor first — the server refuses to start without it.
+## Running it
+
+Normally you don't run this directly — `npm start` in the repository root builds the website and starts this. Directly:
 
 ```bash
-cd server
-npm install
-npm run dev               # http://localhost:4000
+npm run dev        # tsx watch, API only on :4000
+npm start          # API + the built website on :4000
+npm run typecheck  # also typechecks ../scrapper
 ```
 
-Register an account in the web app, then connect a platform under **Connections**
-(paste your session cookie). The scheduler then scrapes on your behalf every
-couple of minutes; new leads flow into the shared pool and are matched to each
-user by their keyword preferences.
+Config comes from the root [`.env`](../.env.example). Set `SERVE_WEBSITE=false` to run API-only.
 
-### Scripts
+## Layout
 
-| Command           | What it does                                  |
-| ----------------- | --------------------------------------------- |
-| `npm run dev`     | Start with hot reload (tsx watch)             |
-| `npm start`       | Start once (tsx)                              |
-| `npm run typecheck` | Type-check the whole project (server + scrapper) |
+| Path | What |
+| --- | --- |
+| `store/` | The database: `JsonFile` (atomic writes) + the six files it manages |
+| `services/` | Business logic — leads, config, credentials, AI, notifications, analytics |
+| `routes/` | HTTP surface, one router per resource, all under `/api` |
+| `scrapers/` | Loads `../scrapper`, runs the cycle, defines the `Scraper` contract |
+| `scheduler/` | Cron + jitter |
+| `utils/` | http errors, logging, text sanitizing, hashing, relative time |
 
-## Architecture
+## Storage
 
-```
-Users connect accounts    src/services/credential.service.ts  (cookies, encrypted at rest)
-      ↓
- Scheduler (node-cron)     src/scheduler
-      ↓  for each connected user…
- Runner  → scraper(cookies) → dedupe → insert   src/scrapers/runner.ts
-      ↓
- Database (Supabase)       src/db/supabase.ts
-      ↓
- Services                  src/services  (auth, leads, analytics, billing…)
-      ↓
- REST API (Express)        src/routes  → /api/*
-      ↓
- Notifications             src/services/notification.service.ts
-```
+[`store/json-file.ts`](src/store/json-file.ts) is the whole engine. Each file is read once at boot and kept in memory; writes are debounced 250ms and flushed atomically (write `.tmp`, then rename). Reads are plain array/object access, so the services filter in TypeScript rather than in SQL.
 
-Each scrape run is driven by one connected user's session cookies (see
-[`../scrapper/README.md`](../scrapper/README.md)). Cookies are encrypted with
-`ENCRYPTION_KEY` (AES-256-GCM) and never returned by the API.
+Two properties are load-bearing:
 
-## API
+- **Atomic writes.** A crash mid-save leaves the old file or the new one, never half of one.
+- **A parse error never costs you data.** A corrupt file is renamed to `.corrupt-<timestamp>` rather than overwritten.
 
-All responses are JSON. Protected routes need `Authorization: Bearer <token>`.
+`flushAll()` runs on SIGINT/SIGTERM, so leads collected seconds before Ctrl-C still land.
 
-### Auth
-| Method | Path                        | Body                                   |
-| ------ | --------------------------- | -------------------------------------- |
-| POST   | `/api/auth/register`        | `{ email, password, fullName? }`       |
-| POST   | `/api/auth/login`           | `{ email, password }`                  |
-| GET    | `/api/auth/me`              | —                                      |
-| PATCH  | `/api/auth/me`              | `{ fullName?, email? }`                |
-| POST   | `/api/auth/change-password` | `{ currentPassword, newPassword }`     |
-| POST   | `/api/auth/refresh`         | `{ refreshToken }` → new access token  |
-| POST   | `/api/auth/logout`          | — revokes the refresh token            |
-| DELETE | `/api/auth/me`              | — deletes the account and all its data |
+This scales to tens of thousands of leads — one person's use, comfortably. If `leads.json` ever gets big enough to notice, `store/index.ts` is the one file to swap for SQLite; nothing above it knows what the storage is.
 
-### Leads
-| Method | Path                           | Notes                                                        |
-| ------ | ------------------------------ | ------------------------------------------------------------ |
-| GET    | `/api/leads`                   | `?platform&q&status&bookmarked&page&limit` → `{ data, pagination }` |
-| GET    | `/api/leads/:id`               | single lead                                                  |
-| PATCH  | `/api/leads/:id`               | `{ status }` — new/viewed/contacted/won/archived             |
-| PUT    | `/api/leads/:id/bookmark`      | bookmark                                                     |
-| DELETE | `/api/leads/:id/bookmark`      | un-bookmark                                                  |
-| GET    | `/api/bookmarks`               | bookmarked leads                                             |
+## No authentication
 
-### Analytics
-`GET /api/analytics/overview` · `/platforms` · `/trend` · `/scrape-runs`
+Deliberate. There is one user, on one machine, and the server binds to `127.0.0.1` — that bind address is the access control. Every route is open to anything that can reach the port, which is why what can reach the port matters. See the README's security note before changing `HOST`.
 
-### Connections (per-user platform sessions)
-| Method | Path                        | Notes                                                    |
-| ------ | --------------------------- | -------------------------------------------------------- |
-| GET    | `/api/credentials`          | Masked connection status per platform (never the secret) |
-| PUT    | `/api/credentials/:platform`| `{ cookies }` — store/replace the session (encrypted)    |
-| DELETE | `/api/credentials/:platform`| Disconnect                                               |
+## Serving the website
 
-### Internal (service-to-service)
-Requires the `x-internal-key: $INTERNAL_API_KEY` header — **not** a user token.
-This is how the scrapers in `../scrapper` fetch what they need without touching
-the database. Unset `INTERNAL_API_KEY` and these routes return 503.
+[`src/index.ts`](src/index.ts) resolves `next` from `website/node_modules` with `createRequire`, calls `prepare()`, and mounts the handler after the API routes. That keeps the two workspaces' dependency trees separate while running them in one process.
 
-| Method | Path                                        | Notes                                        |
-| ------ | ------------------------------------------- | -------------------------------------------- |
-| GET    | `/api/internal/users/:userId/config`        | That user's `user_config` row                |
-| GET    | `/api/internal/platforms/:platform/connections` | Connected users + **decrypted cookies** + config |
-| GET    | `/api/internal/platforms`                   | Platforms that support a connection          |
-
-### Config · Notifications · Billing · Scrape
-- `GET|PUT /api/config` — the user's own configuration (`public.user_config`)
-- `GET /api/notifications` · `POST /api/notifications/:id/read` · `POST /api/notifications/read-all`
-- `GET /api/billing/plans` · `GET /api/billing/subscription` · `POST /api/billing/subscribe`
-- `POST /api/scrape/run` (manual trigger) · `GET /api/scrape/runs`
-
-### Health
-`GET /api/health` → `{ status, env, uptime, leads, time }`
-
-## Configuration
-
-All variables live in the global [`../.env`](../.env.example). Highlights:
-
-| Var                 | Default                     | Purpose                              |
-| ------------------- | --------------------------- | ------------------------------------ |
-| `PORT`              | `4000`                      | HTTP port                            |
-| `CORS_ORIGIN`       | `http://localhost:3000`     | Allowed frontend origin(s)           |
-| `SUPABASE_URL`      | — (required)                | Your project URL                     |
-| `SUPABASE_SERVICE_KEY` | — (required)             | Service key. **Server only** — bypasses RLS |
-| `SUPABASE_AUTO_CONFIRM_EMAILS` | `true`           | Skip the verification email on sign-up |
-| `ENCRYPTION_KEY`    | dev key                     | Encrypts stored session cookies **and each user's Gemini API key**. **Change in production** |
-| `SCHEDULER_ENABLED` | `true`                      | Background scraping on/off           |
-| `SCRAPE_CRON`       | `*/2 * * * *`               | Scrape cadence                       |
-| `INTERNAL_API_KEY`  | — (unset = disabled)        | Shared secret for `/api/internal`    |
-
-Scraper keywords, thresholds, limits, feed URLs and Discord webhooks are **not**
-environment variables — they are per-user and live in `public.user_config`,
-edited on the app's Config page.
-
-Neither is the AI key. Lead qualification runs on each user's **own Google
-Gemini API key**, entered on the Config page and stored encrypted in
-`user_config.ai_api_key`. There is no server-wide AI key to set: the operator
-pays for no reviews, and one user's quota cannot affect another's. The key is
-never returned by any route — `GET /api/config` reports `aiApiKeySet` plus a
-masked hint, and `getAiApiKey()` in `config.service.ts` is the only reader.
-Changing `ENCRYPTION_KEY` makes every stored key unreadable; the app then
-reports qualification as unavailable and asks users to re-enter theirs.
-
-## Notes for production
-
-Before shipping: swap the in-memory cache for Redis, integrate a real payment
-provider in `billing.service.ts`, wire real email/push in
-`notification.service.ts`, set `SUPABASE_AUTO_CONFIRM_EMAILS=false` and configure
-SMTP so addresses are actually verified, set a strong `ENCRYPTION_KEY`, and move
-cookie encryption to a KMS (envelope encryption) instead of an app-level key.
-
-The service key bypasses Row Level Security, so every query in `src/services`
-scopes itself by user id. Keep that invariant when adding new ones.
-
-> Storing users' third-party session cookies makes this server a high-value
-> target and automating those platforms may violate their Terms of Service.
-> Treat the credentials table as crown-jewels and get the compliance call right.
+One trap, commented at the call site: Express passes middleware `(req, res, next)`, and Next reads its own third argument as a pre-parsed URL. Passing Express's `next` straight through makes every page render `Invalid URL`.

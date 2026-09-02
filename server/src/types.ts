@@ -1,6 +1,9 @@
 /**
- * Shared domain types for the FindClients API.
- * These mirror the shapes the website frontend expects.
+ * Shared domain types.
+ *
+ * FindClients runs on one machine for one person, so there is no user id
+ * anywhere in here: there is one config, one set of connections, one pile of
+ * leads. Anything that used to be "per user" is simply "the" thing now.
  */
 
 export type Platform = 'upwork' | 'twitter' | 'discord' | 'reddit' | 'linkedin';
@@ -9,13 +12,14 @@ export const PLATFORMS: Platform[] = ['upwork', 'twitter', 'discord', 'reddit', 
 
 export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived';
 
+export const LEAD_STATUSES: LeadStatus[] = ['new', 'viewed', 'contacted', 'won', 'archived'];
+
 /**
  * Models the lead qualifier may be pointed at.
  *
- * Google Gemini only, and an allow-list rather than free text: the user brings
- * their own key, so a typo here would burn a scrape cycle failing on every
- * lead and read as "the AI is broken" rather than "that model does not exist".
- * Mirrors the CHECK constraint in supabase/migrations/0005_user_gemini_api_key.sql.
+ * Google Gemini only, and an allow-list rather than free text: a typo would
+ * burn a scrape cycle failing on every lead and read as "the AI is broken"
+ * rather than "that model does not exist".
  */
 export const AI_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
 
@@ -24,47 +28,34 @@ export type AiModel = (typeof AI_MODELS)[number];
 /** Screening is a short judgment call on every lead — cheap and fast by default. */
 export const DEFAULT_AI_MODEL: AiModel = 'gemini-2.5-flash';
 
-export type Plan = 'free' | 'pro' | 'agency';
-
 /**
  * Platform-specific facts a scraper collected about a lead, beyond the fields
- * every platform shares. Free-form on purpose: an Upwork job has a client
- * hire rate, a tweet has view counts, and neither should force a column on
- * the other. Stored as JSONB, rendered as labelled facts in the UI, and given
- * to the AI qualifier so it can judge on more than the post text.
+ * every platform shares. Free-form on purpose: an Upwork job has a client hire
+ * rate, a tweet has view counts, and neither should force a field on the other.
+ * Rendered as labelled facts in the UI and given to the AI qualifier so it can
+ * judge on more than the post text.
  */
 export type LeadMetadata = Record<string, string | number | boolean | null>;
 
-/** A lead as stored in Postgres (global, platform-discovered). */
-export interface LeadRow {
-  id: string;
-  title: string;
-  platform: Platform;
-  description: string;
-  budget: string | null;
-  timeline: string | null;
-  url: string | null;
-  author: string | null;
-  tags: string[];
-  metadata: LeadMetadata;
-  source_hash: string;
-  posted_at: string; // ISO
-  created_at: string; // ISO
-}
-
-/** This user's AI verdict on a lead. Absent until their qualifier has run. */
 export type AiVerdict = 'qualified' | 'rejected' | 'error';
 
 export interface LeadAiReview {
   verdict: AiVerdict | null;
-  /** 0–100 confidence that the lead is worth this user's time. */
+  /** 0–100 confidence that the lead is worth your time. */
   score: number | null;
   reason: string;
+  model: string;
   checkedAt: string | null;
 }
 
-/** A lead as returned by the API (per-user fields merged in). */
-export interface LeadDTO {
+/**
+ * A lead exactly as it is stored in data/leads.json.
+ *
+ * The old schema split this across a shared `leads` pool and a per-user
+ * `user_leads` row. With one user there is nothing to split: status, bookmark
+ * and AI verdict live on the lead itself.
+ */
+export interface Lead {
   id: string;
   title: string;
   platform: Platform;
@@ -75,15 +66,23 @@ export interface LeadDTO {
   author: string | null;
   tags: string[];
   metadata: LeadMetadata;
+  /** sha1(platform + url||title) — how re-scraping the same post is detected. */
+  sourceHash: string;
   postedAt: string;
-  postedTime: string; // human-relative, e.g. "2 hours ago"
+  createdAt: string;
+  updatedAt: string;
   status: LeadStatus;
   bookmarked: boolean;
   ai: LeadAiReview;
-  createdAt: string;
 }
 
-/** Raw lead produced by a scraper before it is normalized/inserted. */
+/** A lead as the API returns it: the stored shape plus a human-readable date. */
+export interface LeadDTO extends Lead {
+  /** e.g. "2 hours ago" — computed on read, never stored. */
+  postedTime: string;
+}
+
+/** Raw lead produced by a scraper before it is normalized and stored. */
 export interface RawLead {
   title: string;
   platform: Platform;
@@ -93,46 +92,23 @@ export interface RawLead {
   url?: string | null;
   author?: string | null;
   tags?: string[];
-  /** Platform-specific extras — see LeadMetadata. */
   metadata?: LeadMetadata;
-  /** When the lead was originally posted on the source platform (ISO or Date). */
+  /** When the lead was posted on the source platform (ISO string or Date). */
   postedAt?: string | Date;
 }
 
-/** public.profiles — the app-visible mirror of a Supabase auth user. */
-export interface ProfileRow {
-  id: string;
-  email: string;
-  full_name: string;
-  plan: Plan;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PublicUser {
-  id: string;
-  email: string;
-  fullName: string;
-  plan: Plan;
-  createdAt: string;
-}
-
-export interface AuthedRequestUser {
-  id: string;
-  email: string;
-  plan: Plan;
-}
-
 /**
- * Everything a user can configure, as returned by GET /api/config.
- * Persisted in public.user_config — one row per user.
+ * Everything you can configure, stored in data/config.json and edited on the
+ * Config page. This is the single source of truth for what gets scraped.
+ *
+ * `aiApiKey` is deliberately absent — see `StoredConfig` in store/index.ts.
+ * This shape is what the API hands to the browser, so a secret on it would be
+ * a secret in the page source.
  */
-export interface UserConfig {
+export interface AppConfig {
   // Notifications
-  emailNotifications: boolean;
-  pushNotifications: boolean;
   newLeadsNotification: boolean;
-  /** This user's own Discord webhook. Empty means no Discord delivery. */
+  /** Discord webhook to post new leads to. Empty means no Discord delivery. */
   discordWebhookUrl: string;
 
   // Lead targeting
@@ -156,25 +132,19 @@ export interface UserConfig {
   upworkFetchDetails: boolean;
   upworkMaxAgeHours: number;
 
-  // AI qualification — the user's own definition of a lead worth their time,
-  // reviewed with the user's own Gemini API key.
+  // AI qualification — your definition of a lead worth your time.
   aiEnabled: boolean;
   /** Free-text criteria the model scores each lead against. */
   aiPrompt: string;
   aiModel: string;
-  /**
-   * Whether this user has stored a Gemini API key. The key itself is never
-   * part of this DTO: `UserConfig` is returned by GET /api/config *and* handed
-   * to the scrapers over /api/internal, so anything on it is effectively
-   * public to the client. Read the key with `getAiApiKey` instead.
-   */
-  aiApiKeySet: boolean;
-  /** Masked tail of the stored key ("…aB3d"), so the user can tell which one it is. */
-  aiApiKeyHint: string;
   /** Leads scoring below this (0–100) are rejected. */
   aiMinScore: number;
   /** Archive rejected leads instead of leaving them in the inbox. */
   aiAutoArchive: boolean;
+  /** Whether a Gemini key is saved. The key itself never leaves the server. */
+  aiApiKeySet: boolean;
+  /** Masked tail of the saved key ("••••aB3d"), so you can tell which it is. */
+  aiApiKeyHint: string;
 
   updatedAt: string;
 }
@@ -185,4 +155,26 @@ export interface SessionCookie {
   value: string;
   domain: string;
   path: string;
+}
+
+/** One entry in the scrape history. */
+export interface ScrapeRun {
+  id: string;
+  platform: string;
+  status: 'running' | 'success' | 'error';
+  found: number;
+  inserted: number;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  leadId: string | null;
+  read: boolean;
+  createdAt: string;
 }
