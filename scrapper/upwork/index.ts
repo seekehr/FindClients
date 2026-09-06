@@ -430,18 +430,19 @@ async function runPass(
 }
 
 /**
- * Is this profile signed in to Upwork?
+ * Where a signed-in session ends up. Upwork's whole logged-in app lives under
+ * `/nx/`; a signed-out visitor is bounced to `/ab/account-security/login` or to
+ * marketing.
  *
- * Asking the URL rather than looking for a cookie: Upwork bounces a signed-out
- * session to `/ab/account-security/login`, which is unambiguous, whereas the
- * names of its session cookies are an implementation detail that has changed
- * before and would fail silently when it changes again.
+ * Deliberately a *positive* match on where we landed, not "we are not on a
+ * login page". The negative form calls a blank tab or a failed navigation
+ * signed in, which is exactly the false pass that would save an empty profile
+ * and then quietly scrape nothing.
  */
+const SIGNED_IN_URL = /^https:\/\/www\.upwork\.com\/nx\//;
+
 async function isSignedIn(page: Page): Promise<boolean> {
-  const url = page.url().toLowerCase();
-  if (/\/(login|signup)|account-security/.test(url)) return false;
-  // A logged-out visitor to a work feed lands on marketing, not the feed.
-  return !/^https:\/\/www\.upwork\.com\/?$/.test(url);
+  return SIGNED_IN_URL.test(page.url().toLowerCase());
 }
 
 const SIGN_IN_URL = 'https://www.upwork.com/ab/account-security/login';

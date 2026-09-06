@@ -277,14 +277,17 @@ export function tweetToLead(tweet: Tweet): RawLead {
 }
 
 /**
- * Is this profile signed in to X?
+ * Where a signed-in session ends up. X bounces anyone else to the login flow.
  *
- * X redirects a signed-out visitor away from /home to the login flow, which is
- * a more durable signal than looking for an `auth_token` cookie by name.
+ * Deliberately a *positive* match on where we landed, not "we are not on a
+ * login page". The negative form calls a blank tab or a failed navigation
+ * signed in, which is exactly the false pass that would save an empty profile
+ * and then quietly scrape nothing.
  */
+const SIGNED_IN_URL = /^https:\/\/x\.com\/(home|notifications|messages|i\/timeline)/;
+
 async function isSignedIn(page: Page): Promise<boolean> {
-  const url = page.url().toLowerCase();
-  return !/\/(login|i\/flow|signup)|^https:\/\/x\.com\/?$/.test(url);
+  return SIGNED_IN_URL.test(page.url().toLowerCase());
 }
 
 const SIGN_IN_URL = 'https://x.com/i/flow/login';

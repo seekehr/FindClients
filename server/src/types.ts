@@ -149,14 +149,6 @@ export interface AppConfig {
   updatedAt: string;
 }
 
-/** A cookie ready to be injected into a Playwright browser context. */
-export interface SessionCookie {
-  name: string;
-  value: string;
-  domain: string;
-  path: string;
-}
-
 /** One entry in the scrape history. */
 export interface ScrapeRun {
   id: string;
