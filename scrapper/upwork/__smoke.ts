@@ -17,7 +17,7 @@
 
 import { loadRootEnv } from '../lib/env';
 import { readSavedConfig } from '../lib/local';
-import { firstPage, hasProfile, openProfile } from '../lib/profile';
+import { hasProfile, openProfile } from '../lib/profile';
 import { loadUpworkConfig, loadUpworkRuntimeConfig } from './config';
 import { parseJobTile, upworkScraper } from './index';
 
@@ -30,12 +30,12 @@ loadRootEnv();
  */
 async function inspectFeed(jobsUrl: string) {
   const runtime = loadUpworkRuntimeConfig();
-  const context = await openProfile('upwork', {
+  const session = await openProfile('upwork', {
     headless: runtime.headless,
     userAgent: runtime.userAgent,
   });
   try {
-    const page = await firstPage(context);
+    const page = await session.page();
     const response = await page.goto(jobsUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 45_000,
@@ -68,7 +68,7 @@ async function inspectFeed(jobsUrl: string) {
       console.log(JSON.stringify(await parseJobTile(tiles[0]), null, 2));
     }
   } finally {
-    await context.close().catch(() => undefined);
+    await session.release();
   }
 }
 

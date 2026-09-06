@@ -41,14 +41,14 @@ async function main() {
   console.log('headless  :', runtime.headless);
   console.log('');
 
-  const context = await openProfile('twitter', {
+  const session = await openProfile('twitter', {
     headless: runtime.headless,
     userAgent: runtime.userAgent,
   });
   try {
     // 1. Is the session actually logged in? The home timeline redirects
     //    anonymous visitors to the marketing / login page.
-    const home = await context.newPage();
+    const home = await session.page();
     await home.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await home.waitForTimeout(5000);
     console.log('── session check ───────────────────────────────');
@@ -63,7 +63,7 @@ async function main() {
     await home.close();
 
     // 2. The search the scraper actually uses.
-    const page = await context.newPage();
+    const page = await session.page();
     const url = `https://x.com/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=live`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await page.waitForTimeout(6000);
@@ -94,7 +94,7 @@ async function main() {
       console.log(JSON.stringify(await extractTweetFromArticle(articles[0]), null, 2));
     }
   } finally {
-    await context.close().catch(() => undefined);
+    await session.release();
   }
 }
 

@@ -2,10 +2,10 @@ import { type BrowserContext, type ElementHandle, type Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
 import {
   deleteProfile,
-  firstPage,
   hasProfile,
   openProfile,
   waitForSignIn,
+  type BrowserSession,
 } from '../lib/profile';
 import { loadTwitterConfig, loadTwitterRuntimeConfig, type TwitterConfig } from './config';
 
@@ -125,7 +125,7 @@ export async function extractTweetFromArticle(article: ElementHandle): Promise<T
 }
 
 class TwitterScraper {
-  private context: BrowserContext | null = null;
+  private session: BrowserSession | null = null;
   private proxyIndex = 0;
 
   constructor(
@@ -141,28 +141,32 @@ class TwitterScraper {
   }
 
   async start(): Promise<void> {
-    // The persistent profile carries the signed-in session, so there are no
-    // cookies to inject — this is the same browser that logged in.
-    this.context = await openProfile(PLATFORM, {
+    // The signed-in session comes from the profile, so there are no cookies to
+    // inject — this is the same browser that logged in.
+    this.session = await openProfile(PLATFORM, {
       headless: this.config.headless,
       userAgent: this.config.userAgent,
       proxy: this.nextProxy(),
     });
-    this.log(`browser started (headless=${this.config.headless})`);
+    this.log(
+      this.session.attached
+        ? 'attached to your Chrome'
+        : `browser started (headless=${this.config.headless})`,
+    );
   }
 
   async stop(): Promise<void> {
-    if (this.context) {
-      await this.context.close();
-      this.context = null;
+    if (this.session) {
+      await this.session.release();
+      this.session = null;
     }
     this.log('browser stopped');
   }
 
   /** Scrape a single keyword's live-search results. */
   async scrapeKeyword(keyword: string, limit: number, cutoff: Date | null): Promise<Tweet[]> {
-    if (!this.context) throw new Error('scraper not started');
-    const page = await this.context.newPage();
+    if (!this.session) throw new Error('scraper not started');
+    const page = await this.session.page();
     const tweets: Tweet[] = [];
 
     try {
@@ -321,12 +325,12 @@ export const twitterScraper: Scraper = {
     if (!hasProfile(PLATFORM)) return { hasProfile: false, signedIn: false };
 
     const runtime = loadTwitterRuntimeConfig();
-    const context = await openProfile(PLATFORM, {
+    const session = await openProfile(PLATFORM, {
       headless: true,
       userAgent: runtime.userAgent,
     });
     try {
-      const page = await firstPage(context);
+      const page = await session.page();
       const signedIn = await confirmSignedIn(page);
       if (!signedIn) log('the saved X session has expired — sign in again');
       return {
@@ -337,28 +341,31 @@ export const twitterScraper: Scraper = {
     } catch (err) {
       return { hasProfile: true, signedIn: false, detail: (err as Error).message };
     } finally {
-      await context.close().catch(() => undefined);
+      await session.release();
     }
   },
 
   async signIn({ timeoutMs, log }) {
     const runtime = loadTwitterRuntimeConfig();
-    const context = await openProfile(PLATFORM, {
+    const session = await openProfile(PLATFORM, {
       headless: false,
       userAgent: runtime.userAgent,
     });
+    if (session.attached) {
+      log('signing in inside the Chrome you started — look for the new tab');
+    }
     try {
-      const page = await firstPage(context);
+      const page = await session.page();
       await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       return await waitForSignIn(
-        context,
+        session,
         () => isSignedIn(page),
         () => confirmSignedIn(page),
         timeoutMs,
         log,
       );
     } finally {
-      await context.close().catch(() => undefined);
+      await session.release();
     }
   },
 

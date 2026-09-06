@@ -70,6 +70,26 @@ async function main() {
     logger.info(`FindClients is running at http://${env.host}:${env.port}`);
   });
 
+  // Listen errors arrive on the emitter, not as a rejected promise, so without
+  // this the common case — the port already taken, usually by a copy of this
+  // app you forgot was running — surfaces as an uncaught exception and a stack
+  // trace instead of a sentence telling you what to do.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.error(
+        `Port ${env.port} is already in use — FindClients may already be running.
+` +
+          `  Open http://${env.host}:${env.port} to check, stop the other copy, ` +
+          `or set PORT to something else in .env.`,
+      );
+    } else {
+      logger.error('Server error', err.message);
+    }
+    stopScheduler();
+    flushAll();
+    process.exit(1);
+  });
+
   startScheduler();
 
   let closing = false;

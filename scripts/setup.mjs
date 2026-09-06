@@ -9,20 +9,22 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { ROOT, WORKSPACES, run } from './lib.mjs'
+import { ROOT, WORKSPACES, main, run } from './lib.mjs'
 
-for (const workspace of WORKSPACES) {
-  console.log(`\n── installing ${workspace} ─────────────────────────`)
-  await run('npm', ['install'], { cwd: path.join(ROOT, workspace) })
-}
+await main(async () => {
+  for (const workspace of WORKSPACES) {
+    console.log(`\n── installing ${workspace} ─────────────────────────`)
+    await run('npm', ['install'], { cwd: path.join(ROOT, workspace) })
+  }
 
-console.log('\n── installing Chromium for the scrapers ────────────')
-await run('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(ROOT, 'scrapper') })
+  console.log('\n── installing Chromium for the scrapers ────────────')
+  await run('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(ROOT, 'scrapper') })
 
-const envFile = path.join(ROOT, '.env')
-if (!fs.existsSync(envFile)) {
-  fs.copyFileSync(path.join(ROOT, '.env.example'), envFile)
-  console.log('\nCreated .env from .env.example.')
-}
+  const envFile = path.join(ROOT, '.env')
+  if (!fs.existsSync(envFile)) {
+    fs.copyFileSync(path.join(ROOT, '.env.example'), envFile)
+    console.log('\nCreated .env from .env.example.')
+  }
 
-console.log('\nSetup complete. Start the app with:\n\n  npm start\n')
+  console.log('\nSetup complete. Start the app with:\n\n  npm start\n')
+})

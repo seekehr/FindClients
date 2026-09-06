@@ -28,17 +28,27 @@ npm start
 
 Open **http://localhost:4000**. The first start builds the website (about a minute); every one after that is instant.
 
-Then, in the app: **Connections** → *Sign in*, **Config** → set your keywords.
-
 ## Signing in
 
-Click **Sign in** and a real browser window opens on your machine. Log in the way you normally would — password, 2FA, "trust this device", all of it. Close the window when you land on the site and you are done.
+Start Chrome with debugging on, in its own persistent profile:
 
-That session lives in a persistent Chromium profile under `data/browser/<platform>/`, exactly the way your everyday browser keeps one. Every later scrape reuses it, and because a real browser refreshes its own session as it goes, **you do not have to sign in again** — no cookies to copy, nothing to re-paste when a token expires.
+```bash
+npm run chrome
+```
 
-If a session does eventually lapse, the Connections page shows *Session expired* and one click signs you back in. **Check** re-tests a saved session against the live site.
+Sign in to Upwork and X in that window, then **leave it open**. That is the whole setup. Every scrape attaches to this browser over CDP and reuses the session, so you sign in once and never again — the profile lives in `data/chrome-profile/` and survives restarts.
 
-This is also the more honest fingerprint. A pasted `auth_token` replayed from a blank browser context is a session with no history, no localStorage and no prior device — visibly not the browser that logged in. A persistent profile *is* that browser.
+Then set your keywords in the app under **Config**.
+
+Why attach rather than launch our own browser? Because this *is* your browser. No automation flags, your own profile and history, real Chrome rather than Playwright's bundled Chromium. Upwork sits behind Cloudflare, which answers a launched browser with `403 Just a moment...` and this one with `200`.
+
+**If FindClients ever needs you** — a CAPTCHA, a login prompt, a "verify it's you" — it pauses and waits for you to click through it in that same Chrome window. Nothing is automated around a challenge; you just solve it like a person, and the scrape carries on.
+
+### Without the CDP setup
+
+Leave `CHROME_CDP_URL` empty and FindClients launches its own persistent profile per platform in `data/browser/<platform>/`, using installed Chrome where it can. **Connections → Sign in** opens a window for you. This works fine for X; expect Cloudflare to block Upwork.
+
+Either way, **Check** on the Connections page re-tests a saved session against the live site.
 
 ## Layout
 
@@ -57,6 +67,7 @@ The three workspaces are independent — no root `node_modules`, no npm workspac
 | Command | What it does |
 | --- | --- |
 | `npm run setup` | Install everything, once |
+| `npm run chrome` | Start the Chrome that scrapes run in — sign in here, leave it open |
 | `npm start` | Build if needed, then run the whole app on one port |
 | `npm run dev` | API on :4000 and website on :3000, both reloading on save |
 | `npm run build` | Rebuild the website after changing it |
@@ -74,7 +85,8 @@ Everything is JSON files in `data/`:
 | `leads.json` | Every lead, with its status, bookmark and AI verdict |
 | `dismissed.json` | Source hashes of leads you cleared, so they stay cleared |
 | `connections.json` | Which platforms are signed in, and how the last run went |
-| `browser/` | Chromium profiles — where the signed-in sessions actually live |
+| `chrome-profile/` | The Chrome profile `npm run chrome` uses — your live sessions |
+| `browser/` | Per-platform profiles, used only when not attaching over CDP |
 | `runs.json` | Scrape history (last 200) |
 | `notifications.json` | In-app feed (last 200) |
 
@@ -106,7 +118,7 @@ Turning these up is the fastest way to get the account you are scraping with res
 
 **AI qualification** — opt-in, on your own Google Gemini key ([get one](https://aistudio.google.com/apikey)), entered on the Config page. Keyword scrapers are indiscriminate: searching "looking for a developer" finds the client who wants to hire *and* the developer announcing availability. The qualifier reads each lead against criteria you write in plain English and returns a 0–100 score plus a one-line reason. Gemini only (`gemini-2.5-pro | gemini-2.5-flash | gemini-2.5-flash-lite`, default flash), called over plain REST, 4 leads at a time. Failures record `error`, never `rejected` — a timeout is not evidence that a lead is bad. Already-reviewed leads are skipped, so turning qualification on later reviews the backlog.
 
-**Bot challenges** — scrapers run headless, which cannot solve a CAPTCHA. When one appears, the scraper reopens the run in a **visible browser window** so you can click through it yourself; solve it and the run continues. If nobody does within 5 minutes it gives up and the next cycle starts clean. That means a scheduled run while you are away will lose a cycle to a challenge — the deliberate trade for not maintaining a screenshot-relay solver. `CAPTCHA_OPEN_WINDOW=false` skips them instead. See [`scrapper/README.md`](scrapper/README.md).
+**Bot challenges** — solved by you, by hand. There is no evasion here and no solver. When a CAPTCHA or bot wall appears, the scrape pauses and waits: in the attached Chrome the window is already in front of you, and otherwise the run reopens in a visible one. Click through it and the scrape continues. Nobody there within 5 minutes and it gives up, costing that cycle; the next starts clean. `CAPTCHA_OPEN_WINDOW=false` skips them instead of waiting.
 
 **Notifications** — new leads matching your keyword/platform/budget filters appear in the in-app feed, and are posted to a Discord webhook if you set one.
 

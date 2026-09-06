@@ -1,12 +1,6 @@
 import { type ElementHandle, type Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
-import {
-  deleteProfile,
-  firstPage,
-  hasProfile,
-  openProfile,
-  waitForSignIn,
-} from '../lib/profile';
+import { cdpUrl, deleteProfile, hasProfile, openProfile, waitForSignIn } from '../lib/profile';
 import {
   loadUpworkConfig,
   loadUpworkRuntimeConfig,
@@ -376,8 +370,10 @@ async function runPass(
   cfg: UpworkConfig,
   headless: boolean,
 ): Promise<PassResult> {
-  // The persistent profile is already signed in — there is nothing to inject.
-  const context = await openProfile(PLATFORM, { headless, userAgent: cfg.userAgent });
+  // Already signed in — there is nothing to inject. When CHROME_CDP_URL is set
+  // this attaches to the Chrome you started rather than launching anything, so
+  // `headless` is simply not ours to decide.
+  const session = await openProfile(PLATFORM, { headless, userAgent: cfg.userAgent });
 
   const feedUrl = cfg.jobsUrl;
 
@@ -386,7 +382,7 @@ async function runPass(
   let detailPage: Page | null = null;
 
   try {
-    const page = await firstPage(context);
+    const page = await session.page();
 
     ctx.log(`navigating to feed: ${feedUrl}`);
     const response = await page.goto(feedUrl, {
@@ -468,7 +464,7 @@ async function runPass(
     ctx.log(`collected ${jobs.length} job(s)`);
 
     if (cfg.fetchDetails && jobs.length) {
-      detailPage = await context.newPage();
+      detailPage = await session.context.newPage();
       for (const job of jobs) {
         if (await handleChallenge(detailPage, ctx, headless)) {
           blocked = true;
@@ -498,8 +494,9 @@ async function runPass(
     return { leads: fresh, blocked };
   } finally {
     if (detailPage) await detailPage.close().catch(() => undefined);
-    // Closing a persistent context closes the browser and flushes the profile.
-    await context.close().catch(() => undefined);
+    // Closes our own browser, or just drops the CDP connection when the browser
+    // is one the user started.
+    await session.release();
   }
 }
 
@@ -551,9 +548,9 @@ export const upworkScraper: Scraper = {
     if (!hasProfile(PLATFORM)) return { hasProfile: false, signedIn: false };
 
     const cfg = loadUpworkRuntimeConfig();
-    const context = await openProfile(PLATFORM, { headless: true, userAgent: cfg.userAgent });
+    const session = await openProfile(PLATFORM, { headless: true, userAgent: cfg.userAgent });
     try {
-      const page = await firstPage(context);
+      const page = await session.page();
       const signedIn = await confirmSignedIn(page);
       if (!signedIn) log('the saved Upwork session has expired — sign in again');
       return {
@@ -564,26 +561,29 @@ export const upworkScraper: Scraper = {
     } catch (err) {
       return { hasProfile: true, signedIn: false, detail: (err as Error).message };
     } finally {
-      await context.close().catch(() => undefined);
+      await session.release();
     }
   },
 
   async signIn({ timeoutMs, log }) {
     const cfg = loadUpworkRuntimeConfig();
     // Always visible: the entire point is that a person signs in by hand.
-    const context = await openProfile(PLATFORM, { headless: false, userAgent: cfg.userAgent });
+    const session = await openProfile(PLATFORM, { headless: false, userAgent: cfg.userAgent });
+    if (session.attached) {
+      log('signing in inside the Chrome you started — look for the new tab');
+    }
     try {
-      const page = await firstPage(context);
+      const page = await session.page();
       await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       return await waitForSignIn(
-        context,
+        session,
         () => isSignedIn(page),
         () => confirmSignedIn(page),
         timeoutMs,
         log,
       );
     } finally {
-      await context.close().catch(() => undefined);
+      await session.release();
     }
   },
 
@@ -605,12 +605,16 @@ export const upworkScraper: Scraper = {
       fetchDetails: ctx.config.upworkFetchDetails,
     });
 
-    const first = await runPass(ctx, cfg, cfg.headless);
+    // Attached to your own Chrome: it is already a real, visible browser, so
+    // there is no headless pass to retry and no second window to open.
+    const headless = cdpUrl() ? false : cfg.headless;
+
+    const first = await runPass(ctx, cfg, headless);
     if (!first.blocked) return first.leads;
 
     // Blocked. If the window was already visible, the person had their chance
     // and either did not solve it or was not there.
-    if (!cfg.headless) return first.leads;
+    if (!headless) return first.leads;
 
     if (!ctx.interactive) {
       ctx.log('challenge hit and CAPTCHA_OPEN_WINDOW is off — skipping this run');

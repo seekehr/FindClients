@@ -23,8 +23,12 @@ export function run(command, args, opts = {}) {
     })
     child.on('error', reject)
     child.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`))
+      if (code === 0) return resolve()
+      // Tagged so `main` can exit quietly: the child already said what broke.
+      const err = new Error(`${command} ${args.join(' ')} exited with code ${code}`)
+      err.childFailed = true
+      err.exitCode = code ?? 1
+      reject(err)
     })
   })
 }
@@ -48,4 +52,22 @@ export const missingDeps = () => WORKSPACES.filter((w) => !hasDeps(w))
 export function fail(message) {
   console.error(`\n${message}\n`)
   process.exit(1)
+}
+
+/**
+ * Run a script's body, exiting quietly when a child process fails.
+ *
+ * A child that exits non-zero has already explained itself on the terminal the
+ * user is looking at. Letting the rejection reach Node's default handler prints
+ * a stack trace through these wrapper scripts on top of that explanation, which
+ * buries the real message — a busy port ends up looking like a crash in
+ * lib.mjs. Anything that is not a child-exit still gets a real stack.
+ */
+export async function main(body) {
+  try {
+    await body()
+  } catch (err) {
+    if (err?.childFailed) process.exit(err.exitCode ?? 1)
+    throw err
+  }
 }

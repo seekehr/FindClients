@@ -23,15 +23,17 @@ const PROFILE = process.env.CHROME_PROFILE_DIR
   ? path.resolve(ROOT, process.env.CHROME_PROFILE_DIR)
   : path.join(ROOT, 'data', 'chrome-profile')
 
-/** Where Chrome usually lives, per platform. */
+/**
+ * Where Chrome usually lives, per platform.
+ *
+ * Forward slashes on purpose — Node accepts them on Windows, and they survive
+ * every layer of shell and heredoc quoting between here and the file.
+ */
 const CANDIDATES = {
   win32: [
-    'C:\Program Files\Google\Chrome\Application\chrome.exe',
-    'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-    path.join(
-      process.env.LOCALAPPDATA ?? '',
-      'Google\Chrome\Application\chrome.exe',
-    ),
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    path.join(process.env.LOCALAPPDATA ?? '', 'Google/Chrome/Application/chrome.exe'),
   ],
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
   linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium'],
