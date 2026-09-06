@@ -1,51 +1,81 @@
-import type { AppConfig, Platform, RawLead, SessionCookie } from '../types';
-import type { CaptchaPage } from '../../../scrapper/lib/captcha';
+import type { AppConfig, Platform, RawLead } from '../types';
 
 // Re-exported so the scrapper workspace has one import site for these.
-export type { AppConfig, Platform, RawLead, SessionCookie, CaptchaPage };
+export type { AppConfig, Platform, RawLead };
 
 /**
  * Context handed to every scraper run.
  *
- * The config is passed in rather than fetched. It used to arrive over an
- * authenticated HTTP call to the server's own `/api/internal` route — a
- * service boundary that existed so a scraper could run on a different machine
- * from the API. Nothing runs on a different machine any more, so the scraper
- * was making a network round trip to the process it was already inside of.
+ * Note what is no longer here: session cookies. Each scraper owns a persistent
+ * Chromium profile in `data/browser/<platform>/` and is already signed in when
+ * it starts — the same way your own browser is. Nothing in the server touches a
+ * credential, because there is no longer a credential to touch.
  */
 export interface ScrapeContext {
   /** Your saved settings — keywords, thresholds, limits, the Upwork feed. */
   config: AppConfig;
-  /** Your session cookies for this platform, ready to inject. */
-  cookies: SessionCookie[];
   /** Only return leads posted at/after this time, when the source supports it. */
   since?: Date;
   /** Soft cap on how many leads to return in one run. */
   limit: number;
   log: (msg: string) => void;
   /**
-   * When true the scraper may pause on a CAPTCHA and wait for it to be solved
-   * in the visible browser window. Only set in non-headless / CLI mode.
+   * Whether the scraper may open a visible browser window and wait for a person
+   * to solve a bot challenge in it.
+   *
+   * This assumes someone is actually at the machine. A scheduled run at 3am that
+   * hits a CAPTCHA will open a window nobody sees and then time out — the honest
+   * outcome, and far cheaper than the screenshot-relay solver it replaced. Set
+   * CAPTCHA_OPEN_WINDOW=false to skip straight to giving up.
    */
-  interactive?: boolean;
-  /**
-   * Called when a CAPTCHA is detected. Hands off the Playwright page for remote
-   * solving (screenshot → click → relay). Returns true if solved. When not
-   * provided, the scraper waits interactively or skips.
-   */
-  onCaptcha?: (page: CaptchaPage, platform: string) => Promise<boolean>;
+  interactive: boolean;
+  /** How long to leave that window open before giving up. */
+  captchaTimeoutMs: number;
+}
+
+/** What we know about a platform's saved browser profile. */
+export interface SessionStatus {
+  /** A profile directory exists — you have signed in here at some point. */
+  hasProfile: boolean;
+  /** The saved session still works right now. */
+  signedIn: boolean;
+  /** Why not, when we could tell. */
+  detail?: string;
+}
+
+export interface SignInOptions {
+  /** How long to leave the sign-in window open. */
+  timeoutMs: number;
+  log: (msg: string) => void;
 }
 
 /**
  * The contract every platform scraper implements.
  *
- * Real scrapers live in the top-level `scrapper/` folder and are loaded at
- * runtime. Each must be side-effect free: fetch + parse + return, and let the
- * server handle de-duplication, persistence, and notifications.
+ * Scrapers live in the top-level `scrapper/` folder and are loaded at runtime.
+ * Beyond scraping, each owns its own sign-in: it knows where that platform's
+ * login page is and how to tell a signed-in session from a signed-out one, so
+ * the server never needs to learn anything platform-specific.
  */
 export interface Scraper {
   platform: Platform;
   name: string;
+
   /** Return raw leads discovered on this run (may be empty). */
   scrape(ctx: ScrapeContext): Promise<RawLead[]>;
+
+  /**
+   * Check the saved profile without any interaction. Opens the profile
+   * headlessly, so it cannot run while a scrape is using it.
+   */
+  checkSession(log: (msg: string) => void): Promise<SessionStatus>;
+
+  /**
+   * Open a real browser window at the platform's login page and wait for the
+   * person to sign in. Whatever they end up with is saved in the profile.
+   */
+  signIn(opts: SignInOptions): Promise<boolean>;
+
+  /** Forget the saved profile entirely. */
+  signOut(): Promise<void>;
 }

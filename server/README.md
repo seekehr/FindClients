@@ -29,13 +29,15 @@ Config comes from the root [`.env`](../.env.example). Set `SERVE_WEBSITE=false` 
 | Path | What |
 | --- | --- |
 | `store/` | The database: `JsonFile` (atomic writes) + the six files it manages |
-| `services/` | Business logic — leads, config, credentials, AI, notifications, analytics |
+| `services/` | Business logic — leads, config, connections, AI, notifications, analytics |
 | `routes/` | HTTP surface, one router per resource, all under `/api` |
 | `scrapers/` | Loads `../scrapper`, runs the cycle, defines the `Scraper` contract |
 | `scheduler/` | Cron + jitter |
 | `utils/` | http errors, logging, text sanitizing, hashing, relative time |
 
 ## Storage
+
+Note what the store does *not* hold: credentials. Platform sessions live in persistent Chromium profiles under `data/browser/`, so `connection.service.ts` records only when you signed in and how the last run went.
 
 [`store/json-file.ts`](src/store/json-file.ts) is the whole engine. Each file is read once at boot and kept in memory; writes are debounced 250ms and flushed atomically (write `.tmp`, then rename). Reads are plain array/object access, so the services filter in TypeScript rather than in SQL.
 

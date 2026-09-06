@@ -7,23 +7,20 @@
  *
  * Run from the `scrapper/` folder:
  *
- *   # Against the session you connected in the app
- *   node ../server/node_modules/tsx/dist/cli.mjs twitter/__smoke.ts --saved
+ *   node ../server/node_modules/tsx/dist/cli.mjs twitter/__smoke.ts
  *
  *   # Against a cookie header you paste yourself
  *   X_COOKIE="auth_token=…; ct0=…" \
  *     node ../server/node_modules/tsx/dist/cli.mjs twitter/__smoke.ts --keyword "looking to hire"
  *
- * `--saved` reads data/ directly, so the app need not be running.
- * `X_HEADLESS=false` shows the browser.
+ * Uses the saved browser profile, so sign in first (in the app, or
+ * `npm run cli -- --sign-in twitter`). `X_HEADLESS=false` shows the browser.
  */
 
-import { chromium } from 'playwright';
 import { loadRootEnv } from '../lib/env';
-import { readSavedCookies } from '../lib/local';
+import { hasProfile, openProfile } from '../lib/profile';
 import { loadTwitterRuntimeConfig } from './config';
 import { extractTweetFromArticle } from './index';
-import type { SessionCookie } from '../../server/src/scrapers/types';
 
 loadRootEnv();
 
@@ -32,69 +29,23 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function parseCookieHeader(header: string): SessionCookie[] {
-  return header
-    .split(';')
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => {
-      const eq = p.indexOf('=');
-      return {
-        name: p.slice(0, eq).trim(),
-        value: p.slice(eq + 1).trim(),
-        domain: '.x.com',
-        path: '/',
-      };
-    })
-    .filter((c) => c.name && c.value);
-}
-
 async function main() {
-  const useSaved = process.argv.includes('--saved');
   const keyword = arg('keyword') ?? 'looking for a developer';
 
-  let cookies: SessionCookie[] = [];
-  let source = 'no session (anonymous)';
-
-  if (process.env.X_COOKIE) {
-    cookies = parseCookieHeader(process.env.X_COOKIE);
-    source = `X_COOKIE env (${cookies.length} cookie(s))`;
-  }
-  if (useSaved) {
-    cookies = readSavedCookies('twitter');
-    if (!cookies.length) {
-      console.error('No X session saved. Connect X on the Connections page first.');
-      process.exit(1);
-    }
-    source = `saved session (${cookies.length} cookie(s))`;
+  if (!hasProfile('twitter')) {
+    console.error('Not signed in to X. Run: npm run cli -- --sign-in twitter');
+    process.exit(1);
   }
 
   const runtime = loadTwitterRuntimeConfig();
-  console.log('session   :', source);
-  console.log('auth_token:', cookies.some((c) => c.name === 'auth_token') ? 'present' : 'MISSING');
-  console.log('ct0       :', cookies.some((c) => c.name === 'ct0') ? 'present' : 'missing');
   console.log('headless  :', runtime.headless);
   console.log('');
 
-  const browser = await chromium.launch({ headless: runtime.headless });
+  const context = await openProfile('twitter', {
+    headless: runtime.headless,
+    userAgent: runtime.userAgent,
+  });
   try {
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 900 },
-      userAgent: runtime.userAgent,
-    });
-    if (cookies.length) {
-      await context.addCookies(
-        cookies.map((c) => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain || '.x.com',
-          path: c.path || '/',
-          secure: true,
-          sameSite: 'None' as const,
-        })),
-      );
-    }
-
     // 1. Is the session actually logged in? The home timeline redirects
     //    anonymous visitors to the marketing / login page.
     const home = await context.newPage();
@@ -143,7 +94,7 @@ async function main() {
       console.log(JSON.stringify(await extractTweetFromArticle(articles[0]), null, 2));
     }
   } finally {
-    await browser.close().catch(() => undefined);
+    await context.close().catch(() => undefined);
   }
 }
 

@@ -28,7 +28,9 @@ runScrapeCycle()                       server/src/scrapers/runner.ts
 
 **Config is passed in, not fetched.** `ScrapeContext.config` carries your settings straight into `scrape()`. This used to be an authenticated HTTP call to the server's own `/api/internal` route — a boundary that existed so a scraper could run on a different machine. Nothing does, so the scraper was making a network round trip to the process it was already inside.
 
-**Eligibility is a saved session.** No cookies for a platform, no scrape of it.
+**Eligibility is a signed-in profile.** No profile for a platform, no scrape of it. The profile is a real Chromium user-data directory in `data/browser/<platform>/`, so the scraper starts already logged in rather than replaying injected cookies.
+
+**One process at a time per profile.** Chromium locks the directory, which is why signing in is refused while a scrape is running and vice versa.
 
 ## De-duplication
 
@@ -42,6 +44,7 @@ Every lead gets `sha1(platform + (url || title))`. Already in `leads.json` → s
 | --- | --- | --- |
 | What to look for | `data/config.json`, edited on the Config page | keywords, thresholds, limits, Upwork feed URL, AI criteria and key |
 | How this machine runs a browser | root `.env` | headless, user agent, proxies, timeouts, cron |
+| Who you are | `data/browser/<platform>/` | the signed-in Chromium profile itself |
 
 Adding a `KEYWORDS` variable to `.env` would do nothing. That split is why.
 
@@ -56,11 +59,14 @@ Adding a `KEYWORDS` variable to `.env` would do nothing. That split is why.
 
 `found` = returned by the scraper. `inserted` = new to `leads.json`. **High found, zero inserted is de-duplication working, not breakage** — it means the feed had nothing new since last time, which is the normal steady state.
 
-`feed not visible yet — nudging` means stale cookies or a challenge page. It burns ~35s per attempt, three attempts, holding the cycle open. Re-paste your cookies on the Connections page.
+`feed not visible yet — nudging` means the session lapsed or a challenge page appeared. It burns ~35s per attempt, three attempts, holding the cycle open. Hit **Check** on the Connections page to confirm, then **Sign in again**.
+
+`bot challenge detected` followed by `reopening Upwork in a visible window` means a browser window is now waiting for you to click through a CAPTCHA. You have 5 minutes (`CAPTCHA_TIMEOUT_MS`).
 
 ## Known rough edges
 
 1. **Keywords past the first two rarely run.** Twitter collects up to `twitterLimitPerKeyword` (15) per keyword but stops at `leadsPerRun` (25) overall — so keyword 1 gets 15, keyword 2 gets 10, and keywords 3+ never execute. Raise `leadsPerRun` or cut your keyword list.
 2. **Upwork leads rarely notify.** Notifications require a keyword match, but Upwork jobs come from a feed rather than a keyword search, so most of them match nothing in your list.
 3. **`ctx.since` is never set.** Every cycle re-scrapes the same window and relies on de-duplication to absorb it. Harmless, but it is why `found` stays high.
-4. **CAPTCHA sessions live in memory.** They do not survive a restart — if you restart mid-challenge, the run is lost and the next cycle starts over.
+4. **A challenge during an unattended run costs that cycle.** Solving one means opening a visible window and waiting for a person; at 3am there isn't one, so it times out after 5 minutes and gives up. Whatever the headless pass collected before the challenge is still kept.
+5. **Only Upwork detects challenges.** Twitter has no detection — a challenge there looks like a run that found nothing.

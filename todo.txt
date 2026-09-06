@@ -5,4 +5,8 @@ features like the captcha solver, since now we can just open a browser window
 and have the user solve captcha manually. Also, we should try to automate things like
 the debug Chrome window for Upwork.
 
+"Want me to take the CAPTCHA removal next? It'd drop lib/captcha.ts, captcha.service.ts, test-captcha.ts, the modal, and 4 routes — roughly 500 more lines — and replace it with launching non-headless when a challenge is detected. Worth noting it makes unattended scheduled runs unusable if a challenge appears while you're away, which is the tradeoff the remote solver was buying.
+"
+Say yes ^ to this
+
 FINAL STEP: Take a list of vibe-coded website features and ask claude to remove them from this website

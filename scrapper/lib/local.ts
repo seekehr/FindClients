@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadRootEnv } from './env';
-import type { AppConfig, SessionCookie } from '../../server/src/scrapers/types';
+import type { AppConfig } from '../../server/src/scrapers/types';
 
 /**
  * Read the app's saved data straight off disk.
@@ -41,31 +41,10 @@ export function readSavedConfig(): AppConfig | null {
   return { ...rest, aiApiKeySet: Boolean(aiApiKey), aiApiKeyHint: '' } as unknown as AppConfig;
 }
 
-interface StoredCredential {
-  platform: string;
-  cookies: string;
-}
-
-/** The session cookies saved for a platform, parsed. Empty if not connected. */
-export function readSavedCookies(platform: string): SessionCookie[] {
-  const all = readJson<Record<string, StoredCredential>>('credentials.json');
-  const raw = all?.[platform]?.cookies;
-  if (!raw) return [];
-
-  const domain = platform === 'twitter' ? '.x.com' : `.${platform}.com`;
-  return raw
-    .replace(/^cookie:/i, '')
-    .split(/;|\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((pair) => {
-      const i = pair.indexOf('=');
-      return {
-        name: i >= 0 ? pair.slice(0, i).trim() : pair,
-        value: i >= 0 ? pair.slice(i + 1).trim() : '',
-        domain,
-        path: '/',
-      };
-    })
-    .filter((c) => c.name && c.value);
-}
+/**
+ * There is deliberately no `readSavedCookies` here any more.
+ *
+ * Sessions live in the persistent browser profiles under `data/browser/`, which
+ * the scrapers open directly through `lib/profile.ts`. Nothing needs to read a
+ * credential out of the store, because the store holds none.
+ */

@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Menu, X, Bell } from 'lucide-react'
 import { notificationsApi, type Notification } from '@/lib/api'
-import CaptchaModal from './captcha-modal'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -156,8 +155,6 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           onClick={() => setSidebarOpen(false)}
         />
       )}
-
-      <CaptchaModal />
     </div>
   )
 }

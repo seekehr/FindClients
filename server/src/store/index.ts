@@ -32,14 +32,19 @@ export interface StoredConfig extends Omit<AppConfig, 'aiApiKeySet' | 'aiApiKeyH
   aiApiKey: string;
 }
 
-/** A saved platform session. */
-export interface StoredCredential {
+/**
+ * What we remember about a platform connection.
+ *
+ * Deliberately not a credential. The session itself lives in a Chromium
+ * profile under `data/browser/<platform>/`, exactly where a browser keeps one;
+ * this record only says when you signed in and how the last run went, so
+ * nothing secret passes through the JSON store at all.
+ */
+export interface StoredConnection {
   platform: string;
-  /** The raw Cookie header string, exactly as pasted. */
-  cookies: string;
-  status: 'connected' | 'error';
+  status: 'connected' | 'expired' | 'error';
   lastError: string | null;
-  createdAt: string;
+  connectedAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
 }
@@ -117,8 +122,8 @@ export const dismissedStore = registerForFlush(
   new JsonFile<string[]>(file('dismissed.json'), () => []),
 );
 
-export const credentialsStore = registerForFlush(
-  new JsonFile<Record<string, StoredCredential>>(file('credentials.json'), () => ({})),
+export const connectionsStore = registerForFlush(
+  new JsonFile<Record<string, StoredConnection>>(file('connections.json'), () => ({})),
 );
 
 export const runsStore = registerForFlush(new JsonFile<ScrapeRun[]>(file('runs.json'), () => []));
@@ -135,6 +140,6 @@ export function initStore(): void {
   logger.info(`Data directory: ${env.dataDir}`);
   logger.info(
     `Loaded ${leadsStore.data.length} lead(s), ` +
-      `${Object.keys(credentialsStore.data).length} connection(s)`,
+      `${Object.keys(connectionsStore.data).length} connection(s)`,
   );
 }

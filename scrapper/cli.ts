@@ -4,26 +4,23 @@
  * From this folder:
  *   npm run cli
  *
- * Settings come from cli_config.json. Paste a browser Cookie header
- * (raw, no quoting) into upwork.cookie / twitter.cookie in this folder.
+ * Settings come from cli_config.json. Sessions come from the same persistent
+ * browser profiles the app uses (data/browser/<platform>/), so sign in once in
+ * the app — or with `npm run cli -- --sign-in <platform>` — and the CLI is
+ * signed in too.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadRootEnv } from './lib/env';
 import { scrapers } from './index';
-import type { AppConfig, SessionCookie } from '../server/src/scrapers/types';
+import { hasProfile } from './lib/profile';
+import type { AppConfig } from '../server/src/scrapers/types';
 
 loadRootEnv();
 
 const ROOT = __dirname;
 
 interface PlatformCliConfig {
-  /** Optional path to a text file containing the raw Cookie header. */
-  cookieFile?: string;
-  /** Inline Cookie header — avoid this; quotes in cookies break JSON. */
-  cookie?: string;
-  /** Or a list of cookies (takes priority over files/`cookie` if non-empty). */
-  cookies?: SessionCookie[];
   jobsUrl?: string;
   fetchDetails?: boolean;
   maxAgeHours?: number;
@@ -39,65 +36,6 @@ interface CliConfig {
   limit?: number;
   upwork?: PlatformCliConfig;
   twitter?: PlatformCliConfig;
-}
-
-function parseCookieHeader(header: string, domain: string): SessionCookie[] {
-  return header
-    .split(';')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const eq = part.indexOf('=');
-      return {
-        name: part.slice(0, eq).trim(),
-        value: part.slice(eq + 1).trim(),
-        domain,
-        path: '/',
-      };
-    })
-    .filter((c) => c.name && c.value);
-}
-
-function readCookieHeader(
-  platformName: string,
-  platform: PlatformCliConfig | undefined,
-  configDir: string,
-): string {
-  const files: string[] = [];
-  if (platform?.cookieFile) files.push(path.resolve(configDir, platform.cookieFile));
-  files.push(path.join(configDir, `${platformName}.cookie`));
-
-  for (const file of files) {
-    if (!fs.existsSync(file)) continue;
-    const text = fs.readFileSync(file, 'utf8').trim();
-    if (text.includes('=')) return text;
-  }
-
-  const inline = platform?.cookie?.trim();
-  if (inline?.includes('=')) return inline;
-  return '';
-}
-
-function cookiesFor(
-  platformName: string,
-  platform: PlatformCliConfig | undefined,
-  domain: string,
-  configDir: string,
-): SessionCookie[] {
-  if (platform?.cookies?.length) {
-    const listed = platform.cookies
-      .filter((c) => c.name?.trim() && c.value?.trim())
-      .map((c) => ({
-        name: c.name,
-        value: c.value,
-        domain: c.domain || domain,
-        path: c.path || '/',
-      }));
-    if (listed.length) return listed;
-  }
-
-  const header = readCookieHeader(platformName, platform, configDir);
-  return header ? parseCookieHeader(header, domain) : [];
 }
 
 function loadConfig(filePath: string): CliConfig {
@@ -155,45 +93,32 @@ function configFromCli(file: CliConfig): AppConfig {
   };
 }
 
-async function runOne(
-  platform: string,
-  cfg: CliConfig,
-  config: AppConfig,
-  limit: number,
-  configDir: string,
-): Promise<void> {
+async function runOne(platform: string, config: AppConfig, limit: number): Promise<void> {
   const scraper = scrapers.find((s) => s.platform === platform);
   if (!scraper) {
     console.error(`Unknown platform "${platform}".`);
     process.exit(1);
   }
 
-  const domain = platform === 'twitter' ? '.x.com' : `.${platform}.com`;
-  const cookies = cookiesFor(
-    platform,
-    cfg[platform as 'upwork' | 'twitter'],
-    domain,
-    configDir,
-  );
-  if (!cookies.length) {
-    console.log(`── ${scraper.name} ────────────────────────────────`);
-    console.log(`skipped : paste a Cookie header into ${platform}.cookie`);
+  console.log(`── ${scraper.name} ────────────────────────────────`);
+
+  if (!hasProfile(platform)) {
+    console.log(`skipped : not signed in. Run: npm run cli -- --sign-in ${platform}`);
     return;
   }
 
-  console.log(`── ${scraper.name} ────────────────────────────────`);
-  console.log(`cookies : ${cookies.length} (${cookies.map((c) => c.name).join(', ')})`);
   console.log(`limit   : ${limit}`);
   console.log('');
 
-  const headless = cfg.headless ?? true;
   const started = Date.now();
   const leads = await scraper.scrape({
     config,
-    cookies,
     limit,
     log: (m) => console.log('  ', m),
-    interactive: !headless,
+    // Always allowed to open a window here: you ran this from a terminal, so
+    // you are by definition sitting in front of it.
+    interactive: true,
+    captchaTimeoutMs: 5 * 60 * 1000,
   });
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   console.log('');
@@ -201,7 +126,24 @@ async function runOne(
   for (const lead of leads) console.log(JSON.stringify(lead, null, 2));
 }
 
+/** `--sign-in <platform>`: open a window, sign in, save the profile, exit. */
+async function signIn(platform: string): Promise<void> {
+  const scraper = scrapers.find((s) => s.platform === platform);
+  if (!scraper) {
+    console.error(`Unknown platform "${platform}".`);
+    process.exit(1);
+  }
+  const ok = await scraper.signIn({
+    timeoutMs: 10 * 60 * 1000,
+    log: (m) => console.log('  ', m),
+  });
+  process.exit(ok ? 0 : 1);
+}
+
 async function main() {
+  const signInAt = process.argv.indexOf('--sign-in');
+  if (signInAt >= 0) return signIn(process.argv[signInAt + 1] ?? '');
+
   const configPath = path.resolve(ROOT, 'cli_config.json');
   const cfg = loadConfig(configPath);
   const limit = cfg.limit || 10;
@@ -216,9 +158,8 @@ async function main() {
   console.log('headless:', headless);
   console.log('');
 
-  const configDir = path.dirname(configPath);
   for (const scraper of scrapers) {
-    await runOne(scraper.platform, cfg, config, limit, configDir);
+    await runOne(scraper.platform, config, limit);
     console.log('');
   }
 }

@@ -1,6 +1,20 @@
-import { chromium, type ElementHandle, type Page } from 'playwright';
+import { type ElementHandle, type Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
-import { loadUpworkConfig, type UpworkRuntimeConfig } from './config';
+import {
+  deleteProfile,
+  firstPage,
+  hasProfile,
+  openProfile,
+  waitForSignIn,
+} from '../lib/profile';
+import {
+  loadUpworkConfig,
+  loadUpworkRuntimeConfig,
+  type UpworkConfig,
+  type UpworkRuntimeConfig,
+} from './config';
+
+const PLATFORM = 'upwork' as const;
 
 /**
  * Upwork scraper.
@@ -148,44 +162,53 @@ async function looksLikeChallenge(page: Page): Promise<boolean> {
 }
 
 const CAPTCHA_POLL_MS = 3_000;
-const CAPTCHA_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * Wait for a person to solve the challenge in the visible window.
+ *
+ * Polls the page rather than watching for navigation: some challenges resolve
+ * in place without one, and the check is the same keyword test that detected it.
+ */
 async function waitForCaptchaSolved(
   page: Page,
   log: (m: string) => void,
+  timeoutMs: number,
 ): Promise<boolean> {
-  log('CAPTCHA detected — solve it in the browser window. Waiting up to 5 minutes…');
-  const deadline = Date.now() + CAPTCHA_TIMEOUT_MS;
+  const minutes = Math.round(timeoutMs / 60_000);
+  log(`solve the challenge in the browser window — waiting up to ${minutes} minute(s)…`);
+
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await sleep(CAPTCHA_POLL_MS);
     if (!(await looksLikeChallenge(page))) {
-      log('CAPTCHA solved — resuming');
+      log('challenge solved — resuming');
+      // Let the page settle before the caller starts reading tiles off it.
       await sleep(2000);
       return true;
     }
   }
-  log('CAPTCHA timeout — giving up');
+  log('nobody solved the challenge in time — giving up on this run');
   return false;
 }
 
+/**
+ * Returns true when the run is blocked and should stop.
+ *
+ * A headless pass can never solve a challenge, so it reports being blocked and
+ * lets `scrape()` decide whether to reopen the whole thing in a window someone
+ * can actually use.
+ */
 async function handleChallenge(
   page: Page,
   ctx: ScrapeContext,
+  headless: boolean,
 ): Promise<boolean> {
   if (!(await looksLikeChallenge(page))) return false;
-  if (ctx.interactive) return !(await waitForCaptchaSolved(page, ctx.log));
-  if (ctx.onCaptcha) {
-    ctx.log('CAPTCHA detected — waiting for you to solve it in the dashboard');
-    const solved = await ctx.onCaptcha(page, 'upwork');
-    if (solved) {
-      ctx.log('CAPTCHA solved via dashboard — resuming');
-      return false;
-    }
-    ctx.log('CAPTCHA not solved — skipping');
+  if (headless) {
+    ctx.log('bot challenge detected');
     return true;
   }
-  ctx.log('CAPTCHA/challenge detected (headless — cannot solve, skipping)');
-  return true;
+  return !(await waitForCaptchaSolved(page, ctx.log, ctx.captchaTimeoutMs));
 }
 
 /** Visit a job's detail page to enrich client rating + hire rate. */
@@ -279,13 +302,199 @@ async function waitForFeed(page: Page, log: (m: string) => void): Promise<boolea
 
 const LOAD_MORE_SEL = "[data-test='load-more-button']";
 
+/** What one pass over the feed produced, and whether a challenge stopped it. */
+interface PassResult {
+  leads: RawLead[];
+  /** True when a bot challenge ended the pass early. */
+  blocked: boolean;
+}
+
+/**
+ * One full pass over the feed with a browser of the given visibility.
+ *
+ * Split out from `scrape()` so it can be run twice: once headless, and — if
+ * that hits a challenge — again in a window someone can solve it in. Playwright
+ * cannot make a running headless browser visible, so a second launch is the
+ * only way to put the challenge in front of a person.
+ */
+async function runPass(
+  ctx: ScrapeContext,
+  cfg: UpworkConfig,
+  headless: boolean,
+): Promise<PassResult> {
+  // The persistent profile is already signed in — there is nothing to inject.
+  const context = await openProfile(PLATFORM, { headless, userAgent: cfg.userAgent });
+
+  const feedUrl = cfg.jobsUrl;
+
+  const seen = new Set<string>();
+  const jobs: UpworkJob[] = [];
+  let detailPage: Page | null = null;
+
+  try {
+    const page = await firstPage(context);
+
+    ctx.log(`navigating to feed: ${feedUrl}`);
+    await page.goto(feedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+    if (await handleChallenge(page, ctx, headless)) return { leads: [], blocked: true };
+
+    if (!(await waitForFeed(page, ctx.log))) {
+      ctx.log('job feed did not load — skipping this run');
+      return { leads: [], blocked: false };
+    }
+    await sleep(1500);
+
+    const collect = async (): Promise<boolean> => {
+      const sections = await page.$$('section.air3-card-section');
+      for (const section of sections) {
+        if (jobs.length >= ctx.limit) return true;
+        const job = await parseJobTile(section);
+        if (!job.title || !job.url || seen.has(job.url)) continue;
+        seen.add(job.url);
+        jobs.push(job);
+      }
+      return false;
+    };
+
+    let done = await collect();
+    let clicks = 0;
+    let blocked = false;
+
+    while (!done && clicks < cfg.maxLoadMoreClicks && jobs.length < ctx.limit) {
+      if (await handleChallenge(page, ctx, headless)) {
+        blocked = true;
+        break;
+      }
+      const button = page.locator(LOAD_MORE_SEL);
+      if ((await button.count()) === 0) {
+        ctx.log('no "Load More Jobs" button — feed exhausted');
+        break;
+      }
+      const before = await page.locator('section.air3-card-section').count();
+      await button.scrollIntoViewIfNeeded();
+      await sleep(500);
+      await button.click();
+      clicks += 1;
+
+      try {
+        await page.waitForFunction(
+          `document.querySelectorAll('section.air3-card-section').length > ${before}`,
+          undefined,
+          { timeout: cfg.loadMoreWaitMs },
+        );
+      } catch {
+        ctx.log('no new tiles after "Load More" — stopping');
+        break;
+      }
+      await sleep(1500);
+      done = await collect();
+    }
+
+    ctx.log(`collected ${jobs.length} job(s)`);
+
+    if (cfg.fetchDetails && jobs.length) {
+      detailPage = await context.newPage();
+      for (const job of jobs) {
+        if (await handleChallenge(detailPage, ctx, headless)) {
+          blocked = true;
+          break;
+        }
+        const detail = await scrapeDetail(detailPage, job.url, cfg, ctx.log);
+        if (detail.clientRating) job.clientRating = detail.clientRating;
+        job.clientHireRate = detail.clientHireRate;
+        await sleep(cfg.requestDelayMs);
+      }
+    }
+
+    // The feed is ordered newest-first but keeps going back for as long as you
+    // click "Load More", so the age window is applied here rather than by
+    // asking Upwork for it. A job whose "posted" text we could not parse is
+    // kept: dropping a real lead is worse than showing a stale one.
+    const leads = jobs.map(jobToLead);
+    if (cfg.maxAgeHours <= 0) return { leads, blocked };
+
+    const cutoff = Date.now() - cfg.maxAgeHours * 60 * 60 * 1000;
+    const fresh = leads.filter(
+      (lead) => !lead.postedAt || new Date(lead.postedAt).getTime() >= cutoff,
+    );
+    if (fresh.length < leads.length) {
+      ctx.log(`dropped ${leads.length - fresh.length} job(s) older than ${cfg.maxAgeHours}h`);
+    }
+    return { leads: fresh, blocked };
+  } finally {
+    if (detailPage) await detailPage.close().catch(() => undefined);
+    // Closing a persistent context closes the browser and flushes the profile.
+    await context.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Is this profile signed in to Upwork?
+ *
+ * Asking the URL rather than looking for a cookie: Upwork bounces a signed-out
+ * session to `/ab/account-security/login`, which is unambiguous, whereas the
+ * names of its session cookies are an implementation detail that has changed
+ * before and would fail silently when it changes again.
+ */
+async function isSignedIn(page: Page): Promise<boolean> {
+  const url = page.url().toLowerCase();
+  if (/\/(login|signup)|account-security/.test(url)) return false;
+  // A logged-out visitor to a work feed lands on marketing, not the feed.
+  return !/^https:\/\/www\.upwork\.com\/?$/.test(url);
+}
+
+const SIGN_IN_URL = 'https://www.upwork.com/ab/account-security/login';
+
 export const upworkScraper: Scraper = {
-  platform: 'upwork',
+  platform: PLATFORM,
   name: 'Upwork',
 
+  async checkSession(log) {
+    if (!hasProfile(PLATFORM)) return { hasProfile: false, signedIn: false };
+
+    const cfg = loadUpworkRuntimeConfig();
+    const context = await openProfile(PLATFORM, { headless: true, userAgent: cfg.userAgent });
+    try {
+      const page = await firstPage(context);
+      await page.goto('https://www.upwork.com/nx/find-work/', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30_000,
+      });
+      const signedIn = await isSignedIn(page);
+      if (!signedIn) log('the saved Upwork session has expired — sign in again');
+      return {
+        hasProfile: true,
+        signedIn,
+        detail: signedIn ? undefined : 'Session expired — sign in again.',
+      };
+    } catch (err) {
+      return { hasProfile: true, signedIn: false, detail: (err as Error).message };
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  },
+
+  async signIn({ timeoutMs, log }) {
+    const cfg = loadUpworkRuntimeConfig();
+    // Always visible: the entire point is that a person signs in by hand.
+    const context = await openProfile(PLATFORM, { headless: false, userAgent: cfg.userAgent });
+    try {
+      const page = await firstPage(context);
+      await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      return await waitForSignIn(context, () => isSignedIn(page), timeoutMs, log);
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  },
+
+  async signOut() {
+    deleteProfile(PLATFORM);
+  },
+
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> {
-    if (!ctx.cookies.length) {
-      ctx.log('no Upwork session cookies — connect your Upwork account first');
+    if (!hasProfile(PLATFORM)) {
+      ctx.log('not signed in to Upwork — connect it on the Connections page first');
       return [];
     }
 
@@ -297,118 +506,25 @@ export const upworkScraper: Scraper = {
       fetchDetails: ctx.config.upworkFetchDetails,
     });
 
-    const browser = await chromium.launch({ headless: cfg.headless });
+    const first = await runPass(ctx, cfg, cfg.headless);
+    if (!first.blocked) return first.leads;
 
-    const feedUrl = cfg.jobsUrl;
+    // Blocked. If the window was already visible, the person had their chance
+    // and either did not solve it or was not there.
+    if (!cfg.headless) return first.leads;
 
-    const seen = new Set<string>();
-    const jobs: UpworkJob[] = [];
-    let detailPage: Page | null = null;
-
-    try {
-      // Inject the user's pasted Upwork session so the feed loads as logged-in.
-      const context = await browser.newContext({
-        viewport: { width: 1280, height: 900 },
-        userAgent: cfg.userAgent,
-      });
-      await context.addCookies(
-        ctx.cookies.map((c) => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain || '.upwork.com',
-          path: c.path || '/',
-          secure: true,
-          sameSite: 'Lax' as const,
-        })),
-      );
-      const page = await context.newPage();
-
-      ctx.log(`navigating to feed: ${feedUrl}`);
-      await page.goto(feedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-
-      if (await handleChallenge(page, ctx)) {
-        return [];
-      }
-      if (!(await waitForFeed(page, ctx.log))) {
-        ctx.log('job feed did not load — skipping this run');
-        return [];
-      }
-      await sleep(1500);
-
-      const collect = async (): Promise<boolean> => {
-        const sections = await page.$$('section.air3-card-section');
-        for (const section of sections) {
-          if (jobs.length >= ctx.limit) return true;
-          const job = await parseJobTile(section);
-          if (!job.title || !job.url || seen.has(job.url)) continue;
-          seen.add(job.url);
-          jobs.push(job);
-        }
-        return false;
-      };
-
-      let done = await collect();
-      let clicks = 0;
-      while (!done && clicks < cfg.maxLoadMoreClicks && jobs.length < ctx.limit) {
-        if (await handleChallenge(page, ctx)) break;
-        const button = page.locator(LOAD_MORE_SEL);
-        if ((await button.count()) === 0) {
-          ctx.log('no "Load More Jobs" button — feed exhausted');
-          break;
-        }
-        const before = await page.locator('section.air3-card-section').count();
-        await button.scrollIntoViewIfNeeded();
-        await sleep(500);
-        await button.click();
-        clicks += 1;
-
-        try {
-          await page.waitForFunction(
-            `document.querySelectorAll('section.air3-card-section').length > ${before}`,
-            undefined,
-            { timeout: cfg.loadMoreWaitMs },
-          );
-        } catch {
-          ctx.log('no new tiles after "Load More" — stopping');
-          break;
-        }
-        await sleep(1500);
-        done = await collect();
-      }
-
-      ctx.log(`collected ${jobs.length} job(s)`);
-
-      if (cfg.fetchDetails && jobs.length) {
-        detailPage = await context.newPage();
-        for (const job of jobs) {
-          if (await handleChallenge(detailPage, ctx)) break;
-          const detail = await scrapeDetail(detailPage, job.url, cfg, ctx.log);
-          if (detail.clientRating) job.clientRating = detail.clientRating;
-          job.clientHireRate = detail.clientHireRate;
-          await sleep(cfg.requestDelayMs);
-        }
-      }
-
-      // The feed is ordered newest-first but keeps going back for as long as you
-      // click "Load More", so the age window is applied here rather than by
-      // asking Upwork for it. A job whose "posted" text we could not parse is
-      // kept: dropping a real lead is worse than showing a stale one.
-      const leads = jobs.map(jobToLead);
-      if (cfg.maxAgeHours <= 0) return leads;
-
-      const cutoff = Date.now() - cfg.maxAgeHours * 60 * 60 * 1000;
-      const fresh = leads.filter(
-        (lead) => !lead.postedAt || new Date(lead.postedAt).getTime() >= cutoff,
-      );
-      if (fresh.length < leads.length) {
-        ctx.log(`dropped ${leads.length - fresh.length} job(s) older than ${cfg.maxAgeHours}h`);
-      }
-      return fresh;
-    } finally {
-      if (detailPage) await detailPage.close().catch(() => undefined);
-      // Closing a CDP connection detaches Playwright without closing your Chrome.
-      await browser.close().catch(() => undefined);
+    if (!ctx.interactive) {
+      ctx.log('challenge hit and CAPTCHA_OPEN_WINDOW is off — skipping this run');
+      return first.leads;
     }
+
+    ctx.log('reopening Upwork in a visible window so you can solve the challenge');
+    const second = await runPass(ctx, cfg, false);
+
+    // The second pass restarts from the top of the feed, so it normally
+    // supersedes the first. If nobody solved the challenge it comes back empty,
+    // and whatever the headless pass managed to collect is better than nothing.
+    return second.leads.length ? second.leads : first.leads;
   },
 };
 

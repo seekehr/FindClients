@@ -45,8 +45,13 @@ export interface TwitterRuntimeConfig {
   headless: boolean;
   /** Optional rotating proxy list, e.g. "http://user:pass@host:port,...". */
   proxyList: string[];
-  /** Browser user-agent string. */
-  userAgent: string;
+  /**
+   * Override the browser's user agent. Undefined — the default — lets Chromium
+   * send its own, which is the right answer now that we drive a real persistent
+   * profile: a pinned UA string drifts out of date with the actual browser and
+   * turns into a fingerprint mismatch rather than a disguise.
+   */
+  userAgent?: string;
 }
 
 export type TwitterConfig = TwitterSearchConfig & TwitterRuntimeConfig;
@@ -55,9 +60,7 @@ export function loadTwitterRuntimeConfig(): TwitterRuntimeConfig {
   return {
     headless: bool(process.env.X_HEADLESS, true),
     proxyList: list(process.env.X_PROXY_LIST),
-    userAgent:
-      process.env.X_USER_AGENT ??
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    userAgent: process.env.X_USER_AGENT || undefined,
   };
 }
 

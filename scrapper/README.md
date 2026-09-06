@@ -6,10 +6,9 @@ Platform scrapers for FindClients. The server loads [`index.ts`](./index.ts) at 
 | --- | --- |
 | `twitter/` | X live-search scraper — keywords, like/view thresholds, age window |
 | `upwork/` | Upwork feed scraper — feed URL, age window, optional detail enrichment |
-| `lib/captcha.ts` | CAPTCHA session manager — remote solving for headless runs |
-| `lib/local.ts` | Reads `data/config.json` and `data/credentials.json` for standalone tools |
-| `cli.ts` | Standalone runner, no app needed |
-| `test-captcha.ts` | Headless CAPTCHA test against the 2captcha demo |
+| `lib/profile.ts` | Persistent Chromium profiles — one per platform, where sessions live |
+| `lib/local.ts` | Reads `data/config.json` for the standalone tools |
+| `cli.ts` | Standalone runner and `--sign-in`, no app needed |
 
 ```bash
 npm run setup    # from the repository root — installs this and downloads Chromium
@@ -17,7 +16,20 @@ npm run setup    # from the repository root — installs this and downloads Chro
 
 ## Sessions
 
-Both scrapers run on **your** cookies, pasted on the app's Connections page, saved to `data/credentials.json`, and handed over as `ScrapeContext.cookies`. Each launches its own Chromium — there is no local Chrome to start and no remote-debugging port to open. No saved session → the scraper logs it and returns `[]`.
+Each platform owns a **persistent Chromium profile** in `data/browser/<platform>/` — a real Chrome user-data directory. You sign in once through a visible window (`scraper.signIn()`), and every run after that opens the same profile already logged in.
+
+```
+signIn()      → visible window at the login page → profile saved
+scrape()      → same profile, headless, already signed in
+checkSession()→ same profile, headless, "does this still work?"
+signOut()     → delete the directory
+```
+
+There are no cookies anywhere in this design. `ScrapeContext` carries no credential, the server stores none, and nothing has to be re-pasted when a token rotates — a real browser refreshes its own session as it is used.
+
+**One process may hold a profile at a time.** Chromium locks the directory; `openProfile` turns that lock into a readable error, and the server refuses to sign in during a scrape (and vice versa).
+
+No profile → the scraper logs it and returns `[]`.
 
 ## The contract
 
@@ -31,43 +43,44 @@ export const myScraper: Scraper = {
 };
 ```
 
-`ScrapeContext` carries `config` (your saved settings), `cookies`, `limit`, `log`, and two CAPTCHA fields:
+Beyond `scrape()`, a `Scraper` implements `checkSession()`, `signIn()` and `signOut()` — each platform knows where its own login page is and how to tell signed-in from signed-out, so the server never learns anything platform-specific.
+
+`ScrapeContext` carries `config` (your saved settings), `limit`, `log`, and two challenge fields:
 
 | Field | Meaning |
 | --- | --- |
-| `interactive?` | Browser is visible (CLI). Pause and let the user solve it in the window. |
-| `onCaptcha?` | Headless. Hand the page off for remote solving; resolves `true` when solved. |
+| `interactive` | A person is at the machine — you may open a visible window and wait. |
+| `captchaTimeoutMs` | How long to leave that window open before giving up. |
 
 `RawLead`: `{ title, platform, description, budget?, timeline?, url?, author?, tags?, postedAt? }` — `url` drives de-duplication, so prefer a stable permalink.
 
 Keep scrapers side-effect free (fetch → parse → return, never write anything). Throwing is safe: the server records the failure in `data/runs.json` and the remaining scrapers still run.
 
-## CAPTCHA handling
+## Bot challenges
 
-**Wired into the Upwork scraper only** — Twitter has no challenge detection yet. Never skipped when a handler is available; `handleChallenge()` picks a strategy:
+Scrapers normally run headless. Headless cannot solve a CAPTCHA, and Playwright cannot make a running headless browser visible — so when a challenge is detected, the Upwork scraper **closes the browser and runs the whole pass again with `headless: false`**, putting the challenge in a window you can actually click. Solve it and the run continues; the second pass restarts from the top of the feed, which de-duplication absorbs.
 
-1. **`ctx.interactive`** (CLI, `headless: false`) — polls every 3s for up to 5 min while you solve it in the visible window.
-2. **`ctx.onCaptcha`** (server, headless) — registers the live page with [`lib/captcha.ts`](./lib/captcha.ts) and blocks. The dashboard polls `GET /api/scrape/captcha`, shows the screenshot in a modal, and relays your clicks to the real browser via `POST /api/scrape/captcha/click`. Solved → the promise resolves and the scrape resumes. 5-minute timeout.
-3. Neither → log and skip.
-
-`lib/captcha.ts` owns all of this; the server only exposes the HTTP routes. It types pages as a minimal structural `CaptchaPage` interface (screenshot / mouse / url / title / viewportSize) so the server needs no Playwright dependency — Playwright's `Page` satisfies it.
-
-Detection is keyword-based on URL + title (`captcha`, `challenge`, `verify`, `robot`, `blocked`); solved = those keywords are gone. Override per-site with `registerCaptcha(page, { platform, isSolved })`. After each relayed click it waits for `networkidle` (5s cap) plus 2.5s so new tiles finish loading before the next screenshot.
-
-```bash
-npm run test-captcha           # → open http://localhost:3333 and click to solve
-TEST_CAPTCHA_PORT=3334 npm run test-captcha
+```
+runPass(headless: true)  → blocked
+      ↓  ctx.interactive
+runPass(headless: false) → you solve it → leads
 ```
 
-Boots headless Chromium against `2captcha.com/demo/recaptcha-v2` and serves a self-contained solver page — exercises the whole relay without the server or frontend.
+If nobody solves it inside `captchaTimeoutMs` (5 min default), the run gives up and whatever the headless pass collected is returned rather than thrown away. The next cycle starts clean.
 
-## CLI
+**This assumes you are at the machine.** A scheduled run at 3am that hits a challenge opens a window nobody sees and times out, costing that one cycle. That is the deliberate trade for deleting the screenshot-relay solver: ~500 lines, four HTTP routes, an in-memory session store that died on restart, and a dashboard modal — replaced by opening a browser window.
+
+Set `CAPTCHA_OPEN_WINDOW=false` to skip challenges outright instead of opening anything.
+
+Detection is keyword-based on URL + title (`captcha`, `challenge`, `verify`, `robot`, `blocked`); solved means those keywords are gone. **Wired into the Upwork scraper only** — Twitter has no challenge detection yet.
 
 ```bash
 npm run cli
 ```
 
-Reads [`cli_config.json`](./cli_config.example.json) (copy from the example). Paste a raw Cookie header into `upwork.cookie` / `twitter.cookie` in this folder. `headless: false` makes the browser visible and sets `interactive`, so CAPTCHAs pause for you.
+Reads [`cli_config.json`](./cli_config.example.json) (copy from the example) for search settings, and the shared browser profiles for sessions. `headless: false` makes the browser visible from the start. Either way the CLI is always `interactive`, so a challenge opens a window for you.
+
+Sign in from the terminal with `npm run cli -- --sign-in upwork` (or `twitter`). It writes the same profile the app uses, so signing in either place works for both.
 
 ## Getting your config
 

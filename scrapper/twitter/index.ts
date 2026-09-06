@@ -1,12 +1,15 @@
+import { type BrowserContext, type ElementHandle, type Page } from 'playwright';
+import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
 import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type ElementHandle,
-  type Page,
-} from 'playwright';
-import type { RawLead, Scraper, ScrapeContext, SessionCookie } from '../../server/src/scrapers/types';
-import { loadTwitterConfig, type TwitterConfig } from './config';
+  deleteProfile,
+  firstPage,
+  hasProfile,
+  openProfile,
+  waitForSignIn,
+} from '../lib/profile';
+import { loadTwitterConfig, loadTwitterRuntimeConfig, type TwitterConfig } from './config';
+
+const PLATFORM = 'twitter' as const;
 
 /**
  * X/Twitter scraper — a TypeScript translation of a Playwright-based reference
@@ -122,13 +125,11 @@ export async function extractTweetFromArticle(article: ElementHandle): Promise<T
 }
 
 class TwitterScraper {
-  private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private proxyIndex = 0;
 
   constructor(
     private readonly config: TwitterConfig,
-    private readonly cookies: SessionCookie[],
     private readonly log: (msg: string) => void,
   ) {}
 
@@ -140,34 +141,19 @@ class TwitterScraper {
   }
 
   async start(): Promise<void> {
-    this.browser = await chromium.launch({
+    // The persistent profile carries the signed-in session, so there are no
+    // cookies to inject — this is the same browser that logged in.
+    this.context = await openProfile(PLATFORM, {
       headless: this.config.headless,
+      userAgent: this.config.userAgent,
       proxy: this.nextProxy(),
     });
-    this.context = await this.browser.newContext({
-      viewport: { width: 1280, height: 900 },
-      userAgent: this.config.userAgent,
-    });
-    if (this.cookies.length) {
-      // Inject the user's pasted session cookies so X sees a logged-in session.
-      await this.context.addCookies(
-        this.cookies.map((c) => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain || '.x.com',
-          path: c.path || '/',
-          secure: true,
-          sameSite: 'None' as const,
-        })),
-      );
-    }
-    this.log(`browser started (headless=${this.config.headless}, ${this.cookies.length} cookie(s))`);
+    this.log(`browser started (headless=${this.config.headless})`);
   }
 
   async stop(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
+    if (this.context) {
+      await this.context.close();
       this.context = null;
     }
     this.log('browser stopped');
@@ -291,17 +277,74 @@ export function tweetToLead(tweet: Tweet): RawLead {
 }
 
 /**
- * The Scraper the server runs on a schedule. Launches a browser, scrapes, maps
- * to leads, and always tears the browser down — even on error.
+ * Is this profile signed in to X?
+ *
+ * X redirects a signed-out visitor away from /home to the login flow, which is
+ * a more durable signal than looking for an `auth_token` cookie by name.
+ */
+async function isSignedIn(page: Page): Promise<boolean> {
+  const url = page.url().toLowerCase();
+  return !/\/(login|i\/flow|signup)|^https:\/\/x\.com\/?$/.test(url);
+}
+
+const SIGN_IN_URL = 'https://x.com/i/flow/login';
+const HOME_URL = 'https://x.com/home';
+
+/**
+ * The Scraper the server runs on a schedule. Opens the persistent profile,
+ * scrapes, maps to leads, and always tears the browser down — even on error.
  */
 export const twitterScraper: Scraper = {
-  platform: 'twitter',
+  platform: PLATFORM,
   name: 'Twitter/X',
 
+  async checkSession(log) {
+    if (!hasProfile(PLATFORM)) return { hasProfile: false, signedIn: false };
+
+    const runtime = loadTwitterRuntimeConfig();
+    const context = await openProfile(PLATFORM, {
+      headless: true,
+      userAgent: runtime.userAgent,
+    });
+    try {
+      const page = await firstPage(context);
+      await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      const signedIn = await isSignedIn(page);
+      if (!signedIn) log('the saved X session has expired — sign in again');
+      return {
+        hasProfile: true,
+        signedIn,
+        detail: signedIn ? undefined : 'Session expired — sign in again.',
+      };
+    } catch (err) {
+      return { hasProfile: true, signedIn: false, detail: (err as Error).message };
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  },
+
+  async signIn({ timeoutMs, log }) {
+    const runtime = loadTwitterRuntimeConfig();
+    const context = await openProfile(PLATFORM, {
+      headless: false,
+      userAgent: runtime.userAgent,
+    });
+    try {
+      const page = await firstPage(context);
+      await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      return await waitForSignIn(context, () => isSignedIn(page), timeoutMs, log);
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  },
+
+  async signOut() {
+    deleteProfile(PLATFORM);
+  },
+
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> {
-    const hasAuth = ctx.cookies.some((c) => c.name === 'auth_token');
-    if (!hasAuth) {
-      ctx.log('no X auth_token cookie — connect your X account first');
+    if (!hasProfile(PLATFORM)) {
+      ctx.log('not signed in to X — connect it on the Connections page first');
       return [];
     }
 
@@ -330,7 +373,7 @@ export const twitterScraper: Scraper = {
     ].filter((d): d is Date => d !== null);
     const cutoff = cutoffs.length ? new Date(Math.max(...cutoffs.map((d) => d.getTime()))) : null;
 
-    const scraper = new TwitterScraper(config, ctx.cookies, ctx.log);
+    const scraper = new TwitterScraper(config, ctx.log);
     try {
       await scraper.start();
       const tweets = await scraper.scrapeAllKeywords(keywords, ctx.limit, cutoff);

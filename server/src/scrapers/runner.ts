@@ -9,13 +9,9 @@ import { qualifyLeads } from '../services/ai.service';
 import { notifyNewLeads } from '../services/notification.service';
 import { finishRun, startRun } from '../services/analytics.service';
 import { getAiApiKey, getConfig } from '../services/config.service';
-import {
-  getConnection,
-  markCredentialError,
-  markCredentialUsed,
-} from '../services/credential.service';
+import { isConnected, markError, markUsed } from '../services/connection.service';
 import { loadScrapers } from './loader';
-import { registerCaptcha } from '../services/captcha.service';
+import { env } from '../config/env';
 import type { AppConfig, LeadDTO } from '../types';
 import type { Scraper } from './types';
 
@@ -66,9 +62,6 @@ export interface RunSummary {
 }
 
 async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: number; inserted: LeadDTO[] }> {
-  const cookies = getConnection(scraper.platform);
-  if (!cookies) return { found: 0, inserted: [] };
-
   const run = startRun(scraper.platform);
   const log = (msg: string) => logger.info(`[${scraper.name}] ${msg}`);
   log('scrape started');
@@ -78,13 +71,13 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
     try {
       raw = await scraper.scrape({
         config,
-        cookies,
         limit: config.leadsPerRun,
         log,
-        onCaptcha: (page, platform) => registerCaptcha(page, { platform }),
+        interactive: env.captchaOpenWindow,
+        captchaTimeoutMs: env.captchaTimeoutMs,
       });
     } catch (err) {
-      markCredentialError(scraper.platform, (err as Error).message);
+      markError(scraper.platform, (err as Error).message);
       throw err;
     }
 
@@ -92,7 +85,7 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
     await review(all, config, log);
 
     finishRun(run.id, { status: 'success', found: raw.length, inserted: inserted.length });
-    markCredentialUsed(scraper.platform);
+    markUsed(scraper.platform);
     log(`scrape finished — found ${raw.length}, inserted ${inserted.length}`);
     return { found: raw.length, inserted };
   } catch (err) {
@@ -133,8 +126,8 @@ export async function runScrapeCycle(): Promise<RunSummary> {
         summary.skipped.push(`${scraper.platform} (not enabled in your config)`);
         continue;
       }
-      if (!getConnection(scraper.platform)) {
-        summary.skipped.push(`${scraper.platform} (no account connected)`);
+      if (!isConnected(scraper.platform)) {
+        summary.skipped.push(`${scraper.platform} (not signed in)`);
         continue;
       }
 

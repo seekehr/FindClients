@@ -41,8 +41,13 @@ export interface UpworkSearchConfig {
 export interface UpworkRuntimeConfig {
   /** Run Chromium headless. Set UPWORK_HEADLESS=false to watch it. */
   headless: boolean;
-  /** Browser user-agent string. */
-  userAgent: string;
+  /**
+   * Override the browser's user agent. Undefined — the default — lets Chromium
+   * send its own, which is the right answer now that we drive a real persistent
+   * profile: a pinned UA string drifts out of date with the actual browser and
+   * turns into a fingerprint mismatch rather than a disguise.
+   */
+  userAgent?: string;
   /** Delay between detail-page visits (be polite). */
   requestDelayMs: number;
   /** How long to wait for the "hire rate" text on a detail page. */
@@ -58,9 +63,7 @@ export type UpworkConfig = UpworkSearchConfig & UpworkRuntimeConfig;
 export function loadUpworkRuntimeConfig(): UpworkRuntimeConfig {
   return {
     headless: bool(process.env.UPWORK_HEADLESS, true),
-    userAgent:
-      process.env.UPWORK_USER_AGENT ??
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    userAgent: process.env.UPWORK_USER_AGENT || undefined,
     requestDelayMs: num(process.env.UPWORK_REQUEST_DELAY_MS, 1500),
     detailTimeoutMs: num(process.env.UPWORK_DETAIL_TIMEOUT_MS, 10_000),
     loadMoreWaitMs: num(process.env.UPWORK_LOAD_MORE_WAIT_MS, 15_000),

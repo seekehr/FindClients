@@ -80,12 +80,25 @@ export interface Paginated<T> {
 
 export interface Connection {
   platform: string
+  /** 'connected' | 'expired' | 'error' | 'disconnected' */
   status: string
-  cookieCount: number
-  connectedAt: string
-  updatedAt: string
+  connectedAt: string | null
   lastUsedAt: string | null
   lastError: string | null
+}
+
+/** A sign-in window currently open on the machine running the server. */
+export interface SignInState {
+  platform: string
+  status: 'waiting' | 'done' | 'failed'
+  message: string
+  startedAt: string
+}
+
+export interface SessionCheck {
+  hasProfile: boolean
+  signedIn: boolean
+  detail?: string
 }
 
 /** Mirrors AppConfig on the server (data/config.json). */
@@ -157,15 +170,6 @@ export interface ScrapeStatus {
   lastFinishedAt: string | null
 }
 
-export interface CaptchaChallenge {
-  sessionId: string
-  platform: string
-  screenshot: string
-  width: number
-  height: number
-  createdAt: number
-}
-
 export interface Notification {
   id: string
   type: string
@@ -208,14 +212,28 @@ export const bookmarksApi = {
   },
 }
 
-export const credentialsApi = {
-  list: () => api<{ platforms: string[]; connections: Connection[] }>('/credentials'),
-  connect: (platform: string, cookies: string) =>
-    api<{ connection: Connection }>(`/credentials/${platform}`, {
-      method: 'PUT',
-      body: { cookies },
+export const connectionsApi = {
+  list: () =>
+    api<{ platforms: string[]; connections: Connection[]; signIn: SignInState | null }>(
+      '/connections',
+    ),
+  /**
+   * Opens a real browser window on the machine running the server and returns
+   * straight away — signing in takes as long as it takes. Poll `list()` and
+   * watch `signIn.status` to follow it.
+   */
+  signIn: (platform: string) =>
+    api<{ ok: boolean; signIn: SignInState }>(`/connections/${platform}/sign-in`, {
+      method: 'POST',
     }),
-  disconnect: (platform: string) => api(`/credentials/${platform}`, { method: 'DELETE' }),
+  check: (platform: string) =>
+    api<{ session: SessionCheck; connections: Connection[] }>(`/connections/${platform}/check`, {
+      method: 'POST',
+    }),
+  disconnect: (platform: string) =>
+    api<{ ok: boolean; connections: Connection[] }>(`/connections/${platform}`, {
+      method: 'DELETE',
+    }),
 }
 
 export const analyticsApi = {
@@ -249,12 +267,4 @@ export const scrapeApi = {
   run: () => api<{ ok: boolean; started: boolean }>('/scrape/run', { method: 'POST' }),
   status: () => api<ScrapeStatus>('/scrape/status'),
   runs: () => api<{ data: ScrapeRun[] }>('/scrape/runs'),
-  captcha: () => api<{ challenge: CaptchaChallenge | null }>('/scrape/captcha'),
-  captchaClick: (sessionId: string, x: number, y: number) =>
-    api<{ screenshot: string; solved: boolean }>('/scrape/captcha/click', {
-      method: 'POST',
-      body: { sessionId, x, y },
-    }),
-  captchaDismiss: (sessionId: string) =>
-    api<{ ok: boolean }>('/scrape/captcha/dismiss', { method: 'POST', body: { sessionId } }),
 }
