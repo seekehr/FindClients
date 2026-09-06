@@ -2,9 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
-import { Menu, X, Bell } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Menu, X, Bell, Loader2 } from 'lucide-react'
 import { notificationsApi, type Notification } from '@/lib/api'
+import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -29,27 +30,30 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [feedOpen, setFeedOpen] = useState(false)
   const pathname = usePathname()
 
-  useEffect(() => {
-    let cancelled = false
-
-    const load = () =>
-      notificationsApi
-        .list()
-        .then(({ data, unread }) => {
-          if (cancelled) return
-          setNotifications(data)
-          setUnread(unread)
-        })
-        // The app not being up yet is not worth an error in the UI chrome.
-        .catch(() => undefined)
-
-    void load()
-    const timer = setInterval(load, POLL_MS)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
+  const loadNotifications = useCallback(async () => {
+    try {
+      const { data, unread } = await notificationsApi.list()
+      setNotifications(data)
+      setUnread(unread)
+    } catch {
+      // The app not being up yet is not worth an error in the UI chrome.
     }
   }, [])
+
+  // Declared after loadNotifications on purpose: it is a `const`, so reading it
+  // above its own initialiser is a temporal-dead-zone crash, not a hoist.
+  //
+  // Lives in the layout so a running scrape is visible on every page, not only
+  // the two that happened to ask for it. A scrape can start from the scheduler
+  // or another tab, so the page you are on has no other way to know. Refreshing
+  // notifications on the finished edge means new-lead alerts land immediately.
+  const scrape = useScrapeStatus(loadNotifications)
+
+  useEffect(() => {
+    void loadNotifications()
+    const timer = setInterval(() => void loadNotifications(), POLL_MS)
+    return () => clearInterval(timer)
+  }, [loadNotifications])
 
   async function openFeed() {
     const next = !feedOpen
@@ -114,6 +118,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </button>
 
           <div className="flex-1" />
+
+          {/* Visible on every page, however the run was started. */}
+          {scrape.running && (
+            <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="hidden sm:inline">
+                Scraping {describePlatforms(scrape.runs)}…
+              </span>
+              <span className="sm:hidden">Scraping…</span>
+            </div>
+          )}
 
           <div className="relative">
             <button

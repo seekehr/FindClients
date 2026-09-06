@@ -111,15 +111,36 @@ configStore.data = { ...defaultConfig(), ...configStore.data };
 
 export const leadsStore = registerForFlush(new JsonFile<Lead[]>(file('leads.json'), () => []));
 
+/** A lead you cleared away, and when. */
+export interface DismissedEntry {
+  hash: string;
+  at: string;
+}
+
 /**
- * Source hashes of leads you have cleared away.
+ * How long a cleared lead stays cleared.
  *
- * Without this, "clear leads" would be undone by the next scrape: the posts
- * are still on Upwork and X, so they would be found and inserted again. Only
- * the hash is kept, not the lead, so clearing genuinely reclaims the space.
+ * There has to be a tombstone at all, or "clear leads" would be undone by the
+ * next scrape — the posts are still on Upwork and X, so they would be found
+ * and inserted straight back.
+ *
+ * It has to expire, or clearing quietly becomes permanent. The scrapers return
+ * the same recent posts every cycle, so clearing right after a scrape
+ * blacklists everything you just saw, forever: the log keeps reporting
+ * `found 25, inserted 0` and the Leads page stays empty with no explanation.
+ * Thirty days is longer than any of these posts stay live, so in practice a
+ * cleared lead never comes back — it just stops being able to poison the well.
  */
+export const DISMISS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 export const dismissedStore = registerForFlush(
-  new JsonFile<string[]>(file('dismissed.json'), () => []),
+  new JsonFile<DismissedEntry[]>(file('dismissed.json'), () => []),
+);
+
+// Older versions stored bare hash strings with no timestamp. Treat those as
+// cleared now, so they expire on the new schedule rather than living forever.
+dismissedStore.data = dismissedStore.data.map((entry) =>
+  typeof entry === 'string' ? { hash: entry as unknown as string, at: new Date().toISOString() } : entry,
 );
 
 export const connectionsStore = registerForFlush(

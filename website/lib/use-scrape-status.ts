@@ -3,51 +3,115 @@
 import { useEffect, useRef, useState } from 'react'
 import { scrapeApi, type ScrapeStatus } from './api'
 
-const IDLE_POLL_MS = 20_000
-const ACTIVE_POLL_MS = 5_000
+/**
+ * Whether a scrape is in flight, shared by every component that asks.
+ *
+ * One poller for the whole page, not one per component. The header shows a
+ * scraping pill on every screen and individual pages show their own inline
+ * state, so a naive hook would have three components independently hitting
+ * `/api/scrape/status` on their own timers.
+ *
+ * Polling at all is the right call here despite being unfashionable: a scrape
+ * can start from the scheduler, this tab, or another tab, and the server has no
+ * way to push. On localhost the request reads an in-memory array, so it costs
+ * approximately nothing — which is why the idle interval is seconds rather than
+ * the half-minute it used to be. That delay was the whole reason a running
+ * scrape only appeared after a manual reload.
+ */
+
+const IDLE_POLL_MS = 5_000
+const ACTIVE_POLL_MS = 2_000
 
 const EMPTY: ScrapeStatus = { running: false, runs: [], lastFinishedAt: null }
 
+let current: ScrapeStatus = EMPTY
+let timer: ReturnType<typeof setTimeout> | null = null
+let inFlight = false
+
+const subscribers = new Set<(status: ScrapeStatus) => void>()
+
+function publish(next: ScrapeStatus) {
+  current = next
+  for (const notify of subscribers) notify(next)
+}
+
+async function tick() {
+  if (inFlight) return
+  inFlight = true
+  try {
+    publish(await scrapeApi.status())
+  } catch {
+    // Server restarting or briefly unreachable — keep the last known state and
+    // let the next tick recover rather than flashing "not running".
+  } finally {
+    inFlight = false
+    schedule()
+  }
+}
+
+function schedule() {
+  if (timer) clearTimeout(timer)
+  if (!subscribers.size) {
+    timer = null
+    return
+  }
+  timer = setTimeout(tick, current.running ? ACTIVE_POLL_MS : IDLE_POLL_MS)
+}
+
+/** Check right now — after starting a scrape, or on returning to the tab. */
+export function refreshScrapeStatus() {
+  void tick()
+}
+
+function onVisible() {
+  if (document.visibilityState === 'visible') refreshScrapeStatus()
+}
+
 /**
- * Tracks whether a scrape is in flight.
- *
- * Polls slowly when idle and quickly while a run is active, and calls
- * `onFinished` on the running → idle edge so a page can refresh the data a
- * completed run just produced.
+ * @param onFinished Called when a scrape run completes. Fires on each platform
+ *   finishing, not only when the whole cycle ends — with two scrapers running
+ *   back to back, waiting for the cycle meant Twitter's leads sat invisible for
+ *   however long Upwork took.
  */
 export function useScrapeStatus(onFinished?: () => void) {
-  const [status, setStatus] = useState<ScrapeStatus>(EMPTY)
+  const [status, setStatus] = useState<ScrapeStatus>(current)
 
-  // Keep the callback in a ref so a caller passing an inline arrow function
-  // doesn't restart the polling loop on every render.
+  // Held in refs so a caller passing an inline arrow function does not tear
+  // down and rebuild the subscription on every render.
   const finishedRef = useRef(onFinished)
   finishedRef.current = onFinished
 
+  const wasRunning = useRef(current.running)
+  const lastFinished = useRef(current.lastFinishedAt)
+
   useEffect(() => {
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout>
-    let wasRunning = false
+    const notify = (next: ScrapeStatus) => {
+      setStatus(next)
 
-    async function tick() {
-      try {
-        const next = await scrapeApi.status()
-        if (cancelled) return
+      const cycleEnded = wasRunning.current && !next.running
+      const platformEnded = next.lastFinishedAt !== lastFinished.current
 
-        setStatus(next)
-        if (wasRunning && !next.running) finishedRef.current?.()
-        wasRunning = next.running
+      wasRunning.current = next.running
+      lastFinished.current = next.lastFinishedAt
 
-        timer = setTimeout(tick, next.running ? ACTIVE_POLL_MS : IDLE_POLL_MS)
-      } catch {
-        // Offline or signed out — back off and let the next tick recover.
-        if (!cancelled) timer = setTimeout(tick, IDLE_POLL_MS)
-      }
+      if (cycleEnded || platformEnded) finishedRef.current?.()
     }
 
-    tick()
+    subscribers.add(notify)
+    if (subscribers.size === 1) {
+      document.addEventListener('visibilitychange', onVisible)
+      window.addEventListener('focus', refreshScrapeStatus)
+    }
+    void tick()
+
     return () => {
-      cancelled = true
-      clearTimeout(timer)
+      subscribers.delete(notify)
+      if (subscribers.size === 0) {
+        document.removeEventListener('visibilitychange', onVisible)
+        window.removeEventListener('focus', refreshScrapeStatus)
+        if (timer) clearTimeout(timer)
+        timer = null
+      }
     }
   }, [])
 

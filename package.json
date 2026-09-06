@@ -10,6 +10,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "start": "node scripts/start.mjs",
+    "chrome": "node scripts/chrome.mjs",
     "dev": "node scripts/dev.mjs",
     "build": "npm run build --prefix website",
     "typecheck": "npm run typecheck --prefix server"

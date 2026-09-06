@@ -19,7 +19,7 @@ import {
   type Connection,
   type SignInState,
 } from '@/lib/api'
-import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
+import { describePlatforms, refreshScrapeStatus, useScrapeStatus } from '@/lib/use-scrape-status'
 
 interface PlatformMeta {
   id: string
@@ -139,6 +139,8 @@ export default function ConnectionsPage() {
     setNotice('')
     try {
       await scrapeApi.run()
+      // Don't wait for the next poll to admit the run exists.
+      refreshScrapeStatus()
       setNotice('Scrape started — new leads will appear on your Leads page as they are found.')
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : 'Could not start scrape')

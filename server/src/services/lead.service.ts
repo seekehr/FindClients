@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { dismissedStore, leadsStore } from '../store';
+import { DISMISS_TTL_MS, dismissedStore, leadsStore } from '../store';
 import { sourceHash } from '../utils/ids';
 import { relativeTime } from '../utils/time';
 import { sanitizeMetadata, sanitizeNullable, sanitizeText } from '../utils/text';
@@ -104,6 +104,17 @@ export function setBookmark(id: string, bookmarked: boolean) {
   return { status: lead.status, bookmarked: lead.bookmarked };
 }
 
+/** Cleared hashes that are still within their suppression window. */
+function activeDismissals(): Set<string> {
+  const cutoff = Date.now() - DISMISS_TTL_MS;
+  const live = dismissedStore.data.filter((d) => new Date(d.at).getTime() > cutoff);
+
+  // Prune on read, so the file cannot grow without bound.
+  if (live.length !== dismissedStore.data.length) dismissedStore.data = live;
+
+  return new Set(live.map((d) => d.hash));
+}
+
 export interface InsertLeadsResult {
   /** Leads that were genuinely new. Drives notifications. */
   inserted: LeadDTO[];
@@ -113,6 +124,13 @@ export interface InsertLeadsResult {
    * still waiting for a verdict, so this is what the AI pass runs over.
    */
   all: LeadDTO[];
+  /**
+   * How many were skipped because you had cleared them.
+   *
+   * Reported so `found 25, inserted 0` cannot look like a broken scraper when
+   * it is really the dismissal list doing its job.
+   */
+  skippedAsCleared: number;
 }
 
 /**
@@ -120,15 +138,16 @@ export interface InsertLeadsResult {
  * that were explicitly cleared away.
  */
 export function insertLeads(raw: RawLead[]): InsertLeadsResult {
-  if (!raw.length) return { inserted: [], all: [] };
+  if (!raw.length) return { inserted: [], all: [], skippedAsCleared: 0 };
 
   const now = new Date().toISOString();
   const byHash = new Map(leadsStore.data.map((lead) => [lead.sourceHash, lead]));
-  const dismissed = new Set(dismissedStore.data);
+  const dismissed = activeDismissals();
 
   const inserted: Lead[] = [];
   const all: Lead[] = [];
   const seen = new Set<string>();
+  let skippedAsCleared = 0;
 
   for (const r of raw) {
     const hash = sourceHash(r.platform, r.url, r.title);
@@ -138,7 +157,10 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
     seen.add(hash);
 
     // Cleared away on purpose — do not drag it back in.
-    if (dismissed.has(hash)) continue;
+    if (dismissed.has(hash)) {
+      skippedAsCleared += 1;
+      continue;
+    }
 
     const existing = byHash.get(hash);
     if (existing) {
@@ -182,7 +204,7 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
 
   if (inserted.length) leadsStore.save();
 
-  return { inserted: inserted.map(toDTO), all: all.map(toDTO) };
+  return { inserted: inserted.map(toDTO), all: all.map(toDTO), skippedAsCleared };
 }
 
 /** Which of these leads already carry a verdict? */
@@ -246,19 +268,27 @@ export function saveAiReviews(reviews: AiReviewToSave[]): void {
  */
 export function clearLeads(): number {
   const keep: Lead[] = [];
-  const dismissed = new Set(dismissedStore.data);
+  const now = new Date().toISOString();
+  const dismissed = new Map(dismissedStore.data.map((d) => [d.hash, d]));
 
   for (const lead of leadsStore.data) {
     if (lead.bookmarked) keep.push(lead);
-    else dismissed.add(lead.sourceHash);
+    else dismissed.set(lead.sourceHash, { hash: lead.sourceHash, at: now });
   }
 
   const removed = leadsStore.data.length - keep.length;
   if (!removed) return 0;
 
   leadsStore.data = keep;
-  dismissedStore.data = [...dismissed];
+  dismissedStore.data = [...dismissed.values()];
   return removed;
+}
+
+/** Forget every dismissal, so cleared leads can be found again. */
+export function restoreClearedLeads(): number {
+  const count = dismissedStore.data.length;
+  dismissedStore.data = [];
+  return count;
 }
 
 export function totalLeadCount(): number {

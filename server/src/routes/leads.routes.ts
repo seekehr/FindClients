@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, notFound } from '../utils/http';
-import { clearLeads, getLead, listLeads, setBookmark, setLeadStatus } from '../services/lead.service';
+import {
+  clearLeads,
+  getLead,
+  listLeads,
+  restoreClearedLeads,
+  setBookmark,
+  setLeadStatus,
+} from '../services/lead.service';
 import type { LeadStatus } from '../types';
 
 export const leadsRouter = Router();
@@ -29,6 +36,20 @@ leadsRouter.delete(
   '/',
   asyncHandler(async (_req, res) => {
     res.json({ ok: true, removed: clearLeads() });
+  }),
+);
+
+/**
+ * Forget every dismissal, so previously cleared leads can be found again.
+ *
+ * Clearing suppresses a lead for 30 days by source hash. That is usually what
+ * you want, but it also means clearing right after a scrape hides everything
+ * that scrape found — this is the way back.
+ */
+leadsRouter.post(
+  '/restore-cleared',
+  asyncHandler(async (_req, res) => {
+    res.json({ ok: true, restored: restoreClearedLeads() });
   }),
 );
 

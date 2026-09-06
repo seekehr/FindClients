@@ -7,7 +7,7 @@ import { Search, Loader2, Inbox, Radar, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { leadsApi, scrapeApi, ApiError, type Lead } from '@/lib/api'
-import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
+import { describePlatforms, refreshScrapeStatus, useScrapeStatus } from '@/lib/use-scrape-status'
 
 const PLATFORMS = [
   { id: null, label: 'All' },
@@ -65,6 +65,8 @@ export default function LeadsPage() {
     setScraping(true)
     try {
       await scrapeApi.run()
+      // Don't wait for the next poll to admit the run exists.
+      refreshScrapeStatus()
     } catch {
       // scrape status polling will pick up the state
     } finally {

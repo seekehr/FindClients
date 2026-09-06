@@ -81,12 +81,17 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
       throw err;
     }
 
-    const { inserted, all } = insertLeads(raw);
+    const { inserted, all, skippedAsCleared } = insertLeads(raw);
     await review(all, config, log);
 
     finishRun(run.id, { status: 'success', found: raw.length, inserted: inserted.length });
     markUsed(scraper.platform);
-    log(`scrape finished — found ${raw.length}, inserted ${inserted.length}`);
+    log(
+      `scrape finished — found ${raw.length}, inserted ${inserted.length}` +
+        // Otherwise "found 25, inserted 0" reads as a broken scraper when it is
+        // really every result having been cleared away earlier.
+        (skippedAsCleared ? `, skipped ${skippedAsCleared} you had cleared` : ''),
+    );
     return { found: raw.length, inserted };
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
