@@ -19,18 +19,20 @@ const PLATFORM = 'upwork' as const;
 /**
  * Upwork scraper.
  *
- * Launches its own Chromium and injects the Upwork session cookies you saved
- * on the Connections page — there is no Chrome to start by hand and no
- * remote-debugging port to open. It pages through the configured feed until
- * jobs exceed the age cutoff, optionally enriches each one from its detail
- * page, and maps everything to `RawLead`s.
+ * Opens the persistent Chromium profile you signed in with (see
+ * ../lib/profile.ts) — no Chrome to start by hand, no remote-debugging port,
+ * and no cookies to inject. It pages through the configured feed until jobs
+ * exceed the age cutoff, optionally enriches each one from its detail page,
+ * and maps everything to `RawLead`s.
  *
  * Side-effect free by design: no files written, no webhooks called. Storing,
  * de-duplicating and announcing leads is the server's job, which is what makes
  * re-seeing the same job on the next cycle a no-op.
  *
- * Without cookies the scraper returns [] and says so in the log, rather than
- * throwing and taking the cycle down with it.
+ * Upwork sits behind Cloudflare, which serves headless Chromium a 403 "Just a
+ * moment..." wall. That is what the challenge handling below is for: the run
+ * reopens in a visible window, you clear it once, and the clearance cookie is
+ * saved into the profile like any other.
  */
 
 export interface UpworkJob {
@@ -148,14 +150,57 @@ export async function parseJobTile(section: ElementHandle): Promise<UpworkJob> {
   };
 }
 
-/** Does the page look like a CAPTCHA / bot challenge? */
-async function looksLikeChallenge(page: Page): Promise<boolean> {
+/**
+ * Wait for navigation to actually finish.
+ *
+ * Upwork answers a lot of requests with an interstitial that immediately
+ * redirects, so the document that fires `domcontentloaded` is frequently not
+ * the page you end up on. Anything that reads the URL or title to decide what
+ * kind of page this is has to wait for this first.
+ */
+async function settle(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
+  await sleep(1500);
+}
+
+/**
+ * Wording a bot wall uses. Cloudflare's is the one that matters here — Upwork
+ * sits behind it, and its interstitial says "Just a moment...", which matched
+ * none of the obvious words like "captcha" or "challenge". Missing it meant the
+ * run fell through to waitForFeed and spent two minutes nudging a 403.
+ */
+const CHALLENGE_PHRASES = [
+  'just a moment',
+  'checking your browser',
+  'attention required',
+  'access denied',
+  'captcha',
+  'challenge',
+  'verify',
+  'robot',
+  'blocked',
+];
+
+/** Cloudflare's markup, under whichever name it is using this month. */
+const CHALLENGE_SELECTOR = '#challenge-form, #cf-challenge-running, [class*="cf-turnstile"]';
+
+/**
+ * Does the page look like a bot wall rather than the feed?
+ *
+ * @param status HTTP status of the navigation, when this is called right after
+ *   one. Cloudflare serves its interstitial as 403/503 and only then runs the
+ *   JS that rewrites the page, so the status is the earliest and most reliable
+ *   signal available — the title still says "Just a moment..." either way.
+ */
+async function looksLikeChallenge(page: Page, status?: number): Promise<boolean> {
   try {
+    if (status === 403 || status === 503) return true;
+
     const url = page.url().toLowerCase();
     const title = (await page.title()).toLowerCase();
-    return ['captcha', 'challenge', 'verify', 'robot', 'blocked'].some(
-      (kw) => url.includes(kw) || title.includes(kw),
-    );
+    if (CHALLENGE_PHRASES.some((kw) => url.includes(kw) || title.includes(kw))) return true;
+
+    return (await page.locator(CHALLENGE_SELECTOR).count()) > 0;
   } catch {
     return false;
   }
@@ -202,10 +247,11 @@ async function handleChallenge(
   page: Page,
   ctx: ScrapeContext,
   headless: boolean,
+  status?: number,
 ): Promise<boolean> {
-  if (!(await looksLikeChallenge(page))) return false;
+  if (!(await looksLikeChallenge(page, status))) return false;
   if (headless) {
-    ctx.log('bot challenge detected');
+    ctx.log('bot challenge detected — headless cannot clear it');
     return true;
   }
   return !(await waitForCaptchaSolved(page, ctx.log, ctx.captchaTimeoutMs));
@@ -292,10 +338,18 @@ async function waitForFeed(page: Page, log: (m: string) => void): Promise<boolea
       }
     }
     log(`feed not visible yet (attempt ${attempt + 1}) — nudging`);
-    await page.evaluate('window.scrollTo(0, 400)');
-    await sleep(3000);
-    await page.evaluate('window.scrollTo(0, 0)');
-    await sleep(2000);
+    try {
+      await page.evaluate('window.scrollTo(0, 400)');
+      await sleep(3000);
+      await page.evaluate('window.scrollTo(0, 0)');
+      await sleep(2000);
+    } catch {
+      // The page went away mid-nudge (closed window, navigation). That is a
+      // feed we will never see, not a crash worth reporting as one — it used to
+      // surface as "Target page, context or browser has been closed".
+      log('the page closed while waiting for the feed');
+      return false;
+    }
   }
   return false;
 }
@@ -335,9 +389,29 @@ async function runPass(
     const page = await firstPage(context);
 
     ctx.log(`navigating to feed: ${feedUrl}`);
-    await page.goto(feedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    const response = await page.goto(feedUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000,
+    });
 
-    if (await handleChallenge(page, ctx, headless)) return { leads: [], blocked: true };
+    // Let the redirects finish before deciding what this page is.
+    //
+    // `domcontentloaded` fires on the *first* document, which for Upwork is
+    // often an interstitial on its way to somewhere else. Classifying that
+    // early read "bot challenge detected" 250ms after navigating, on what was
+    // really a sign-in redirect — and then opened a browser window asking
+    // someone to solve a login page.
+    await settle(page);
+
+    // Signed out is checked first, and is not a challenge. Nobody can "solve"
+    // a login page, and waitForFeed would spend 105 seconds nudging one.
+    if (looksSignedOut(page)) {
+      throw new Error('Signed out of Upwork — sign in again on the Connections page.');
+    }
+
+    if (await handleChallenge(page, ctx, headless, response?.status())) {
+      return { leads: [], blocked: true };
+    }
 
     if (!(await waitForFeed(page, ctx.log))) {
       ctx.log('job feed did not load — skipping this run');
@@ -441,8 +515,30 @@ async function runPass(
  */
 const SIGNED_IN_URL = /^https:\/\/www\.upwork\.com\/nx\//;
 
+/** Upwork bounces a signed-out session here, whatever page you asked for. */
+const SIGNED_OUT_URL = /\/(ab\/account-security|login|signup)/;
+
 async function isSignedIn(page: Page): Promise<boolean> {
   return SIGNED_IN_URL.test(page.url().toLowerCase());
+}
+
+function looksSignedOut(page: Page): boolean {
+  return SIGNED_OUT_URL.test(page.url().toLowerCase());
+}
+
+/** The page a signed-in session can reach and a signed-out one cannot. */
+const FEED_URL = 'https://www.upwork.com/nx/find-work/most-recent';
+
+/**
+ * Load the feed and report whether we were allowed to stay on it.
+ *
+ * This is the only check that actually proves a session works — the URL alone
+ * cannot, because Upwork's login flow passes through `/nx/` on its way.
+ */
+async function confirmSignedIn(page: Page): Promise<boolean> {
+  await page.goto(FEED_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await sleep(1500);
+  return !looksSignedOut(page) && (await isSignedIn(page));
 }
 
 const SIGN_IN_URL = 'https://www.upwork.com/ab/account-security/login';
@@ -458,11 +554,7 @@ export const upworkScraper: Scraper = {
     const context = await openProfile(PLATFORM, { headless: true, userAgent: cfg.userAgent });
     try {
       const page = await firstPage(context);
-      await page.goto('https://www.upwork.com/nx/find-work/', {
-        waitUntil: 'domcontentloaded',
-        timeout: 30_000,
-      });
-      const signedIn = await isSignedIn(page);
+      const signedIn = await confirmSignedIn(page);
       if (!signedIn) log('the saved Upwork session has expired — sign in again');
       return {
         hasProfile: true,
@@ -483,7 +575,13 @@ export const upworkScraper: Scraper = {
     try {
       const page = await firstPage(context);
       await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-      return await waitForSignIn(context, () => isSignedIn(page), timeoutMs, log);
+      return await waitForSignIn(
+        context,
+        () => isSignedIn(page),
+        () => confirmSignedIn(page),
+        timeoutMs,
+        log,
+      );
     } finally {
       await context.close().catch(() => undefined);
     }
@@ -520,6 +618,9 @@ export const upworkScraper: Scraper = {
     }
 
     ctx.log('reopening Upwork in a visible window so you can solve the challenge');
+    // The headless pass only just let go of this profile, and Chromium releases
+    // the directory a beat after close() resolves.
+    await sleep(3000);
     const second = await runPass(ctx, cfg, false);
 
     // The second pass restarts from the top of the feed, so it normally

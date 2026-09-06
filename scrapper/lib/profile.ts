@@ -64,6 +64,8 @@ export interface OpenOptions {
 export async function openProfile(
   platform: string,
   opts: OpenOptions,
+  /** Internal: set when this is the automatic retry after a lock collision. */
+  isRetry = false,
 ): Promise<BrowserContext> {
   const dir = profileDir(platform);
   fs.mkdirSync(dir, { recursive: true });
@@ -87,6 +89,15 @@ export async function openProfile(
   } catch (err) {
     const message = (err as Error).message ?? '';
     if (/ProcessSingleton|SingletonLock|already (running|in use)/i.test(message)) {
+      // Usually a genuine collision — but not always. Closing a persistent
+      // context returns before Chromium has finished releasing the directory,
+      // so reopening a profile straight after closing it (which is exactly what
+      // the headed CAPTCHA retry does) can lose a race with its own predecessor.
+      // Give it a moment and try once more before blaming the user.
+      if (!isRetry) {
+        await new Promise((r) => setTimeout(r, 3000));
+        return openProfile(platform, opts, true);
+      }
       throw new Error(
         `The ${platform} browser profile is already open in another process. ` +
           'Wait for the current scrape or sign-in to finish, then try again.',
@@ -101,16 +112,30 @@ export async function firstPage(context: BrowserContext): Promise<Page> {
   return context.pages()[0] ?? (await context.newPage());
 }
 
+/** Don't re-run the expensive confirmation more than this often. */
+const CONFIRM_COOLDOWN_MS = 15_000;
+
 /**
- * Poll until `signedIn` reports true, the window is closed, or time runs out.
+ * Wait for a person to finish signing in.
  *
- * Watching for the context closing matters: someone who gives up and closes the
- * window should not leave the app waiting the full timeout for a browser that
- * no longer exists.
+ * Two checks, deliberately. `looksSignedIn` is a cheap glance at the URL, run
+ * every couple of seconds; `confirm` is the expensive one that actually loads
+ * the page we care about and reports whether it stayed there.
+ *
+ * The cheap check alone is not enough, and getting that wrong is expensive:
+ * login flows pass through redirects that look like the signed-in app for a
+ * moment, so a URL match can fire before the person has typed their password.
+ * That saves a profile that is not really signed in, reports success, and the
+ * next scrape quietly lands on a login page — the exact failure this pairing
+ * exists to prevent. Only `confirm` may end the wait.
+ *
+ * Watching for the window closing matters too: someone who gives up should not
+ * leave the app waiting the full timeout on a browser that no longer exists.
  */
 export async function waitForSignIn(
   context: BrowserContext,
-  signedIn: () => Promise<boolean>,
+  looksSignedIn: () => Promise<boolean>,
+  confirm: () => Promise<boolean>,
   timeoutMs: number,
   log: (msg: string) => void,
 ): Promise<boolean> {
@@ -123,19 +148,27 @@ export async function waitForSignIn(
   const minutes = Math.round(timeoutMs / 60_000);
   log(`sign in using the browser window that just opened — waiting up to ${minutes} minute(s)`);
 
+  let lastConfirm = 0;
+
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
     if (closed) {
       log('the browser window was closed before sign-in completed');
       return false;
     }
+
     try {
-      if (await signedIn()) {
+      if (!(await looksSignedIn())) continue;
+      if (Date.now() - lastConfirm < CONFIRM_COOLDOWN_MS) continue;
+      lastConfirm = Date.now();
+
+      if (await confirm()) {
         log('signed in — the session is saved and will be reused from now on');
         // Give Chromium a moment to flush cookies to the profile on disk.
         await new Promise((r) => setTimeout(r, 2000));
         return true;
       }
+      log('not signed in yet — still waiting');
     } catch {
       // Mid-navigation the page can be briefly unusable. Keep waiting.
     }

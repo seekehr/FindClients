@@ -294,6 +294,22 @@ const SIGN_IN_URL = 'https://x.com/i/flow/login';
 const HOME_URL = 'https://x.com/home';
 
 /**
+ * Load the home timeline and report whether we were allowed to stay on it.
+ *
+ * The only check that actually proves a session works. X's login flow moves
+ * through several URLs, so matching one of them is not evidence that anyone
+ * has finished typing a password.
+ */
+async function confirmSignedIn(page: Page): Promise<boolean> {
+  await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.waitForTimeout(2000);
+  if (!(await isSignedIn(page))) return false;
+  // The account switcher only renders for a real session — belt and braces
+  // against X parking a signed-out visitor on a /home-shaped URL.
+  return (await page.locator('[data-testid="SideNav_AccountSwitcher_Button"]').count()) > 0;
+}
+
+/**
  * The Scraper the server runs on a schedule. Opens the persistent profile,
  * scrapes, maps to leads, and always tears the browser down — even on error.
  */
@@ -311,8 +327,7 @@ export const twitterScraper: Scraper = {
     });
     try {
       const page = await firstPage(context);
-      await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-      const signedIn = await isSignedIn(page);
+      const signedIn = await confirmSignedIn(page);
       if (!signedIn) log('the saved X session has expired — sign in again');
       return {
         hasProfile: true,
@@ -335,7 +350,13 @@ export const twitterScraper: Scraper = {
     try {
       const page = await firstPage(context);
       await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-      return await waitForSignIn(context, () => isSignedIn(page), timeoutMs, log);
+      return await waitForSignIn(
+        context,
+        () => isSignedIn(page),
+        () => confirmSignedIn(page),
+        timeoutMs,
+        log,
+      );
     } finally {
       await context.close().catch(() => undefined);
     }
