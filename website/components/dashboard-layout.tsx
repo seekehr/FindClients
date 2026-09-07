@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
-import { Menu, X, Bell, Loader2 } from 'lucide-react'
+import { Menu, X, Bell, Loader2, AlertTriangle } from 'lucide-react'
 import { notificationsApi, type Notification } from '@/lib/api'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
 
@@ -160,6 +160,27 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             )}
           </div>
         </header>
+
+        {/* The browser we scrape with is gone. Nothing will work until it is
+            back, so say so on every page rather than only where it is noticed. */}
+        {scrape.browser && !scrape.browser.reachable && (
+          <div className="flex items-start gap-3 border-b border-destructive/40 bg-destructive/10 px-6 py-3">
+            <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+            <div className="text-sm">
+              <p className="font-semibold text-destructive">
+                Chrome is not running — scraping and signing in are paused.
+              </p>
+              <p className="text-foreground/70 mt-0.5">
+                FindClients uses the Chrome you start yourself at{' '}
+                <code className="font-mono text-xs">{scrape.browser.url}</code>. Run{' '}
+                <code className="font-mono text-xs bg-secondary px-1.5 py-0.5 rounded">
+                  npm run chrome
+                </code>{' '}
+                and leave that window open.
+              </p>
+            </div>
+          </div>
+        )}
 
         <main className="flex-1 overflow-auto">{children}</main>
       </div>

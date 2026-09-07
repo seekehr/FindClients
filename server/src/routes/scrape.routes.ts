@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/http';
 import { logger } from '../utils/logger';
 import { isScraping, runScrapeCycle } from '../scrapers/runner';
 import { recentScrapeRuns, scrapeStatus } from '../services/analytics.service';
+import { browserStatus } from '../services/browser.service';
 
 export const scrapeRouter = Router();
 
@@ -30,10 +31,12 @@ scrapeRouter.post(
 );
 
 // Is a scrape in flight right now? Polled by the UI, so it stays cheap.
+// Polled by every page, so it also carries whether the browser we scrape with
+// is still there — that is the fastest way for a closed Chrome to reach the UI.
 scrapeRouter.get(
   '/status',
   asyncHandler(async (_req, res) => {
-    res.json(scrapeStatus());
+    res.json({ ...scrapeStatus(), browser: await browserStatus() });
   }),
 );
 

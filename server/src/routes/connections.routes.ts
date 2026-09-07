@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler, badRequest } from '../utils/http';
 import { isScraping } from '../scrapers/runner';
+import { browserStatus, invalidateBrowserStatus } from '../services/browser.service';
 import {
   CONNECTABLE_PLATFORMS,
   checkConnection,
@@ -25,6 +26,7 @@ connectionsRouter.get(
       platforms: CONNECTABLE_PLATFORMS,
       connections: listConnections(),
       signIn: getSignInState(),
+      browser: await browserStatus(),
     });
   }),
 );
@@ -37,7 +39,17 @@ connectionsRouter.get(
 connectionsRouter.post(
   '/:platform/sign-in',
   asyncHandler(async (req, res) => {
-    startSignIn(platformParam(req.params.platform));
+    const platform = platformParam(req.params.platform);
+
+    // Refuse up front rather than opening a browser window that cannot exist.
+    invalidateBrowserStatus();
+    const browser = await browserStatus();
+    if (!browser.reachable) {
+      res.status(409).json({ error: `Chrome is not running at ${browser.url}. ${browser.hint}` });
+      return;
+    }
+
+    startSignIn(platform);
     res.status(202).json({ ok: true, signIn: getSignInState() });
   }),
 );

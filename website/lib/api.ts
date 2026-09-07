@@ -164,10 +164,20 @@ export interface ScrapeRun {
   finishedAt: string | null
 }
 
+/** Whether the browser the scrapers drive is actually available. */
+export interface BrowserStatus {
+  /** 'attached' = a Chrome you started; 'own' = one FindClients launches. */
+  mode: 'attached' | 'own'
+  url: string
+  reachable: boolean
+  hint: string
+}
+
 export interface ScrapeStatus {
   running: boolean
   runs: { id: string; platform: string; startedAt: string }[]
   lastFinishedAt: string | null
+  browser?: BrowserStatus
 }
 
 export interface Notification {
@@ -214,9 +224,12 @@ export const bookmarksApi = {
 
 export const connectionsApi = {
   list: () =>
-    api<{ platforms: string[]; connections: Connection[]; signIn: SignInState | null }>(
-      '/connections',
-    ),
+    api<{
+      platforms: string[]
+      connections: Connection[]
+      signIn: SignInState | null
+      browser: BrowserStatus
+    }>('/connections'),
   /**
    * Opens a real browser window on the machine running the server and returns
    * straight away — signing in takes as long as it takes. Poll `list()` and

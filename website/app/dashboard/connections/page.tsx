@@ -91,6 +91,12 @@ export default function ConnectionsPage() {
 
   const byPlatform = (id: string) => connections.find((c) => c.platform === id)
 
+  // Read from the shared status poller, not from `connectionsApi.list()`. That
+  // call only runs on mount and while a sign-in is open, so the buttons would
+  // still be enabled minutes after the browser went away.
+  const browser = scrape.browser
+  const browserDown = browser ? !browser.reachable : false
+
   async function startSignIn(id: string) {
     setNotice('')
     setBusy(id)
@@ -162,7 +168,7 @@ export default function ConnectionsPage() {
           <Button
             variant="outline"
             onClick={runScrape}
-            disabled={scraping || scrape.running || waiting}
+            disabled={scraping || scrape.running || waiting || browserDown}
             className="gap-2 shrink-0"
           >
             {scraping || scrape.running ? (
@@ -193,6 +199,17 @@ export default function ConnectionsPage() {
                 Take as long as you need. Close the window to cancel.
               </p>
             </div>
+          </div>
+        )}
+
+        {browserDown && (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-semibold text-destructive">
+              Signing in and scraping need the Chrome window.
+            </p>
+            <p className="text-foreground/70 mt-1">
+              {browser?.hint} These buttons stay disabled until it is back.
+            </p>
           </div>
         )}
 
@@ -266,7 +283,7 @@ export default function ConnectionsPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => check(p.id)}
-                            disabled={isBusy || waiting || scrape.running}
+                            disabled={isBusy || waiting || scrape.running || browserDown}
                           >
                             Check
                           </Button>
@@ -275,7 +292,7 @@ export default function ConnectionsPage() {
                             size="sm"
                             className="gap-2 text-destructive hover:text-destructive"
                             onClick={() => disconnect(p.id)}
-                            disabled={isBusy || waiting || scrape.running}
+                            disabled={isBusy || waiting || scrape.running || browserDown}
                           >
                             <Trash2 className="w-4 h-4" /> Disconnect
                           </Button>
@@ -285,7 +302,7 @@ export default function ConnectionsPage() {
                         size="sm"
                         className="gap-2"
                         onClick={() => startSignIn(p.id)}
-                        disabled={isBusy || waiting || scrape.running}
+                        disabled={isBusy || waiting || scrape.running || browserDown}
                       >
                         {isBusy ? (
                           <Loader2 className="w-4 h-4 animate-spin" />

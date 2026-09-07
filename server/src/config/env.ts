@@ -63,6 +63,12 @@ export const env = {
   captchaOpenWindow: bool(process.env.CAPTCHA_OPEN_WINDOW, true),
   captchaTimeoutMs: num(process.env.CAPTCHA_TIMEOUT_MS, 5 * 60 * 1000),
 
+  /**
+   * Attach to a Chrome the user started (`npm run chrome`) instead of letting
+   * the scrapers launch one. Empty means launch our own per-platform profile.
+   */
+  chromeCdpUrl: process.env.CHROME_CDP_URL?.trim() ?? '',
+
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, true),
 
   /**
