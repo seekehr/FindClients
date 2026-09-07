@@ -18,7 +18,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
-import { BrandMark, Wordmark } from '@/components/brand'
+import { Wordmark } from '@/components/brand'
 import { notificationsApi, type Notification } from '@/lib/api'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
 import { cn } from '@/lib/utils'
@@ -131,12 +131,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           sidebarOpen ? 'translate-x-0 shadow-drawer' : '-translate-x-full',
         )}
       >
-        <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
-          <Link
-            href="/dashboard"
-            className="flex min-w-0 items-center gap-2.5 rounded-md"
-          >
-            <BrandMark />
+        <div className="flex h-14 items-center border-b border-border px-4">
+          <Link href="/dashboard" className="min-w-0 rounded-md">
             <Wordmark />
           </Link>
           <button
