@@ -1,29 +1,30 @@
 'use client'
 
-import DashboardLayout from '@/components/dashboard-layout'
-import { Button } from '@/components/ui/button'
 import {
   ArrowLeft,
-  ExternalLink,
   Bookmark,
   BookmarkCheck,
-  Loader2,
+  ExternalLink,
   User,
-  Calendar,
-  Wallet,
-  Clock,
 } from 'lucide-react'
 import Link from 'next/link'
 import { use, useEffect, useState } from 'react'
-import { ApiError, leadsApi, type Lead, type LeadStatus } from '@/lib/api'
 
-const PLATFORMS: Record<string, { label: string; icon: string; badge: string }> = {
-  upwork: { label: 'Upwork', icon: '💼', badge: 'text-blue-600 bg-blue-500/10' },
-  twitter: { label: 'Twitter / X', icon: '𝕏', badge: 'text-sky-600 bg-sky-500/10' },
-  discord: { label: 'Discord', icon: '🎮', badge: 'text-purple-600 bg-purple-500/10' },
-  reddit: { label: 'Reddit', icon: '👽', badge: 'text-orange-600 bg-orange-500/10' },
-  linkedin: { label: 'LinkedIn', icon: '💼', badge: 'text-sky-700 bg-sky-600/10' },
-}
+import DashboardLayout from '@/components/dashboard-layout'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Alert, LoadingRow } from '@/components/ui/feedback'
+import { Eyebrow, PageShell } from '@/components/ui/page'
+import { PlatformMark } from '@/components/ui/platform-mark'
+import { ApiError, leadsApi, type Lead, type LeadStatus } from '@/lib/api'
+import { platformMeta } from '@/lib/platforms'
+import { cn } from '@/lib/utils'
 
 const STATUSES: { id: LeadStatus; label: string }[] = [
   { id: 'new', label: 'New' },
@@ -33,7 +34,22 @@ const STATUSES: { id: LeadStatus; label: string }[] = [
   { id: 'archived', label: 'Archived' },
 ]
 
-export default function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <Eyebrow>{label}</Eyebrow>
+      <p className="mt-1.5 truncate font-display text-base font-semibold tabular">
+        {value}
+      </p>
+    </div>
+  )
+}
+
+export default function LeadDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
   const { id } = use(params)
 
   const [lead, setLead] = useState<Lead | null>(null)
@@ -91,12 +107,22 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
     }
   }
 
+  const backLink = (
+    <Link
+      href="/dashboard/leads"
+      className="inline-flex items-center gap-2 rounded-sm text-[0.8125rem] font-medium text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" />
+      All leads
+    </Link>
+  )
+
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center gap-2 py-24 text-foreground/50">
-          <Loader2 className="w-5 h-5 animate-spin" /> Loading lead…
-        </div>
+        <PageShell>
+          <LoadingRow label="Loading lead" />
+        </PageShell>
       </DashboardLayout>
     )
   }
@@ -104,187 +130,242 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   if (!lead) {
     return (
       <DashboardLayout>
-        <div className="p-6 max-w-2xl space-y-4">
-          <Link href="/dashboard/leads" className="flex items-center gap-2 text-primary hover:underline">
-            <ArrowLeft className="w-4 h-4" />
-            Back to leads
-          </Link>
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error || 'Lead not found.'}
-          </div>
-        </div>
+        <PageShell width="narrow" className="space-y-4">
+          {backLink}
+          <Alert tone="danger" title={error || 'Lead not found.'} />
+        </PageShell>
       </DashboardLayout>
     )
   }
 
-  const platform = PLATFORMS[lead.platform] ?? {
-    label: lead.platform,
-    icon: '🔎',
-    badge: 'text-foreground/70 bg-secondary',
-  }
+  const meta = platformMeta(lead.platform)
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-6xl mx-auto space-y-6">
-        <Link href="/dashboard/leads" className="flex items-center gap-2 text-primary hover:underline">
-          <ArrowLeft className="w-4 h-4" />
-          Back to leads
-        </Link>
+      <PageShell className="space-y-6">
+        {backLink}
 
-        {error && (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        {error && <Alert tone="danger" title={error} />}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main content */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-card rounded-xl border border-border/40 p-6">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-2xl">{platform.icon}</span>
-                    <span className={`text-sm font-semibold px-2 py-1 rounded-full ${platform.badge}`}>
-                      {platform.label}
-                    </span>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="space-y-4 lg:col-span-2">
+            <Card>
+              <CardContent className="space-y-5">
+                <div className="flex items-start gap-4">
+                  <PlatformMark platform={lead.platform} size="lg" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[0.8125rem] font-medium text-graphite-300">
+                        {meta.label}
+                      </span>
+                      <span
+                        className="size-0.5 shrink-0 rounded-full bg-graphite-500"
+                        aria-hidden
+                      />
+                      <span className="text-[0.8125rem] text-muted-foreground">
+                        Posted {lead.postedTime}
+                      </span>
+                      {lead.ai.verdict === 'qualified' && (
+                        <Badge tone="success" dot>
+                          Qualified
+                          {lead.ai.score !== null ? ` ${lead.ai.score}` : ''}
+                        </Badge>
+                      )}
+                      {lead.ai.verdict === 'rejected' && (
+                        <Badge tone="neutral" dot>
+                          Rejected
+                          {lead.ai.score !== null ? ` ${lead.ai.score}` : ''}
+                        </Badge>
+                      )}
+                    </div>
+                    <h1 className="mt-2 font-display text-2xl leading-8 font-semibold tracking-[-0.02em]">
+                      {lead.title}
+                    </h1>
+                    <p className="mt-1.5 text-[0.8125rem] text-muted-foreground">
+                      {new Date(lead.postedAt).toLocaleString()}
+                    </p>
                   </div>
-                  <h1 className="text-3xl font-bold mb-2">{lead.title}</h1>
-                  <p className="text-foreground/60 text-sm">
-                    Posted {lead.postedTime} · {new Date(lead.postedAt).toLocaleString()}
-                  </p>
+                  <button
+                    type="button"
+                    onClick={toggleBookmark}
+                    aria-label={
+                      lead.bookmarked ? 'Remove bookmark' : 'Save this lead'
+                    }
+                    aria-pressed={lead.bookmarked}
+                    className={cn(
+                      'flex size-9 shrink-0 items-center justify-center rounded-md border transition-colors duration-150 ease-out',
+                      lead.bookmarked
+                        ? 'border-gold-500/30 bg-gold-500/10 text-primary'
+                        : 'border-border text-graphite-500 hover:bg-secondary hover:text-foreground',
+                    )}
+                  >
+                    {lead.bookmarked ? (
+                      <BookmarkCheck className="size-4" />
+                    ) : (
+                      <Bookmark className="size-4" />
+                    )}
+                  </button>
                 </div>
-                <button
-                  onClick={toggleBookmark}
-                  aria-label={lead.bookmarked ? 'Remove bookmark' : 'Add bookmark'}
-                  className={`p-2 rounded-lg transition shrink-0 ${
-                    lead.bookmarked ? 'bg-accent/20 text-accent' : 'hover:bg-secondary'
-                  }`}
-                >
-                  {lead.bookmarked ? (
-                    <BookmarkCheck className="w-6 h-6" />
-                  ) : (
-                    <Bookmark className="w-6 h-6" />
+
+                <div className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-surface-raised p-4 sm:grid-cols-3">
+                  <Fact label="Budget" value={lead.budget || '—'} />
+                  <Fact label="Timeline" value={lead.timeline || '—'} />
+                  <Fact label="Found" value={lead.postedTime} />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>The post</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {lead.description ? (
+                  <div className="text-sm leading-6 break-words whitespace-pre-wrap text-graphite-300">
+                    {lead.description}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    The source post had no description. Open the original to read
+                    it in full.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {lead.ai.verdict && lead.ai.reason && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>AI review</CardTitle>
+                  <Badge
+                    tone={lead.ai.verdict === 'qualified' ? 'success' : 'neutral'}
+                    dot
+                  >
+                    {lead.ai.verdict === 'qualified' ? 'Qualified' : 'Rejected'}
+                    {lead.ai.score !== null ? ` · ${lead.ai.score}` : ''}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-sm leading-6 text-graphite-300">
+                    {lead.ai.reason}
+                  </p>
+                  {lead.ai.model && (
+                    <p className="text-xs text-muted-foreground">
+                      Judged by {lead.ai.model}
+                      {lead.ai.checkedAt
+                        ? ` on ${new Date(lead.ai.checkedAt).toLocaleString()}`
+                        : ''}
+                    </p>
                   )}
-                </button>
-              </div>
-
-              {/* Only render facts the source actually gave us. */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 bg-secondary rounded-lg">
-                <div>
-                  <p className="text-xs text-foreground/60 font-medium flex items-center gap-1">
-                    <Wallet className="w-3 h-3" /> Budget
-                  </p>
-                  <p className="text-lg font-bold">{lead.budget || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-foreground/60 font-medium flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> Timeline
-                  </p>
-                  <p className="text-lg font-bold">{lead.timeline || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-foreground/60 font-medium flex items-center gap-1">
-                    <Calendar className="w-3 h-3" /> Found
-                  </p>
-                  <p className="text-lg font-bold">{lead.postedTime}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-card rounded-xl border border-border/40 p-6">
-              <h2 className="text-xl font-bold mb-4">About this opportunity</h2>
-              {lead.description ? (
-                <div className="max-w-none text-foreground/80 whitespace-pre-wrap break-words">
-                  {lead.description}
-                </div>
-              ) : (
-                <p className="text-foreground/50 text-sm">
-                  The source post had no description. Open the original to read it in full.
-                </p>
-              )}
-            </div>
+                </CardContent>
+              </Card>
+            )}
 
             {lead.tags.length > 0 && (
-              <div className="bg-card rounded-xl border border-border/40 p-6">
-                <h2 className="text-xl font-bold mb-4">Tags</h2>
-                <div className="flex flex-wrap gap-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Tags</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-1.5">
                   {lead.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="px-3 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium"
-                    >
+                    <Badge key={tag} tone="neutral">
                       {tag}
-                    </span>
+                    </Badge>
                   ))}
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             )}
           </div>
 
-          {/* Sidebar */}
-          <div className="space-y-6">
-            <div className="bg-card rounded-xl border border-border/40 p-6 space-y-3">
-              {lead.url ? (
-                <a href={lead.url} target="_blank" rel="noopener noreferrer" className="block">
-                  <Button className="w-full gap-2" size="lg">
-                    <ExternalLink className="w-5 h-5" />
-                    Open on {platform.label}
-                  </Button>
-                </a>
-              ) : (
-                <p className="text-sm text-foreground/50 text-center">
-                  No source link was captured for this lead.
-                </p>
-              )}
-              <Button variant="outline" className="w-full gap-2" size="lg" onClick={toggleBookmark}>
-                {lead.bookmarked ? (
-                  <BookmarkCheck className="w-5 h-5" />
-                ) : (
-                  <Bookmark className="w-5 h-5" />
-                )}
-                {lead.bookmarked ? 'Bookmarked' : 'Bookmark'}
-              </Button>
-            </div>
-
-            {/* Pipeline status */}
-            <div className="bg-card rounded-xl border border-border/40 p-6 space-y-3">
-              <h3 className="font-bold text-lg">Your pipeline</h3>
-              <p className="text-sm text-foreground/60">
-                Where this lead sits for you. Drives your analytics.
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {STATUSES.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => changeStatus(s.id)}
-                    disabled={busy}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium border transition disabled:opacity-50 ${
-                      lead.status === s.id
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border/60 hover:bg-secondary'
-                    }`}
+          <div className="space-y-4">
+            <Card>
+              <CardContent className="space-y-2">
+                {lead.url ? (
+                  <Button
+                    className="w-full"
+                    render={
+                      <a
+                        href={lead.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      />
+                    }
                   >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+                    <ExternalLink className="size-4" />
+                    Open on {meta.label}
+                  </Button>
+                ) : (
+                  <p className="py-1 text-center text-[0.8125rem] text-muted-foreground">
+                    No source link was captured for this lead.
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={toggleBookmark}
+                >
+                  {lead.bookmarked ? (
+                    <BookmarkCheck className="size-4" />
+                  ) : (
+                    <Bookmark className="size-4" />
+                  )}
+                  {lead.bookmarked ? 'Saved' : 'Save for later'}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Pipeline</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-[0.8125rem] leading-5 text-muted-foreground">
+                  Where this lead sits for you. This is what your analytics
+                  count.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {STATUSES.map((status) => {
+                    const active = lead.status === status.id
+                    return (
+                      <button
+                        key={status.id}
+                        type="button"
+                        onClick={() => changeStatus(status.id)}
+                        disabled={busy}
+                        aria-pressed={active}
+                        className={cn(
+                          'h-9 rounded-md border px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out disabled:opacity-45',
+                          active
+                            ? 'border-gold-500/30 bg-gold-500/10 text-primary'
+                            : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground',
+                        )}
+                      >
+                        {status.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
 
             {lead.author && (
-              <div className="bg-card rounded-xl border border-border/40 p-6 space-y-3">
-                <h3 className="font-bold text-lg">Posted by</h3>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                    <User className="w-5 h-5" />
-                  </div>
-                  <p className="font-semibold break-all">{lead.author}</p>
-                </div>
-              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Posted by</CardTitle>
+                </CardHeader>
+                <CardContent className="flex items-center gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface-raised">
+                    <User className="size-4 text-muted-foreground" />
+                  </span>
+                  <p className="min-w-0 text-sm font-medium break-all">
+                    {lead.author}
+                  </p>
+                </CardContent>
+              </Card>
             )}
           </div>
         </div>
-      </div>
+      </PageShell>
     </DashboardLayout>
   )
 }

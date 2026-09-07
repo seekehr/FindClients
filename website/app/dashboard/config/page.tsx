@@ -1,25 +1,52 @@
 'use client'
 
-import DashboardLayout from '@/components/dashboard-layout'
-import { Button } from '@/components/ui/button'
-import { useEffect, useRef, useState } from 'react'
 import {
   Bell,
-  Loader2,
-  Save,
-  Target,
-  Radar,
-  Zap,
-  X,
   Check,
-  AlertTriangle,
-  RotateCcw,
-  Sparkles,
+  Cpu,
+  Crosshair,
+  ExternalLink,
   Eye,
   EyeOff,
-  ExternalLink,
+  Radar,
+  RotateCcw,
+  Save,
+  SlidersHorizontal,
+  X,
 } from 'lucide-react'
-import { ApiError, configApi, type AiInfo, type ConfigPatch, type UserConfig } from '@/lib/api'
+import { useEffect, useId, useRef, useState } from 'react'
+
+import DashboardLayout from '@/components/dashboard-layout'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Alert, LoadingRow } from '@/components/ui/feedback'
+import {
+  Field,
+  Hint,
+  Input,
+  Label,
+  NumberField,
+  Select,
+  Textarea,
+} from '@/components/ui/field'
+import { PageHeader, PageShell } from '@/components/ui/page'
+import { SwitchRow } from '@/components/ui/switch'
+import {
+  ApiError,
+  configApi,
+  type AiInfo,
+  type ConfigPatch,
+  type UserConfig,
+} from '@/lib/api'
+import { platformLabel, SUPPORTED_PLATFORMS } from '@/lib/platforms'
+import { cn } from '@/lib/utils'
 
 /** Where to get the key the AI section asks for. */
 const GEMINI_KEY_URL = 'https://aistudio.google.com/apikey'
@@ -31,145 +58,34 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite — cheapest, roughest',
 }
 
-/** Platforms that have a working scraper today. */
-const PLATFORM_LABELS: Record<string, string> = {
-  upwork: 'Upwork',
-  twitter: 'Twitter / X',
-  discord: 'Discord',
-  reddit: 'Reddit',
-  linkedin: 'LinkedIn',
-}
-
-const SUPPORTED = new Set(['upwork', 'twitter'])
-
 // ── Small building blocks ────────────────────────────────
 
 function Section({
-  icon,
+  icon: Icon,
   title,
   description,
   children,
 }: {
-  icon: React.ReactNode
+  icon: React.ComponentType<{ className?: string }>
   title: string
   description: string
   children: React.ReactNode
 }) {
   return (
-    <section className="bg-card rounded-xl border border-border/40 p-6 space-y-5">
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 text-primary">{icon}</div>
-        <div>
-          <h2 className="text-xl font-bold">{title}</h2>
-          <p className="text-sm text-foreground/60">{description}</p>
+    <Card>
+      <CardHeader className="items-center">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-surface-raised">
+            <Icon className="size-4 text-muted-foreground" />
+          </span>
+          <div>
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
         </div>
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string
-  hint?: string
-  checked: boolean
-  onChange: (v: boolean) => void
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 p-3 rounded-lg hover:bg-secondary/60 transition">
-      <div className="min-w-0">
-        <p className="font-medium">{label}</p>
-        {hint && <p className="text-sm text-foreground/60">{hint}</p>}
-      </div>
-      <label className="relative inline-flex items-center cursor-pointer shrink-0">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-          className="sr-only peer"
-        />
-        <div className="w-11 h-6 bg-secondary peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
-      </label>
-    </div>
-  )
-}
-
-function NumberField({
-  label,
-  hint,
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  label: string
-  hint?: string
-  value: number
-  min: number
-  max: number
-  onChange: (v: number) => void
-}) {
-  return (
-    <div>
-      <label className="block text-sm font-medium mb-1">{label}</label>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => {
-          // Clamp so the field can never submit a value the API would reject.
-          const n = Number(e.target.value)
-          if (Number.isNaN(n)) return
-          onChange(Math.min(max, Math.max(min, Math.round(n))))
-        }}
-        className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-      />
-      {hint && <p className="text-xs text-foreground/50 mt-1">{hint}</p>}
-    </div>
-  )
-}
-
-function TextArea({
-  label,
-  hint,
-  placeholder,
-  value,
-  rows = 6,
-  maxLength,
-  onChange,
-}: {
-  label: string
-  hint?: string
-  placeholder?: string
-  value: string
-  rows?: number
-  maxLength?: number
-  onChange: (v: string) => void
-}) {
-  return (
-    <div>
-      <label className="block text-sm font-medium mb-1">{label}</label>
-      <textarea
-        value={value}
-        rows={rows}
-        maxLength={maxLength}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground placeholder:text-foreground/40 leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/50"
-      />
-      {hint && (
-        <p className="text-xs text-foreground/50 mt-1">
-          {hint}
-          {maxLength ? ` ${value.length}/${maxLength}.` : ''}
-        </p>
-      )}
-    </div>
+      </CardHeader>
+      <CardContent className="space-y-5">{children}</CardContent>
+    </Card>
   )
 }
 
@@ -180,16 +96,17 @@ function ChipInput({
   placeholder,
   values,
   onChange,
-  tone = 'primary',
+  tone = 'gold',
 }: {
   label: string
   hint?: string
   placeholder: string
   values: string[]
-  onChange: (v: string[]) => void
-  tone?: 'primary' | 'destructive'
+  onChange: (values: string[]) => void
+  tone?: 'gold' | 'danger'
 }) {
   const [draft, setDraft] = useState('')
+  const id = useId()
 
   function commit(raw: string) {
     // Accept comma-separated pastes as well as one-at-a-time entry.
@@ -207,37 +124,30 @@ function ChipInput({
     setDraft('')
   }
 
-  const chipClass =
-    tone === 'destructive'
-      ? 'bg-destructive/10 text-destructive'
-      : 'bg-primary/10 text-primary'
-
   return (
-    <div>
-      <label className="block text-sm font-medium mb-2">{label}</label>
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
 
       {values.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-2">
-          {values.map((v) => (
-            <span
-              key={v}
-              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium ${chipClass}`}
-            >
-              {v}
+        <div className="flex flex-wrap gap-1.5">
+          {values.map((value) => (
+            <Badge key={value} tone={tone} className="pr-1">
+              {value}
               <button
                 type="button"
-                aria-label={`Remove ${v}`}
-                onClick={() => onChange(values.filter((x) => x !== v))}
-                className="hover:opacity-60"
+                aria-label={`Remove ${value}`}
+                onClick={() => onChange(values.filter((v) => v !== value))}
+                className="-mr-0.5 flex size-4 items-center justify-center rounded-xs opacity-60 transition-opacity hover:opacity-100"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="size-3" />
               </button>
-            </span>
+            </Badge>
           ))}
         </div>
       )}
 
-      <input
+      <Input
+        id={id}
         type="text"
         value={draft}
         placeholder={placeholder}
@@ -251,11 +161,29 @@ function ChipInput({
           }
         }}
         onBlur={() => commit(draft)}
-        className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground placeholder:text-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/50"
       />
-      <p className="text-xs text-foreground/50 mt-1">
-        {hint ? `${hint} ` : ''}Press Enter or comma to add. {values.length}/50.
+      <Hint>
+        {hint ? `${hint} ` : ''}Press Enter or comma to add. {values.length} of 50
+        used.
+      </Hint>
+    </div>
+  )
+}
+
+/** A labelled group inside a section, for per-platform knobs. */
+function SubGroup({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="space-y-4 border-t border-border pt-5 first:border-0 first:pt-0">
+      <p className="text-[0.6875rem] leading-4 font-medium tracking-[0.08em] text-muted-foreground uppercase">
+        {title}
       </p>
+      {children}
     </div>
   )
 }
@@ -291,7 +219,11 @@ export default function ConfigPage() {
         setPlatforms(platforms)
         setAi(ai)
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load your config'))
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load your config',
+        ),
+      )
       .finally(() => setLoading(false))
   }, [])
 
@@ -327,7 +259,9 @@ export default function ConfigPage() {
       setAi((prev) => ({ ...prev, available: fresh.aiApiKeySet }))
       setSaved(true)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save your config')
+      setError(
+        err instanceof ApiError ? err.message : 'Could not save your config',
+      )
     } finally {
       setSaving(false)
     }
@@ -345,9 +279,9 @@ export default function ConfigPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center gap-2 py-24 text-foreground/50">
-          <Loader2 className="w-5 h-5 animate-spin" /> Loading your configuration…
-        </div>
+        <PageShell width="narrow">
+          <LoadingRow label="Loading your configuration" />
+        </PageShell>
       </DashboardLayout>
     )
   }
@@ -355,50 +289,50 @@ export default function ConfigPage() {
   if (!config) {
     return (
       <DashboardLayout>
-        <div className="p-6 max-w-2xl">
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error || 'Could not load your configuration.'}
-          </div>
-        </div>
+        <PageShell width="narrow" className="space-y-6">
+          <PageHeader
+            title="Config"
+            description="What counts as a lead, how hard the scrapers work, and who hears about a match."
+          />
+          <Alert
+            tone="danger"
+            title={error || 'Could not load your configuration.'}
+          />
+        </PageShell>
       </DashboardLayout>
     )
   }
 
   return (
     <DashboardLayout>
-      <div className="p-6 pb-28 space-y-6 max-w-3xl">
-        {/* Header */}
-        <div>
-          <h1 className="text-4xl font-bold mb-2">Config</h1>
-          <p className="text-foreground/60">
-            Everything here is saved to data/config.json and drives the next scrape cycle.
-          </p>
-        </div>
+      <PageShell width="narrow" className="space-y-6 pb-6">
+        <PageHeader
+          title="Config"
+          description="What counts as a lead, how hard the scrapers work, and who hears about a match. Saved to data/config.json and applied on the next cycle."
+        />
 
-        {error && (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        {error && <Alert tone="danger" title={error} />}
 
-        {/* Lead targeting */}
         <Section
-          icon={<Target className="w-5 h-5" />}
+          icon={Crosshair}
           title="Lead targeting"
           description="Which opportunities count as a lead for you."
         >
-          <div>
-            <label className="block text-sm font-medium mb-2">Platforms to monitor</label>
-            <div className="grid sm:grid-cols-2 gap-2">
+          <div className="space-y-2">
+            <Label>Platforms to monitor</Label>
+            <div className="grid gap-2 sm:grid-cols-2">
               {platforms.map((p) => {
                 const on = config.platforms.includes(p)
-                const supported = SUPPORTED.has(p)
+                const supported = SUPPORTED_PLATFORMS.has(p)
                 return (
                   <label
                     key={p}
-                    className={`flex items-center gap-3 p-3 rounded-lg border transition cursor-pointer ${
-                      on ? 'border-primary/50 bg-primary/5' : 'border-border/60 hover:bg-secondary/60'
-                    }`}
+                    className={cn(
+                      'flex h-11 cursor-pointer items-center gap-3 rounded-md border px-3 transition-colors duration-150 ease-out',
+                      on
+                        ? 'border-gold-500/30 bg-gold-500/8'
+                        : 'border-border hover:bg-secondary/60',
+                    )}
                   >
                     <input
                       type="checkbox"
@@ -410,19 +344,23 @@ export default function ConfigPage() {
                             : config.platforms.filter((x) => x !== p),
                         })
                       }
-                      className="w-4 h-4 rounded border-border"
+                      className="size-4 rounded-xs accent-[var(--gold-500)]"
                     />
-                    <span className="font-medium">{PLATFORM_LABELS[p] ?? p}</span>
+                    <span className="text-sm font-medium">
+                      {platformLabel(p)}
+                    </span>
                     {!supported && (
-                      <span className="ml-auto text-xs text-foreground/40">no scraper yet</span>
+                      <Badge tone="outline" className="ml-auto">
+                        No scraper yet
+                      </Badge>
                     )}
                   </label>
                 )
               })}
             </div>
-            <p className="text-xs text-foreground/50 mt-1">
-              A platform still needs a connected account on the Connections page.
-            </p>
+            <Hint>
+              A platform still needs a signed-in account on the Connections page.
+            </Hint>
           </div>
 
           <ChipInput
@@ -439,7 +377,7 @@ export default function ConfigPage() {
             placeholder="unpaid, internship"
             values={config.excludedKeywords}
             onChange={(excludedKeywords) => patch({ excludedKeywords })}
-            tone="destructive"
+            tone="danger"
           />
 
           <NumberField
@@ -452,20 +390,19 @@ export default function ConfigPage() {
           />
         </Section>
 
-        {/* Scraping */}
         <Section
-          icon={<Radar className="w-5 h-5" />}
+          icon={Radar}
           title="Scraping"
-          description="How hard the scrapers work."
+          description="How hard the scrapers work on each cycle."
         >
-          <Toggle
+          <SwitchRow
             label="Scraping enabled"
-            hint="Turn off to pause all scraping."
+            hint="Turn off to pause every scraper without losing your settings."
             checked={config.scrapeEnabled}
             onChange={(scrapeEnabled) => patch({ scrapeEnabled })}
           />
 
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <NumberField
               label="Leads per run"
               hint="Soft cap per platform, per cycle (1–100)."
@@ -476,7 +413,7 @@ export default function ConfigPage() {
             />
             <NumberField
               label="Max post age (hours)"
-              hint="Ignore posts older than this."
+              hint="Ignore anything posted longer ago than this."
               value={config.maxPostAgeHours}
               min={1}
               max={720}
@@ -485,15 +422,13 @@ export default function ConfigPage() {
           </div>
         </Section>
 
-        {/* Platform tuning */}
         <Section
-          icon={<Zap className="w-5 h-5" />}
+          icon={SlidersHorizontal}
           title="Platform tuning"
           description="Per-platform knobs. The defaults are sensible — change them if results are too noisy or too sparse."
         >
-          <div className="space-y-4">
-            <p className="text-sm font-semibold text-foreground/80">Twitter / X</p>
-            <div className="grid sm:grid-cols-3 gap-4">
+          <SubGroup title="Twitter / X">
+            <div className="grid gap-4 sm:grid-cols-3">
               <NumberField
                 label="Min likes"
                 value={config.twitterMinLikes}
@@ -510,30 +445,32 @@ export default function ConfigPage() {
               />
               <NumberField
                 label="Per keyword"
-                hint="Tweets to collect per search term."
+                hint="Tweets collected per search term."
                 value={config.twitterLimitPerKeyword}
                 min={1}
                 max={100}
-                onChange={(twitterLimitPerKeyword) => patch({ twitterLimitPerKeyword })}
+                onChange={(twitterLimitPerKeyword) =>
+                  patch({ twitterLimitPerKeyword })
+                }
               />
             </div>
-          </div>
+          </SubGroup>
 
-          <div className="space-y-4 pt-2">
-            <p className="text-sm font-semibold text-foreground/80">Upwork</p>
-            <div>
-              <label className="block text-sm font-medium mb-1">Jobs feed URL</label>
-              <input
+          <SubGroup title="Upwork">
+            <Field
+              label="Jobs feed URL"
+              hint='Paste any Upwork search URL to scrape that feed instead of "most recent".'
+              htmlFor="upwork-jobs-url"
+            >
+              <Input
+                id="upwork-jobs-url"
                 type="url"
                 value={config.upworkJobsUrl}
                 onChange={(e) => patch({ upworkJobsUrl: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="font-mono text-xs"
               />
-              <p className="text-xs text-foreground/50 mt-1">
-                Paste any Upwork search URL to scrape that feed instead of "most recent".
-              </p>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4">
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
               <NumberField
                 label="Max job age (hours)"
                 value={config.upworkMaxAgeHours}
@@ -541,37 +478,34 @@ export default function ConfigPage() {
                 max={720}
                 onChange={(upworkMaxAgeHours) => patch({ upworkMaxAgeHours })}
               />
-              <div className="flex items-end">
-                <div className="w-full">
-                  <Toggle
-                    label="Fetch job details"
-                    hint="Slower, but adds client rating and hire rate."
-                    checked={config.upworkFetchDetails}
-                    onChange={(upworkFetchDetails) => patch({ upworkFetchDetails })}
-                  />
-                </div>
+              <div className="sm:pt-1">
+                <SwitchRow
+                  label="Fetch job details"
+                  hint="Slower, but adds client rating and hire rate."
+                  checked={config.upworkFetchDetails}
+                  onChange={(upworkFetchDetails) => patch({ upworkFetchDetails })}
+                />
               </div>
             </div>
-          </div>
+          </SubGroup>
         </Section>
 
-        {/* AI qualification */}
         <Section
-          icon={<Sparkles className="w-5 h-5" />}
+          icon={Cpu}
           title="AI qualification"
-          description="Have Gemini read every scraped lead and judge it against your own criteria, before it reaches your inbox."
+          description="Have Gemini read every scraped lead and judge it against your own criteria before it reaches your inbox."
         >
           {/* The key comes first: nothing else in this section works without it. */}
-          <div>
-            <label className="block text-sm font-medium mb-1" htmlFor="gemini-api-key">
-              Gemini API key
-            </label>
+          <div className="space-y-2">
+            <Label htmlFor="gemini-api-key">Gemini API key</Label>
 
             {config.aiApiKeySet && !clearApiKey && !apiKeyDraft && (
-              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
-                <span className="text-sm text-foreground/70">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-success/25 bg-success/8 px-3 py-2">
+                <span className="text-[0.8125rem] text-graphite-300">
                   A key is saved{' '}
-                  <span className="font-mono text-foreground/50">{config.aiApiKeyHint}</span>
+                  <span className="font-mono text-muted-foreground">
+                    {config.aiApiKeyHint}
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -579,7 +513,7 @@ export default function ConfigPage() {
                     setClearApiKey(true)
                     setSaved(false)
                   }}
-                  className="text-sm font-medium text-destructive hover:opacity-70"
+                  className="rounded-sm text-[0.8125rem] font-medium text-destructive transition-opacity hover:opacity-70"
                 >
                   Remove
                 </button>
@@ -587,14 +521,14 @@ export default function ConfigPage() {
             )}
 
             {clearApiKey && (
-              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2">
-                <span className="text-sm text-destructive">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                <span className="text-[0.8125rem] text-graphite-200">
                   Your key will be deleted when you save.
                 </span>
                 <button
                   type="button"
                   onClick={() => setClearApiKey(false)}
-                  className="text-sm font-medium hover:opacity-70"
+                  className="rounded-sm text-[0.8125rem] font-medium transition-opacity hover:opacity-70"
                 >
                   Undo
                 </button>
@@ -602,46 +536,53 @@ export default function ConfigPage() {
             )}
 
             <div className="relative">
-              <input
+              <Input
                 id="gemini-api-key"
                 type={showApiKey ? 'text' : 'password'}
                 value={apiKeyDraft}
                 autoComplete="off"
                 spellCheck={false}
                 placeholder={
-                  config.aiApiKeySet && !clearApiKey ? 'Enter a new key to replace it' : 'AIza…'
+                  config.aiApiKeySet && !clearApiKey
+                    ? 'Enter a new key to replace it'
+                    : 'AIza…'
                 }
                 onChange={(e) => {
                   setApiKeyDraft(e.target.value)
                   setSaved(false)
                 }}
-                className="w-full pl-3 pr-11 py-2 rounded-lg border border-border bg-secondary text-foreground placeholder:text-foreground/40 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="pr-10 font-mono text-xs"
               />
               <button
                 type="button"
                 aria-label={showApiKey ? 'Hide the key' : 'Show the key'}
                 onClick={() => setShowApiKey((v) => !v)}
-                className="absolute inset-y-0 right-0 px-3 flex items-center text-foreground/40 hover:text-foreground/70"
+                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-md text-graphite-500 transition-colors hover:text-foreground"
               >
-                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showApiKey ? (
+                  <EyeOff className="size-4" />
+                ) : (
+                  <Eye className="size-4" />
+                )}
               </button>
             </div>
 
-            <p className="text-xs text-foreground/50 mt-1">
-              Your own key — reviews are billed to your Google account, not ours. Stored encrypted
-              and never shown again after you save.{' '}
+            <Hint>
+              Your own key — reviews are billed to your Google account, not ours.
+              Stored encrypted and never shown again after you save.{' '}
               <a
                 href={GEMINI_KEY_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                className="inline-flex items-center gap-1 rounded-sm font-medium text-primary hover:underline"
               >
-                Get a key <ExternalLink className="w-3 h-3" />
+                Get a key
+                <ExternalLink className="size-3" />
               </a>
-            </p>
+            </Hint>
           </div>
 
-          <Toggle
+          <SwitchRow
             label="Qualify leads with AI"
             hint="Off means every scraped lead reaches you unjudged."
             checked={config.aiEnabled}
@@ -649,40 +590,48 @@ export default function ConfigPage() {
           />
 
           {config.aiEnabled && !ai.available && !apiKeyDraft && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
-              Qualification is on but no Gemini key is saved, so it will be skipped on every
-              scrape. Add your key above.
-            </div>
+            <Alert
+              tone="warning"
+              title="Qualification is on, but no key is saved."
+            >
+              Every scrape will skip the review step until you add a Gemini key
+              above.
+            </Alert>
           )}
 
-          <TextArea
+          <Field
             label="What counts as a qualified lead"
-            hint="Written in your own words — this is the only description of your ideal client the model gets. Be specific about the work you take and what you always reject."
-            placeholder="I build Shopify stores for small brands. Qualified: the poster is hiring, the work is Shopify or front-end, and the budget is at least $500. Reject: agencies recruiting, unpaid or revenue-share offers, and anyone advertising their own services."
-            value={config.aiPrompt}
-            rows={7}
-            maxLength={4000}
-            onChange={(aiPrompt) => patch({ aiPrompt })}
-          />
+            hint={`Written in your own words — this is the only description of your ideal client the model gets. Be specific about the work you take and what you always reject. ${config.aiPrompt.length}/4000.`}
+            htmlFor="ai-prompt"
+          >
+            <Textarea
+              id="ai-prompt"
+              rows={7}
+              maxLength={4000}
+              value={config.aiPrompt}
+              placeholder="I build Shopify stores for small brands. Qualified: the poster is hiring, the work is Shopify or front-end, and the budget is at least $500. Reject: agencies recruiting, unpaid or revenue-share offers, and anyone advertising their own services."
+              onChange={(e) => patch({ aiPrompt: e.target.value })}
+            />
+          </Field>
 
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Model</label>
-              <select
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Model"
+              hint="One call per lead, charged to your key."
+              htmlFor="ai-model"
+            >
+              <Select
+                id="ai-model"
                 value={config.aiModel}
                 onChange={(e) => patch({ aiModel: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
-                {ai.models.map((m) => (
-                  <option key={m} value={m}>
-                    {MODEL_LABELS[m] ?? m}
+                {ai.models.map((model) => (
+                  <option key={model} value={model}>
+                    {MODEL_LABELS[model] ?? model}
                   </option>
                 ))}
-              </select>
-              <p className="text-xs text-foreground/50 mt-1">
-                One call per lead, charged to your key.
-              </p>
-            </div>
+              </Select>
+            </Field>
 
             <NumberField
               label="Minimum score"
@@ -694,7 +643,7 @@ export default function ConfigPage() {
             />
           </div>
 
-          <Toggle
+          <SwitchRow
             label="Archive rejected leads"
             hint="Keeps your inbox to what passed. Rejected leads stay searchable under the Archived filter."
             checked={config.aiAutoArchive}
@@ -702,62 +651,69 @@ export default function ConfigPage() {
           />
         </Section>
 
-        {/* Notifications */}
         <Section
-          icon={<Bell className="w-5 h-5" />}
+          icon={Bell}
           title="Notifications"
           description="How you hear about a match."
         >
-          <Toggle
+          <SwitchRow
             label="New leads"
-            hint="Notify me when a lead matches the filters above."
+            hint="Alert me when a lead matches the filters above."
             checked={config.newLeadsNotification}
             onChange={(newLeadsNotification) => patch({ newLeadsNotification })}
           />
-          <div>
-            <label className="block text-sm font-medium mb-1">Discord webhook</label>
-            <input
+          <Field
+            label="Discord webhook"
+            hint="Optional. Matching leads get posted to this channel as they are found."
+            htmlFor="discord-webhook"
+          >
+            <Input
+              id="discord-webhook"
               type="url"
               value={config.discordWebhookUrl}
               placeholder="https://discord.com/api/webhooks/…"
               onChange={(e) => patch({ discordWebhookUrl: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-secondary text-foreground placeholder:text-foreground/40 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/50"
+              className="font-mono text-xs"
             />
-            <p className="text-xs text-foreground/50 mt-1">
-              Optional. Matching leads get posted here as they are found.
-            </p>
-          </div>
+          </Field>
         </Section>
 
-        <p className="text-xs text-foreground/40">
+        <p className="text-xs text-muted-foreground">
           Last saved {new Date(config.updatedAt).toLocaleString()}.
         </p>
-      </div>
+      </PageShell>
 
       {/* Sticky save bar — the page is long, so the action follows you down it. */}
-      <div className="sticky bottom-0 border-t border-border/40 bg-card/95 backdrop-blur-sm px-6 py-3 flex items-center gap-3">
-        <div className="flex-1 text-sm">
-          {dirty && (
-            <span className="inline-flex items-center gap-1.5 text-foreground/60">
-              <AlertTriangle className="w-4 h-4" /> Unsaved changes
-            </span>
-          )}
-          {!dirty && saved && (
-            <span className="inline-flex items-center gap-1.5 text-emerald-500 font-medium">
-              <Check className="w-4 h-4" /> Saved
-            </span>
-          )}
-        </div>
+      <div className="sticky bottom-0 z-10 border-t border-border bg-background/90 backdrop-blur-md">
+        <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-3 sm:px-6">
+          <div className="flex-1 text-[0.8125rem]">
+            {dirty ? (
+              <span className="inline-flex items-center gap-2 text-muted-foreground">
+                <span
+                  className="size-1.5 rounded-full bg-warning"
+                  aria-hidden
+                />
+                Unsaved changes
+              </span>
+            ) : saved ? (
+              <span className="inline-flex items-center gap-1.5 font-medium text-success">
+                <Check className="size-4" />
+                Saved
+              </span>
+            ) : null}
+          </div>
 
-        {dirty && (
-          <Button variant="ghost" onClick={reset} disabled={saving} className="gap-2">
-            <RotateCcw className="w-4 h-4" /> Reset
+          {dirty && (
+            <Button variant="ghost" onClick={reset} disabled={saving}>
+              <RotateCcw className="size-4" />
+              Reset
+            </Button>
+          )}
+          <Button onClick={save} loading={saving} disabled={!dirty}>
+            <Save className="size-4" />
+            Save changes
           </Button>
-        )}
-        <Button onClick={save} disabled={saving || !dirty} className="gap-2">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          {saving ? 'Saving…' : 'Save changes'}
-        </Button>
+        </div>
       </div>
     </DashboardLayout>
   )

@@ -1,16 +1,23 @@
 'use client'
 
-import DashboardLayout from '@/components/dashboard-layout'
+import { ArrowUpRight, Inbox, Plug } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { BarChart3, TrendingUp, Zap, Bookmark, Loader2 } from 'lucide-react'
-import { analyticsApi, leadsApi, type Lead } from '@/lib/api'
 
-const platformColor: Record<string, string> = {
-  upwork: 'bg-blue-500',
-  twitter: 'bg-blue-400',
-  discord: 'bg-purple-500',
-}
+import DashboardLayout from '@/components/dashboard-layout'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Alert,
+  EmptyState,
+  Skeleton,
+  SkeletonCard,
+} from '@/components/ui/feedback'
+import { Eyebrow, Meter, PageHeader, PageShell } from '@/components/ui/page'
+import { PlatformMark } from '@/components/ui/platform-mark'
+import { analyticsApi, leadsApi, type Lead } from '@/lib/api'
+import { platformLabel } from '@/lib/platforms'
+import { cn } from '@/lib/utils'
 
 interface Overview {
   newLeads: number
@@ -20,141 +27,237 @@ interface Overview {
   conversionRate: number
 }
 
+interface PlatformCount {
+  platform: string
+  count: number
+  percentage: number
+}
+
+function StatTile({
+  label,
+  value,
+  hint,
+  emphasis = false,
+}: {
+  label: string
+  value: string | number
+  hint: string
+  emphasis?: boolean
+}) {
+  return (
+    <Card className="p-5">
+      <Eyebrow>{label}</Eyebrow>
+      <p
+        className={cn(
+          'mt-3 font-display text-[1.75rem] leading-9 font-semibold tracking-[-0.02em] tabular',
+          emphasis ? 'text-primary' : 'text-foreground',
+        )}
+      >
+        {value}
+      </p>
+      <p className="mt-1 text-[0.8125rem] leading-5 text-muted-foreground">
+        {hint}
+      </p>
+    </Card>
+  )
+}
+
 export default function DashboardPage() {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [platforms, setPlatforms] = useState<{ platform: string; count: number; percentage: number }[]>([])
+  const [platforms, setPlatforms] = useState<PlatformCount[]>([])
   const [recent, setRecent] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    Promise.all([analyticsApi.overview(), analyticsApi.platforms(), leadsApi.list({ limit: 3 })])
-      .then(([ov, pl, leads]) => {
-        setOverview(ov)
-        setPlatforms(pl.data)
+    let cancelled = false
+    Promise.all([
+      analyticsApi.overview(),
+      analyticsApi.platforms(),
+      leadsApi.list({ limit: 5 }),
+    ])
+      .then(([overview, platforms, leads]) => {
+        if (cancelled) return
+        setOverview(overview)
+        setPlatforms(platforms.data)
         setRecent(leads.data)
       })
-      .catch(() => {})
-      .finally(() => setLoading(false))
+      .catch(() => {
+        // One message beats four empty cards that look like "you have no leads".
+        if (!cancelled) setError('Could not reach the FindClients server.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  const stats = [
-    { label: 'New Leads (24h)', value: overview?.newLeads ?? 0, icon: Zap },
-    { label: 'Bookmarked', value: overview?.bookmarked ?? 0, icon: Bookmark },
-    { label: 'Contacted', value: overview?.contacted ?? 0, icon: BarChart3 },
-    { label: 'Conversion Rate', value: `${overview?.conversionRate ?? 0}%`, icon: TrendingUp },
-  ]
+  const stats = overview
+    ? [
+        {
+          label: 'New in 24 hours',
+          value: overview.newLeads,
+          hint: `${overview.totalLeads} leads collected in total`,
+          emphasis: true,
+        },
+        {
+          label: 'Bookmarked',
+          value: overview.bookmarked,
+          hint: 'Saved for a closer look',
+        },
+        {
+          label: 'Contacted',
+          value: overview.contacted,
+          hint: 'Leads you have replied to',
+        },
+        {
+          label: 'Reply-to-win rate',
+          value: `${overview.conversionRate}%`,
+          hint: 'Of the leads you contacted',
+        },
+      ]
+    : []
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-8">
-        {/* Header */}
-        <div>
-          <h1 className="text-4xl font-bold mb-2">Dashboard</h1>
-          <p className="text-foreground/60">Your lead overview.</p>
-        </div>
+      <PageShell className="space-y-6">
+        <PageHeader
+          title="Overview"
+          description="What the scrapers found for you, and what you have done with it."
+          actions={
+            <Button variant="outline" render={<Link href="/dashboard/leads" />}>
+              Browse leads
+              <ArrowUpRight className="size-4" />
+            </Button>
+          }
+        />
 
-        {loading ? (
-          <div className="flex items-center gap-2 text-foreground/50 py-16 justify-center">
-            <Loader2 className="w-5 h-5 animate-spin" /> Loading…
-          </div>
-        ) : (
-          <>
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {stats.map((stat, idx) => {
-                const Icon = stat.icon
-                return (
-                  <div key={idx} className="bg-card rounded-xl border border-border/40 p-6 hover:border-border/80 transition">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Icon className="w-6 h-6 text-primary" />
+        {error && (
+          <Alert tone="danger" title={error}>
+            Start it with{' '}
+            <code className="rounded-xs bg-graphite-800 px-1 py-0.5 font-mono text-xs text-graphite-300">
+              npm run dev
+            </code>{' '}
+            in the project folder, then reload this page.
+          </Alert>
+        )}
+
+        {!error && (
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {loading
+              ? Array.from({ length: 4 }, (_, i) => <SkeletonCard key={i} />)
+              : stats.map((stat) => <StatTile key={stat.label} {...stat} />)}
+          </section>
+        )}
+
+        {!error && (
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Latest leads</CardTitle>
+                <Link
+                  href="/dashboard/leads"
+                  className="rounded-sm text-[0.8125rem] font-medium text-primary hover:underline"
+                >
+                  View all
+                </Link>
+              </CardHeader>
+
+              {loading ? (
+                <div className="divide-y divide-border">
+                  {Array.from({ length: 4 }, (_, i) => (
+                    <div key={i} className="flex items-center gap-3 px-5 py-4">
+                      <Skeleton className="size-9 rounded-md" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-3 w-1/3" />
                       </div>
                     </div>
-                    <p className="text-foreground/60 text-sm mb-1">{stat.label}</p>
-                    <p className="text-3xl font-bold">{stat.value}</p>
-                  </div>
-                )
-              })}
-            </div>
-
-            {/* Recent Activity Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Recent Leads */}
-              <div className="lg:col-span-2">
-                <div className="bg-card rounded-xl border border-border/40 p-6 h-full">
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-bold">Recent Leads</h2>
-                    <Link href="/dashboard/leads" className="text-sm text-primary hover:underline">
-                      View all
-                    </Link>
-                  </div>
-                  {recent.length === 0 ? (
-                    <div className="text-center py-10 text-sm text-foreground/60">
-                      No leads yet.{' '}
-                      <Link href="/dashboard/connections" className="text-primary hover:underline">
-                        Connect an account
-                      </Link>{' '}
-                      to get started.
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {recent.map((lead) => (
-                        <Link
-                          key={lead.id}
-                          href={`/dashboard/leads/${lead.id}`}
-                          className="flex items-start gap-4 p-4 rounded-lg hover:bg-secondary transition cursor-pointer"
-                        >
-                          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 mt-1">
-                            <span className="text-sm font-bold capitalize">{lead.platform[0]}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold truncate">{lead.title}</p>
-                            <p className="text-sm text-foreground/60 truncate">{lead.description}</p>
-                            <p className="text-xs text-foreground/50 mt-1 capitalize">
-                              {lead.postedTime} on {lead.platform}
-                            </p>
-                          </div>
-                          {lead.budget && (
-                            <div className="text-right flex-shrink-0">
-                              <p className="font-semibold">{lead.budget}</p>
-                              <p className="text-xs text-foreground/60">Budget</p>
-                            </div>
-                          )}
-                        </Link>
-                      ))}
-                    </div>
-                  )}
+                  ))}
                 </div>
-              </div>
+              ) : recent.length === 0 ? (
+                <EmptyState
+                  icon={Inbox}
+                  title="No leads yet"
+                  description="Connect an account and run a scrape. Matches land here as they are found."
+                  action={
+                    <Button render={<Link href="/dashboard/connections" />}>
+                      <Plug className="size-4" />
+                      Connect an account
+                    </Button>
+                  }
+                />
+              ) : (
+                <ul className="divide-y divide-border">
+                  {recent.map((lead) => (
+                    <li key={lead.id}>
+                      <Link
+                        href={`/dashboard/leads/${lead.id}`}
+                        className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-secondary/40"
+                      >
+                        <PlatformMark platform={lead.platform} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">
+                            {lead.title}
+                          </p>
+                          <p className="mt-0.5 truncate text-[0.8125rem] text-muted-foreground">
+                            {platformLabel(lead.platform)} · {lead.postedTime}
+                          </p>
+                        </div>
+                        {lead.budget && (
+                          <span className="shrink-0 text-[0.8125rem] font-medium text-graphite-200 tabular">
+                            {lead.budget}
+                          </span>
+                        )}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
 
-              {/* Platform Distribution */}
-              <div className="bg-card rounded-xl border border-border/40 p-6">
-                <h2 className="text-xl font-bold mb-6">Platform Distribution</h2>
-                {platforms.length === 0 ? (
-                  <p className="text-sm text-foreground/60">No data yet.</p>
-                ) : (
-                  <div className="space-y-4">
-                    {platforms.map((p) => (
-                      <div key={p.platform}>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium capitalize">{p.platform}</span>
-                          <span className="text-sm font-semibold">{p.count}</span>
-                        </div>
-                        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${platformColor[p.platform] ?? 'bg-primary'}`}
-                            style={{ width: `${p.percentage}%` }}
-                          />
-                        </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Where they came from</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="space-y-5">
+                    {Array.from({ length: 3 }, (_, i) => (
+                      <div key={i} className="space-y-2">
+                        <Skeleton className="h-3 w-24" />
+                        <Skeleton className="h-1.5 w-full rounded-full" />
                       </div>
                     ))}
                   </div>
+                ) : platforms.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    Nothing collected yet.
+                  </p>
+                ) : (
+                  <ul className="space-y-4">
+                    {platforms.map((item) => (
+                      <li key={item.platform}>
+                        <div className="mb-2 flex items-baseline justify-between gap-3">
+                          <span className="text-sm font-medium">
+                            {platformLabel(item.platform)}
+                          </span>
+                          <span className="text-[0.8125rem] text-muted-foreground tabular">
+                            {item.count} · {item.percentage}%
+                          </span>
+                        </div>
+                        <Meter value={item.percentage} />
+                      </li>
+                    ))}
+                  </ul>
                 )}
-              </div>
-            </div>
-          </>
+              </CardContent>
+            </Card>
+          </section>
         )}
-      </div>
+      </PageShell>
     </DashboardLayout>
   )
 }

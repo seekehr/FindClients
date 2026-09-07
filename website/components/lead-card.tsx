@@ -1,13 +1,20 @@
 'use client'
 
-import { Bookmark, BookmarkCheck, ExternalLink, MessageCircle } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Bookmark, BookmarkCheck, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { PlatformMark } from '@/components/ui/platform-mark'
+import { platformMeta } from '@/lib/platforms'
+import type { LeadAiReview } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 interface LeadCardProps {
   id: string
   title: string
-  /** Any platform string the API returns; unknown ones fall back to a neutral badge. */
+  /** Any platform string the API returns; unknown ones fall back to their name. */
   platform: string
   description: string
   url?: string | null
@@ -16,15 +23,8 @@ interface LeadCardProps {
   bookmarked?: boolean
   postedTime: string
   tags: string[]
+  ai?: LeadAiReview
   onToggleBookmark?: () => void
-}
-
-const platformColors: Record<string, { bg: string; text: string; label: string; icon: string }> = {
-  upwork: { bg: 'bg-blue-500/10', text: 'text-blue-600', label: 'Upwork', icon: '💼' },
-  twitter: { bg: 'bg-blue-400/10', text: 'text-blue-500', label: 'Twitter', icon: '𝕏' },
-  discord: { bg: 'bg-purple-500/10', text: 'text-purple-600', label: 'Discord', icon: '🎮' },
-  reddit: { bg: 'bg-orange-500/10', text: 'text-orange-600', label: 'Reddit', icon: '👽' },
-  linkedin: { bg: 'bg-sky-600/10', text: 'text-sky-700', label: 'LinkedIn', icon: '💼' },
 }
 
 export default function LeadCard({
@@ -38,101 +38,121 @@ export default function LeadCard({
   bookmarked = false,
   postedTime,
   tags,
+  ai,
   onToggleBookmark,
 }: LeadCardProps) {
-  const platformInfo = platformColors[platform] ?? {
-    bg: 'bg-secondary',
-    text: 'text-foreground/70',
-    label: platform,
-    icon: '🔎',
-  }
+  const meta = platformMeta(platform)
+  const facts = [
+    budget ? { label: 'Budget', value: budget } : null,
+    timeline ? { label: 'Timeline', value: timeline } : null,
+  ].filter(Boolean) as { label: string; value: string }[]
 
   return (
-    <div className="bg-card rounded-xl border border-border/40 hover:border-border/80 hover:shadow-md transition overflow-hidden flex flex-col h-full">
-      {/* Platform badge */}
-      <div className={`${platformInfo.bg} px-4 py-3 flex items-center justify-between border-b border-border/40`}>
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{platformInfo.icon}</span>
-          <span className={`text-sm font-semibold ${platformInfo.text}`}>
-            {platformInfo.label}
-          </span>
+    <Card interactive className="h-full">
+      <div className="flex items-start gap-3 p-5 pb-4">
+        <PlatformMark platform={platform} />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[0.8125rem] font-medium text-graphite-300">
+              {meta.label}
+            </span>
+            <span
+              className="size-0.5 shrink-0 rounded-full bg-graphite-500"
+              aria-hidden
+            />
+            <span className="shrink-0 text-[0.8125rem] text-muted-foreground">
+              {postedTime}
+            </span>
+          </div>
+
+          <Link
+            href={`/dashboard/leads/${id}`}
+            className="mt-1 block font-display text-[0.9375rem] leading-5 font-semibold text-foreground transition-colors hover:text-primary"
+          >
+            <span className="line-clamp-2">{title}</span>
+          </Link>
         </div>
+
         <button
+          type="button"
           onClick={onToggleBookmark}
-          aria-label={bookmarked ? 'Remove bookmark' : 'Add bookmark'}
-          className={`p-1.5 rounded-lg transition ${bookmarked ? 'bg-accent/20 text-accent' : 'hover:bg-secondary'}`}
+          aria-label={bookmarked ? 'Remove bookmark' : 'Save this lead'}
+          aria-pressed={bookmarked}
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-md border transition-colors duration-150 ease-out',
+            bookmarked
+              ? 'border-gold-500/30 bg-gold-500/10 text-primary'
+              : 'border-transparent text-graphite-500 hover:border-border hover:bg-secondary hover:text-foreground',
+          )}
         >
-          {bookmarked ? <BookmarkCheck className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
+          {bookmarked ? (
+            <BookmarkCheck className="size-4" />
+          ) : (
+            <Bookmark className="size-4" />
+          )}
         </button>
       </div>
 
-      {/* Content */}
-      <div className="p-4 flex-1 flex flex-col">
-        {/* Title */}
-        <h3 className="font-semibold text-lg mb-2 line-clamp-2 hover:text-primary transition cursor-pointer">
-          {title}
-        </h3>
-
-        {/* Description */}
-        <p className="text-foreground/70 text-sm mb-4 line-clamp-3 whitespace-pre-line">
+      <div className="flex-1 px-5">
+        <p className="line-clamp-3 text-[0.8125rem] leading-5 whitespace-pre-line text-muted-foreground">
           {description}
         </p>
 
-        {/* Tags */}
-        {tags.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-4">
-            {tags.slice(0, 3).map((tag, idx) => (
-              <span key={idx} className="px-2 py-1 rounded-full bg-secondary text-xs font-medium">
-                {tag}
-              </span>
+        {(facts.length > 0 || tags.length > 0 || ai?.verdict) && (
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
+            {facts.map((fact) => (
+              <Badge key={fact.label} tone="outline">
+                <span className="text-muted-foreground">{fact.label}</span>
+                <span className="text-graphite-200 tabular">{fact.value}</span>
+              </Badge>
             ))}
-            {tags.length > 3 && (
-              <span className="px-2 py-1 text-xs font-medium text-foreground/50">
-                +{tags.length - 3} more
+            {ai?.verdict === 'qualified' && (
+              <Badge tone="success" dot>
+                Qualified{ai.score !== null ? ` ${ai.score}` : ''}
+              </Badge>
+            )}
+            {ai?.verdict === 'rejected' && (
+              <Badge tone="neutral" dot>
+                Rejected{ai.score !== null ? ` ${ai.score}` : ''}
+              </Badge>
+            )}
+            {tags.slice(0, 2).map((tag) => (
+              <Badge key={tag} tone="neutral">
+                {tag}
+              </Badge>
+            ))}
+            {tags.length > 2 && (
+              <span className="text-xs text-muted-foreground">
+                +{tags.length - 2}
               </span>
             )}
           </div>
         )}
-
-        {/* Budget & Timeline */}
-        {(budget || timeline) && (
-          <div className="grid grid-cols-2 gap-3 mb-4 p-3 bg-secondary rounded-lg">
-            {budget && (
-              <div>
-                <p className="text-xs text-foreground/60 font-medium">Budget</p>
-                <p className="text-sm font-semibold">{budget}</p>
-              </div>
-            )}
-            {timeline && (
-              <div>
-                <p className="text-xs text-foreground/60 font-medium">Timeline</p>
-                <p className="text-sm font-semibold">{timeline}</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Posted time */}
-        <p className="text-xs text-foreground/50 mb-4 mt-auto">Posted {postedTime}</p>
       </div>
 
-      {/* Actions */}
-      <div className="border-t border-border/40 p-4 flex gap-2">
-        <Link href={`/dashboard/leads/${id}`} className="flex-1">
-          <Button variant="outline" size="sm" className="w-full gap-2">
-            <MessageCircle className="w-4 h-4" />
-            View
-          </Button>
-        </Link>
+      <div className="mt-5 flex items-center gap-2 border-t border-border px-5 py-3">
+        <Button
+          size="sm"
+          variant="outline"
+          className="flex-1"
+          render={<Link href={`/dashboard/leads/${id}`} />}
+        >
+          View lead
+        </Button>
         {url && (
-          <a href={url} target="_blank" rel="noopener noreferrer">
-            <Button size="sm" className="gap-2">
-              <ExternalLink className="w-4 h-4" />
-              Open
-            </Button>
-          </a>
+          <Button
+            size="sm"
+            variant="ghost"
+            render={
+              <a href={url} target="_blank" rel="noopener noreferrer" />
+            }
+          >
+            <ExternalLink className="size-3.5" />
+            Open
+          </Button>
         )}
       </div>
-    </div>
+    </Card>
   )
 }

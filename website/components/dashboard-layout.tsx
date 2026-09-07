@@ -1,24 +1,62 @@
 'use client'
 
+import { Popover } from '@base-ui/react/popover'
+import {
+  Bell,
+  Bookmark,
+  ChartNoAxesColumn,
+  LayoutDashboard,
+  Loader2,
+  Menu,
+  Plug,
+  SlidersHorizontal,
+  Target,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
-import { Menu, X, Bell, Loader2, AlertTriangle } from 'lucide-react'
+
+import { BrandMark, Wordmark } from '@/components/brand'
 import { notificationsApi, type Notification } from '@/lib/api'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
+import { cn } from '@/lib/utils'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
 }
 
-const menuItems = [
-  { label: 'Dashboard', href: '/dashboard' },
-  { label: 'Leads', href: '/dashboard/leads' },
-  { label: 'Bookmarks', href: '/dashboard/bookmarks' },
-  { label: 'Connections', href: '/dashboard/connections' },
-  { label: 'Analytics', href: '/dashboard/analytics' },
-  { label: 'Config', href: '/dashboard/config' },
+interface NavItem {
+  label: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+}
+
+/**
+ * Two groups, because the six screens do two different jobs: four you use
+ * daily, two you set up once.
+ */
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Workspace',
+    items: [
+      { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
+      { label: 'Leads', href: '/dashboard/leads', icon: Target },
+      { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: Bookmark },
+      { label: 'Analytics', href: '/dashboard/analytics', icon: ChartNoAxesColumn },
+    ],
+  },
+  {
+    label: 'Setup',
+    items: [
+      { label: 'Connections', href: '/dashboard/connections', icon: Plug },
+      { label: 'Config', href: '/dashboard/config', icon: SlidersHorizontal },
+    ],
+  },
 ]
+
+const ALL_ITEMS = NAV_GROUPS.flatMap((group) => group.items)
 
 /** How often to check for new-lead notifications. */
 const POLL_MS = 30_000
@@ -27,7 +65,6 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
-  const [feedOpen, setFeedOpen] = useState(false)
   const pathname = usePathname()
 
   const loadNotifications = useCallback(async () => {
@@ -55,125 +92,213 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     return () => clearInterval(timer)
   }, [loadNotifications])
 
-  async function openFeed() {
-    const next = !feedOpen
-    setFeedOpen(next)
-    if (next && unread > 0) {
-      await notificationsApi.markAllRead().catch(() => undefined)
-      setUnread(0)
-      setNotifications((current) => current.map((n) => ({ ...n, read: true })))
-    }
+  // Close the mobile drawer on navigation rather than in every link handler.
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [pathname])
+
+  async function onFeedOpenChange(open: boolean) {
+    if (!open || unread === 0) return
+    await notificationsApi.markAllRead().catch(() => undefined)
+    setUnread(0)
+    setNotifications((current) => current.map((n) => ({ ...n, read: true })))
   }
 
+  const current =
+    ALL_ITEMS.find((item) => item.href === pathname) ??
+    ALL_ITEMS.find(
+      (item) => item.href !== '/dashboard' && pathname.startsWith(item.href),
+    )
+
+  const browserDown = scrape.browser && !scrape.browser.reachable
+
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar */}
+    <div className="flex min-h-screen bg-background">
+      {/* Backdrop for the mobile drawer. */}
+      <div
+        onClick={() => setSidebarOpen(false)}
+        aria-hidden
+        className={cn(
+          'fixed inset-0 z-30 bg-graphite-950/70 backdrop-blur-[2px] transition-opacity duration-200 lg:hidden',
+          sidebarOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+        )}
+      />
+
       <aside
-        className={`${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0 fixed lg:relative w-64 h-screen bg-card border-r border-border/40 transition-transform duration-300 z-40 flex flex-col`}
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-sidebar',
+          'transition-transform duration-200 ease-out-quint lg:translate-x-0',
+          sidebarOpen ? 'translate-x-0 shadow-drawer' : '-translate-x-full',
+        )}
       >
-        <div className="p-6 border-b border-border/40">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-lg">F</span>
-            </div>
-            <span className="font-bold text-lg">FindClients</span>
+        <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
+          <Link
+            href="/dashboard"
+            className="flex min-w-0 items-center gap-2.5 rounded-md"
+          >
+            <BrandMark />
+            <Wordmark />
           </Link>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close navigation"
+            className="ml-auto -mr-1 flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground lg:hidden"
+          >
+            <X className="size-4" />
+          </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {menuItems.map((item) => {
-            const active = pathname === item.href
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-                  active
-                    ? 'bg-primary/10 text-primary font-semibold'
-                    : 'text-foreground/70 hover:bg-primary/10 hover:text-primary'
-                }`}
-              >
-                <span className="font-medium">{item.label}</span>
-              </Link>
-            )
-          })}
+        <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="space-y-1">
+              <p className="px-3 pb-1 text-[0.6875rem] leading-4 font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                {group.label}
+              </p>
+              {group.items.map((item) => {
+                const active = item.href === current?.href
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'relative flex h-9 items-center gap-3 rounded-md px-3 text-sm font-medium',
+                      'transition-colors duration-150 ease-out',
+                      active
+                        ? 'bg-gold-500/10 text-primary'
+                        : 'text-graphite-400 hover:bg-secondary/70 hover:text-foreground',
+                    )}
+                  >
+                    {active && (
+                      <span
+                        aria-hidden
+                        className="absolute inset-y-1.5 -left-3 w-0.5 rounded-full bg-primary"
+                      />
+                    )}
+                    <Icon className="size-4 shrink-0" />
+                    {item.label}
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
-        <div className="p-4 border-t border-border/40 text-xs text-foreground/40">
-          Running locally · your data never leaves this machine
+        <div className="border-t border-border px-4 py-4">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                'size-1.5 rounded-full',
+                browserDown ? 'bg-destructive' : 'bg-success',
+              )}
+              aria-hidden
+            />
+            <p className="text-[0.8125rem] font-medium text-graphite-300">
+              Running locally
+            </p>
+          </div>
+          <p className="mt-1 text-xs leading-4 text-muted-foreground">
+            Leads, sessions and config stay on this machine.
+          </p>
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 border-b border-border/40 bg-card/50 backdrop-blur-sm flex items-center px-6 gap-4">
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-60">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background/85 px-4 backdrop-blur-md sm:px-6">
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="lg:hidden p-2 hover:bg-secondary rounded-lg transition"
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open navigation"
+            className="-ml-1 flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground lg:hidden"
           >
-            {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            <Menu className="size-4" />
           </button>
+
+          <p className="truncate font-display text-sm font-semibold">
+            {current?.label ?? 'Overview'}
+          </p>
 
           <div className="flex-1" />
 
           {/* Visible on every page, however the run was started. */}
           {scrape.running && (
-            <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
-              <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-gold-500/25 bg-gold-500/10 px-2.5 text-[0.8125rem] font-medium text-gold-400">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
               <span className="hidden sm:inline">
-                Scraping {describePlatforms(scrape.runs)}…
+                Scraping {describePlatforms(scrape.runs)}
               </span>
-              <span className="sm:hidden">Scraping…</span>
-            </div>
+              <span className="sm:hidden">Scraping</span>
+            </span>
           )}
 
-          <div className="relative">
-            <button
-              onClick={() => void openFeed()}
-              className="p-2 hover:bg-secondary rounded-lg transition relative"
-              aria-label="Notifications"
+          <Popover.Root onOpenChange={(open) => void onFeedOpenChange(open)}>
+            <Popover.Trigger
+              aria-label={
+                unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'
+              }
+              className="relative flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground data-[popup-open]:bg-secondary data-[popup-open]:text-foreground"
             >
-              <Bell className="w-5 h-5" />
+              <Bell className="size-4" />
               {unread > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
+                <span className="absolute top-1.5 right-1.5 size-2 rounded-full border-2 border-background bg-primary" />
               )}
-            </button>
-
-            {feedOpen && (
-              <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-auto rounded-lg border border-border/40 bg-card shadow-lg z-50">
-                {notifications.length === 0 ? (
-                  <p className="p-4 text-sm text-foreground/50">Nothing yet.</p>
-                ) : (
-                  notifications.map((n) => (
-                    <div key={n.id} className="p-4 border-b border-border/40 last:border-0">
-                      <p className="text-sm font-medium">{n.title}</p>
-                      {n.message && (
-                        <p className="text-xs text-foreground/60 mt-1 line-clamp-2">{n.message}</p>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Positioner side="bottom" align="end" sideOffset={8}>
+                <Popover.Popup className="w-[min(22rem,calc(100vw-2rem))] origin-top overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-popover transition-[opacity,transform] duration-150 ease-out data-closed:scale-[0.98] data-closed:opacity-0 data-open:scale-100 data-open:opacity-100">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <p className="font-display text-sm font-semibold">
+                      Notifications
+                    </p>
+                    <span className="text-xs text-muted-foreground tabular">
+                      {notifications.length}
+                    </span>
+                  </div>
+                  {notifications.length === 0 ? (
+                    <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+                      No alerts yet. New matching leads show up here.
+                    </p>
+                  ) : (
+                    <ul className="max-h-80 overflow-y-auto">
+                      {notifications.map((n) => (
+                        <li
+                          key={n.id}
+                          className="border-b border-border px-4 py-3 last:border-0"
+                        >
+                          <p className="text-sm font-medium">{n.title}</p>
+                          {n.message && (
+                            <p className="mt-1 line-clamp-2 text-[0.8125rem] leading-5 text-muted-foreground">
+                              {n.message}
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Popover.Popup>
+              </Popover.Positioner>
+            </Popover.Portal>
+          </Popover.Root>
         </header>
 
         {/* The browser we scrape with is gone. Nothing will work until it is
             back, so say so on every page rather than only where it is noticed. */}
-        {scrape.browser && !scrape.browser.reachable && (
-          <div className="flex items-start gap-3 border-b border-destructive/40 bg-destructive/10 px-6 py-3">
-            <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
-            <div className="text-sm">
-              <p className="font-semibold text-destructive">
+        {browserDown && scrape.browser && (
+          <div className="flex items-start gap-3 border-b border-destructive/25 bg-destructive/10 px-4 py-3 sm:px-6">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="min-w-0 text-[0.8125rem] leading-5">
+              <p className="font-medium text-foreground">
                 Chrome is not running — scraping and signing in are paused.
               </p>
-              <p className="text-foreground/70 mt-0.5">
-                FindClients uses the Chrome you start yourself at{' '}
-                <code className="font-mono text-xs">{scrape.browser.url}</code>. Run{' '}
-                <code className="font-mono text-xs bg-secondary px-1.5 py-0.5 rounded">
+              <p className="mt-0.5 text-muted-foreground">
+                FindClients drives the Chrome you start yourself at{' '}
+                <code className="rounded-xs bg-graphite-800 px-1 py-0.5 font-mono text-xs text-graphite-300">
+                  {scrape.browser.url}
+                </code>
+                . Run{' '}
+                <code className="rounded-xs bg-graphite-800 px-1 py-0.5 font-mono text-xs text-graphite-300">
                   npm run chrome
                 </code>{' '}
                 and leave that window open.
@@ -182,15 +307,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         )}
 
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main className="flex-1">{children}</main>
       </div>
-
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 lg:hidden z-30"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
     </div>
   )
 }

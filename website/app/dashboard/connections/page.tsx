@@ -1,50 +1,31 @@
 'use client'
 
-import DashboardLayout from '@/components/dashboard-layout'
-import { Button } from '@/components/ui/button'
+import { LogIn, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+
+import DashboardLayout from '@/components/dashboard-layout'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Alert, LoadingRow } from '@/components/ui/feedback'
+import { PageHeader, PageShell } from '@/components/ui/page'
+import { PlatformMark } from '@/components/ui/platform-mark'
 import {
-  Check,
-  Loader2,
-  Trash2,
-  ShieldCheck,
-  AlertTriangle,
-  LogIn,
-  RefreshCw,
-} from 'lucide-react'
-import {
+  ApiError,
   connectionsApi,
   scrapeApi,
-  ApiError,
   type Connection,
   type SignInState,
 } from '@/lib/api'
-import { describePlatforms, refreshScrapeStatus, useScrapeStatus } from '@/lib/use-scrape-status'
+import { platformMeta } from '@/lib/platforms'
+import {
+  describePlatforms,
+  refreshScrapeStatus,
+  useScrapeStatus,
+} from '@/lib/use-scrape-status'
 
-interface PlatformMeta {
-  id: string
-  label: string
-  icon: string
-  site: string
-  accent: string
-}
-
-const PLATFORMS: PlatformMeta[] = [
-  {
-    id: 'twitter',
-    label: 'Twitter / X',
-    icon: '𝕏',
-    site: 'x.com',
-    accent: 'bg-sky-500/10 text-sky-500',
-  },
-  {
-    id: 'upwork',
-    label: 'Upwork',
-    icon: '💼',
-    site: 'upwork.com',
-    accent: 'bg-emerald-500/10 text-emerald-500',
-  },
-]
+/** The platforms this build can sign in to. */
+const PLATFORM_IDS = ['twitter', 'upwork']
 
 /** How often to check on a sign-in window while it is open. */
 const SIGN_IN_POLL_MS = 2_000
@@ -57,9 +38,6 @@ export default function ConnectionsPage() {
   const [scraping, setScraping] = useState(false)
   const [notice, setNotice] = useState('')
 
-  // Reflect a run started anywhere (this button, or the scheduler).
-  const scrape = useScrapeStatus(() => void refresh())
-
   const refresh = useCallback(async () => {
     try {
       const { connections, signIn } = await connectionsApi.list()
@@ -71,6 +49,9 @@ export default function ConnectionsPage() {
       setLoading(false)
     }
   }, [])
+
+  // Reflect a run started anywhere (this button, or the scheduler).
+  const scrape = useScrapeStatus(() => void refresh())
 
   useEffect(() => {
     void refresh()
@@ -119,10 +100,12 @@ export default function ConnectionsPage() {
       setNotice(
         session.signedIn
           ? 'Session is still good.'
-          : session.detail ?? 'That session no longer works — sign in again.',
+          : (session.detail ?? 'That session no longer works — sign in again.'),
       )
     } catch (err) {
-      setNotice(err instanceof ApiError ? err.message : 'Could not check the session')
+      setNotice(
+        err instanceof ApiError ? err.message : 'Could not check the session',
+      )
     } finally {
       setBusy(null)
     }
@@ -147,7 +130,7 @@ export default function ConnectionsPage() {
       await scrapeApi.run()
       // Don't wait for the next poll to admit the run exists.
       refreshScrapeStatus()
-      setNotice('Scrape started — new leads will appear on your Leads page as they are found.')
+      setNotice('Scrape started — new leads appear on your Leads page as they are found.')
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : 'Could not start scrape')
     } finally {
@@ -157,110 +140,102 @@ export default function ConnectionsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-6 max-w-3xl">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Connections</h1>
-            <p className="text-foreground/60">
-              Sign in to the platforms you want FindClients to watch.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={runScrape}
-            disabled={scraping || scrape.running || waiting || browserDown}
-            className="gap-2 shrink-0"
-          >
-            {scraping || scrape.running ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
-            {scrape.running ? `Scraping ${describePlatforms(scrape.runs)}…` : 'Scrape now'}
-          </Button>
-        </div>
+      <PageShell width="narrow" className="space-y-6">
+        <PageHeader
+          title="Connections"
+          description="Sign in to the platforms you want FindClients to watch. One browser window, your own credentials."
+          actions={
+            <Button
+              variant="outline"
+              onClick={runScrape}
+              loading={scraping || scrape.running}
+              disabled={scrape.running || waiting || browserDown}
+            >
+              <RefreshCw className="size-4" />
+              {scrape.running
+                ? `Scraping ${describePlatforms(scrape.runs)}`
+                : 'Scrape now'}
+            </Button>
+          }
+        />
 
-        {notice && (
-          <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
-            {notice}
-          </div>
-        )}
+        {notice && <Alert tone="gold" title={notice} />}
 
         {/* A sign-in window is open on this machine right now. */}
         {waiting && (
-          <div className="flex items-start gap-3 rounded-xl border border-primary/40 bg-primary/10 p-4">
-            <Loader2 className="w-5 h-5 text-primary mt-0.5 shrink-0 animate-spin" />
-            <div className="text-sm">
-              <p className="font-semibold text-primary">
-                A browser window is open — sign in to {signIn?.platform} there.
-              </p>
-              <p className="text-foreground/70 mt-1">{signIn?.message}</p>
-              <p className="text-foreground/50 mt-1">
-                Take as long as you need. Close the window to cancel.
-              </p>
-            </div>
-          </div>
+          <Alert
+            tone="gold"
+            title={`A browser window is open — sign in to ${signIn?.platform} there.`}
+          >
+            <p>{signIn?.message}</p>
+            <p className="mt-1">
+              Take as long as you need. Close the window to cancel.
+            </p>
+          </Alert>
         )}
 
         {browserDown && (
-          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <p className="font-semibold text-destructive">
-              Signing in and scraping need the Chrome window.
-            </p>
-            <p className="text-foreground/70 mt-1">
-              {browser?.hint} These buttons stay disabled until it is back.
-            </p>
-          </div>
+          <Alert
+            tone="danger"
+            title="Signing in and scraping need the Chrome window."
+          >
+            {browser?.hint} These buttons stay disabled until it is back.
+          </Alert>
         )}
 
-        <div className="flex items-start gap-3 rounded-xl border border-border/40 bg-secondary/50 p-4">
-          <ShieldCheck className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-          <p className="text-sm text-foreground/70">
-            You sign in through a real browser window on this machine, exactly as you normally
-            would. The session is kept in a browser profile under{' '}
-            <strong>data/browser/</strong> and never leaves your computer — FindClients never sees
-            your password, and there are no cookies to copy or re-paste when they expire.
-          </p>
-        </div>
+        <Alert
+          tone="info"
+          icon={<ShieldCheck className="size-4" />}
+          title="Your credentials never reach FindClients."
+        >
+          You sign in through a real browser window on this machine, exactly as
+          you normally would. The session lives in a browser profile under{' '}
+          <code className="rounded-xs bg-graphite-800 px-1 py-0.5 font-mono text-xs text-graphite-300">
+            data/browser/
+          </code>{' '}
+          and never leaves your computer — there is no password to store and no
+          cookie to re-paste when it expires.
+        </Alert>
 
         {loading ? (
-          <div className="flex items-center gap-2 text-foreground/50 py-12 justify-center">
-            <Loader2 className="w-5 h-5 animate-spin" /> Loading connections…
-          </div>
+          <LoadingRow label="Loading connections" />
         ) : (
-          <div className="space-y-4">
-            {PLATFORMS.map((p) => {
-              const conn = byPlatform(p.id)
+          <div className="space-y-3">
+            {PLATFORM_IDS.map((id) => {
+              const meta = platformMeta(id)
+              const conn = byPlatform(id)
               const connected = !!conn && conn.status !== 'disconnected'
-              const needsAttention = conn?.status === 'error' || conn?.status === 'expired'
-              const isBusy = busy === p.id
+              const needsAttention =
+                conn?.status === 'error' || conn?.status === 'expired'
+              const isBusy = busy === id
+              const locked = isBusy || waiting || scrape.running || browserDown
 
               return (
-                <div key={p.id} className="bg-card rounded-xl border border-border/40 p-5">
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl ${p.accent}`}
-                    >
-                      {p.icon}
-                    </div>
+                <Card key={id}>
+                  <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                    <PlatformMark platform={id} size="lg" />
 
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-lg">{p.label}</h3>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-display text-[0.9375rem] font-semibold">
+                          {meta.label}
+                        </h2>
                         {connected && !needsAttention && (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                            <Check className="w-3 h-3" /> Signed in
-                          </span>
+                          <Badge tone="success" dot>
+                            Signed in
+                          </Badge>
                         )}
                         {needsAttention && (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive bg-destructive/10 px-2 py-0.5 rounded-full">
-                            <AlertTriangle className="w-3 h-3" />
-                            {conn?.status === 'expired' ? 'Session expired' : 'Needs attention'}
-                          </span>
+                          <Badge tone="danger" dot>
+                            {conn?.status === 'expired'
+                              ? 'Session expired'
+                              : 'Needs attention'}
+                          </Badge>
                         )}
+                        {!connected && <Badge tone="outline">Not connected</Badge>}
                       </div>
 
-                      <p className="text-sm text-foreground/60 truncate">
+                      <p className="mt-1 text-[0.8125rem] leading-5 text-muted-foreground">
                         {connected
                           ? (conn!.connectedAt
                               ? `Signed in ${new Date(conn!.connectedAt).toLocaleDateString()}`
@@ -268,62 +243,62 @@ export default function ConnectionsPage() {
                             (conn!.lastUsedAt
                               ? ` · last used ${new Date(conn!.lastUsedAt).toLocaleString()}`
                               : ' · not used yet')
-                          : `Not signed in — monitor ${p.site} leads`}
+                          : `Watch ${meta.site} for posts matching your keywords.`}
                       </p>
 
                       {needsAttention && conn?.lastError && (
-                        <p className="text-xs text-destructive mt-1">{conn.lastError}</p>
+                        <p className="mt-1 text-[0.8125rem] text-destructive">
+                          {conn.lastError}
+                        </p>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex shrink-0 items-center gap-2">
                       {connected && (
                         <>
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => check(p.id)}
-                            disabled={isBusy || waiting || scrape.running || browserDown}
+                            onClick={() => check(id)}
+                            disabled={locked}
                           >
                             Check
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="gap-2 text-destructive hover:text-destructive"
-                            onClick={() => disconnect(p.id)}
-                            disabled={isBusy || waiting || scrape.running || browserDown}
+                            aria-label={`Disconnect ${meta.label}`}
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => disconnect(id)}
+                            disabled={locked}
                           >
-                            <Trash2 className="w-4 h-4" /> Disconnect
+                            <Trash2 className="size-4" />
                           </Button>
                         </>
                       )}
                       <Button
                         size="sm"
-                        className="gap-2"
-                        onClick={() => startSignIn(p.id)}
-                        disabled={isBusy || waiting || scrape.running || browserDown}
+                        variant={connected ? 'outline' : 'primary'}
+                        onClick={() => startSignIn(id)}
+                        loading={isBusy}
+                        disabled={locked}
                       >
-                        {isBusy ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <LogIn className="w-4 h-4" />
-                        )}
+                        <LogIn className="size-4" />
                         {connected ? 'Sign in again' : 'Sign in'}
                       </Button>
                     </div>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               )
             })}
           </div>
         )}
 
-        <p className="text-xs text-foreground/40">
-          Note: automating access to these platforms may be against their Terms of Service and can
-          put your account at risk. Only connect accounts you own.
+        <p className="text-xs leading-5 text-muted-foreground">
+          Automating access to these platforms may breach their terms of service
+          and can put your account at risk. Only connect accounts you own.
         </p>
-      </div>
+      </PageShell>
     </DashboardLayout>
   )
 }

@@ -1,10 +1,14 @@
 'use client'
 
-import DashboardLayout from '@/components/dashboard-layout'
-import LeadCard from '@/components/lead-card'
+import { Bookmark } from 'lucide-react'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Bookmark } from 'lucide-react'
+
+import DashboardLayout from '@/components/dashboard-layout'
+import LeadCard from '@/components/lead-card'
+import { Button } from '@/components/ui/button'
+import { Alert, EmptyState, LoadingRow } from '@/components/ui/feedback'
+import { PageHeader, PageShell } from '@/components/ui/page'
 import { ApiError, bookmarksApi, leadsApi, type Lead } from '@/lib/api'
 
 export default function BookmarksPage() {
@@ -18,7 +22,9 @@ export default function BookmarksPage() {
       const res = await bookmarksApi.list({ limit: 60 })
       setLeads(res.data)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load your bookmarks')
+      setError(
+        err instanceof ApiError ? err.message : 'Could not load your bookmarks.',
+      )
     } finally {
       setLoading(false)
     }
@@ -43,25 +49,18 @@ export default function BookmarksPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-6">
-        {/* Header */}
-        <div>
-          <h1 className="text-4xl font-bold mb-2">Bookmarked Leads</h1>
-          <p className="text-foreground/60">Leads you&apos;ve saved for later review and action.</p>
-        </div>
+      <PageShell className="space-y-6">
+        <PageHeader
+          title="Bookmarks"
+          description="Leads you flagged to come back to. Removing one here leaves it in your main list."
+        />
 
-        {error && (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        {error && <Alert tone="danger" title={error} />}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-24 text-foreground/50">
-            <Loader2 className="w-5 h-5 animate-spin" /> Loading your bookmarks…
-          </div>
+          <LoadingRow label="Loading your bookmarks" />
         ) : leads.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {leads.map((lead) => (
               <LeadCard
                 key={lead.id}
@@ -74,21 +73,30 @@ export default function BookmarksPage() {
                 timeline={lead.timeline}
                 postedTime={lead.postedTime}
                 tags={lead.tags}
+                ai={lead.ai}
                 bookmarked
                 onToggleBookmark={() => removeBookmark(lead.id)}
               />
             ))}
           </div>
         ) : (
-          <div className="text-center py-16 bg-card rounded-xl border border-border/40">
-            <Bookmark className="w-8 h-8 text-foreground/25 mx-auto mb-3" />
-            <p className="text-foreground/60 mb-4">No bookmarked leads yet.</p>
-            <Link href="/dashboard/leads" className="text-primary hover:underline font-medium">
-              Browse leads to bookmark
-            </Link>
+          <div className="rounded-xl border border-border bg-card">
+            <EmptyState
+              icon={Bookmark}
+              title="Nothing saved yet"
+              description="Use the bookmark button on any lead to keep it here while you decide whether to pitch."
+              action={
+                <Button
+                  variant="outline"
+                  render={<Link href="/dashboard/leads" />}
+                >
+                  Browse leads
+                </Button>
+              }
+            />
           </div>
         )}
-      </div>
+      </PageShell>
     </DashboardLayout>
   )
 }

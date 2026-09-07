@@ -1,19 +1,20 @@
 'use client'
 
-import DashboardLayout from '@/components/dashboard-layout'
+import { Check, Inbox, Loader2, TriangleAlert, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+
+import DashboardLayout from '@/components/dashboard-layout'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  TrendingUp,
-  Bookmark,
-  MessageSquare,
-  CheckCircle,
-  Loader2,
-  Inbox,
-  AlertTriangle,
-  Check,
-  X,
-} from 'lucide-react'
+  Alert,
+  EmptyState,
+  SkeletonCard,
+  LoadingRow,
+} from '@/components/ui/feedback'
+import { Eyebrow, Meter, PageHeader, PageShell } from '@/components/ui/page'
 import { ApiError, analyticsApi, type ScrapeRun } from '@/lib/api'
+import { platformLabel } from '@/lib/platforms'
+import { cn } from '@/lib/utils'
 
 interface Overview {
   newLeads: number
@@ -36,54 +37,83 @@ interface TrendPoint {
   count: number
 }
 
-const PLATFORM_LABELS: Record<string, string> = {
-  upwork: 'Upwork',
-  twitter: 'Twitter / X',
-  discord: 'Discord',
-  reddit: 'Reddit',
-  linkedin: 'LinkedIn',
-}
-
-function StatCard({
+function StatTile({
   label,
   value,
   hint,
-  icon,
+  emphasis = false,
 }: {
   label: string
   value: string | number
   hint: string
-  icon: React.ReactNode
+  emphasis?: boolean
 }) {
   return (
-    <div className="bg-card rounded-xl border border-border/40 p-6">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <p className="text-foreground/60 text-sm mb-1">{label}</p>
-          <p className="text-3xl font-bold">{value}</p>
-        </div>
-        {icon}
+    <Card className="p-5">
+      <Eyebrow>{label}</Eyebrow>
+      <p
+        className={cn(
+          'mt-3 font-display text-[1.75rem] leading-9 font-semibold tracking-[-0.02em] tabular',
+          emphasis ? 'text-primary' : 'text-foreground',
+        )}
+      >
+        {value}
+      </p>
+      <p className="mt-1 text-[0.8125rem] leading-5 text-muted-foreground">
+        {hint}
+      </p>
+    </Card>
+  )
+}
+
+/**
+ * Bars are scaled against the busiest day so the shape stays readable when the
+ * absolute numbers are small. A zero day still draws a 2px stub, so a gap in
+ * the run history is visibly a zero rather than a missing bar.
+ */
+function TrendChart({ points }: { points: TrendPoint[] }) {
+  const peak = Math.max(1, ...points.map((p) => p.count))
+  return (
+    <figure className="space-y-3">
+      <div className="flex h-40 items-end gap-1.5" role="list">
+        {points.map((point) => {
+          const date = new Date(point.date)
+          return (
+            <div
+              key={point.date}
+              role="listitem"
+              className="group relative flex h-full flex-1 flex-col justify-end"
+              title={`${date.toLocaleDateString()}: ${point.count} lead${
+                point.count === 1 ? '' : 's'
+              }`}
+            >
+              <span className="mb-1.5 text-center text-[0.6875rem] leading-3 font-medium text-graphite-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                {point.count}
+              </span>
+              <div
+                className="w-full rounded-xs bg-gold-700 transition-colors duration-150 group-hover:bg-primary"
+                style={{
+                  height: `${Math.max(2, (point.count / peak) * 100)}%`,
+                }}
+              />
+            </div>
+          )
+        })}
       </div>
-      <p className="text-xs text-foreground/50">{hint}</p>
-    </div>
-  )
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="bg-card rounded-xl border border-border/40 p-6">
-      <h2 className="text-xl font-bold mb-6">{title}</h2>
-      {children}
-    </div>
-  )
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-      <Inbox className="w-8 h-8 text-foreground/25" />
-      <p className="text-sm text-foreground/50 max-w-xs">{message}</p>
-    </div>
+      <div className="flex gap-1.5 border-t border-border pt-2">
+        {points.map((point, index) => (
+          <span
+            key={point.date}
+            className="flex-1 text-center text-[0.6875rem] leading-4 text-muted-foreground tabular"
+          >
+            {index % 2 === 0 ? new Date(point.date).getDate() : ''}
+          </span>
+        ))}
+      </div>
+      <figcaption className="sr-only">
+        Leads discovered per day over the last {points.length} days.
+      </figcaption>
+    </figure>
   )
 }
 
@@ -113,7 +143,9 @@ export default function AnalyticsPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Could not load your analytics')
+          setError(
+            err instanceof ApiError ? err.message : 'Could not load your analytics',
+          )
         }
       })
       .finally(() => {
@@ -128,9 +160,18 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center gap-2 py-24 text-foreground/50">
-          <Loader2 className="w-5 h-5 animate-spin" /> Loading your analytics…
-        </div>
+        <PageShell className="space-y-6">
+          <PageHeader
+            title="Analytics"
+            description="How much the scrapers are finding, and how much of it you act on."
+          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }, (_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+          <LoadingRow label="Loading your analytics" />
+        </PageShell>
       </DashboardLayout>
     )
   }
@@ -138,179 +179,179 @@ export default function AnalyticsPage() {
   if (error || !overview) {
     return (
       <DashboardLayout>
-        <div className="p-6 max-w-2xl">
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error || 'Could not load your analytics.'}
-          </div>
-        </div>
+        <PageShell width="narrow" className="space-y-6">
+          <PageHeader
+            title="Analytics"
+            description="How much the scrapers are finding, and how much of it you act on."
+          />
+          <Alert
+            tone="danger"
+            title={error || 'Could not load your analytics.'}
+          />
+        </PageShell>
       </DashboardLayout>
     )
   }
 
-  // Scale the trend bars against the busiest day so the shape stays readable
-  // even when the absolute numbers are small.
-  const peak = Math.max(1, ...trend.map((t) => t.count))
-
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-6">
-        {/* Header */}
-        <div>
-          <h1 className="text-4xl font-bold mb-2">Analytics</h1>
-          <p className="text-foreground/60">Track your performance and lead statistics.</p>
-        </div>
+      <PageShell className="space-y-6">
+        <PageHeader
+          title="Analytics"
+          description="How much the scrapers are finding, and how much of it you act on."
+        />
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile
             label="Total leads"
             value={overview.totalLeads}
-            hint={`${overview.newLeads} in the last 24 hours`}
-            icon={<TrendingUp className="w-8 h-8 text-primary" />}
+            hint={`${overview.newLeads} found in the last 24 hours`}
+            emphasis
           />
-          <StatCard
+          <StatTile
             label="Bookmarked"
             value={overview.bookmarked}
-            hint="Leads you saved for later"
-            icon={<Bookmark className="w-8 h-8 text-blue-500" />}
+            hint="Saved for a closer look"
           />
-          <StatCard
+          <StatTile
             label="Contacted"
             value={overview.contacted}
             hint={`${overview.last7d} new leads this week`}
-            icon={<MessageSquare className="w-8 h-8 text-amber-500" />}
           />
-          <StatCard
+          <StatTile
             label="Won"
             value={overview.won}
             hint={
               overview.contacted > 0
-                ? `${overview.conversionRate}% of contacted leads`
+                ? `${overview.conversionRate}% of leads you contacted`
                 : 'No leads contacted yet'
             }
-            icon={<CheckCircle className="w-8 h-8 text-emerald-500" />}
           />
-        </div>
+        </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Leads by platform */}
-          <Panel title="Leads by platform">
-            {platforms.length === 0 ? (
-              <EmptyState message="No leads yet. Connect an account and the scrapers will start filling this in." />
-            ) : (
-              <div className="space-y-4">
-                {platforms.map((item) => (
-                  <div key={item.platform}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium">
-                        {PLATFORM_LABELS[item.platform] ?? item.platform}
-                      </span>
-                      <span className="text-sm text-foreground/60">
-                        {item.count} · {item.percentage}%
-                      </span>
-                    </div>
-                    <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-primary rounded-full"
-                        style={{ width: `${item.percentage}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Leads by platform</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {platforms.length === 0 ? (
+                <EmptyState
+                  icon={Inbox}
+                  title="Nothing to compare yet"
+                  description="Connect an account and the scrapers will start filling this in."
+                />
+              ) : (
+                <ul className="space-y-4">
+                  {platforms.map((item) => (
+                    <li key={item.platform}>
+                      <div className="mb-2 flex items-baseline justify-between gap-3">
+                        <span className="text-sm font-medium">
+                          {platformLabel(item.platform)}
+                        </span>
+                        <span className="text-[0.8125rem] text-muted-foreground tabular">
+                          {item.count} · {item.percentage}%
+                        </span>
+                      </div>
+                      <Meter value={item.percentage} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
 
-          {/* Leads discovered per day */}
-          <Panel title="Leads found (last 14 days)">
-            {trend.length === 0 ? (
-              <EmptyState message="No leads discovered in the last two weeks." />
-            ) : (
-              <div className="flex items-end gap-1 h-40" role="img" aria-label="Leads found per day">
-                {trend.map((point) => (
-                  <div
-                    key={point.date}
-                    className="flex-1 flex flex-col items-center justify-end gap-1 group"
-                    title={`${new Date(point.date).toLocaleDateString()}: ${point.count} lead${
-                      point.count === 1 ? '' : 's'
-                    }`}
-                  >
-                    <span className="text-[10px] font-medium text-foreground/60 opacity-0 group-hover:opacity-100 transition">
-                      {point.count}
-                    </span>
-                    <div
-                      className="w-full bg-accent rounded-t group-hover:bg-primary transition-colors"
-                      style={{ height: `${Math.max(4, (point.count / peak) * 100)}%` }}
-                    />
-                    <span className="text-[10px] text-foreground/40">
-                      {new Date(point.date).getDate()}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-        </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Leads found</CardTitle>
+              <span className="text-[0.8125rem] text-muted-foreground">
+                Last 14 days
+              </span>
+            </CardHeader>
+            <CardContent>
+              {trend.length === 0 ? (
+                <EmptyState
+                  icon={Inbox}
+                  title="No leads in the last two weeks"
+                  description="Run a scrape, or widen your keywords, and this chart will start to fill."
+                />
+              ) : (
+                <TrendChart points={trend} />
+              )}
+            </CardContent>
+          </Card>
+        </section>
 
-        {/* Scraping history */}
-        <Panel title="Recent scraping activity">
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent scrape runs</CardTitle>
+          </CardHeader>
           {runs.length === 0 ? (
-            <EmptyState message="No scrape runs yet. Connect an account under Connections, then hit “Scrape now”." />
+            <EmptyState
+              icon={Inbox}
+              title="No runs yet"
+              description="Connect an account under Connections, then start a scrape from the Leads page."
+            />
           ) : (
-            <div className="space-y-2">
+            <ul className="divide-y divide-border">
               {runs.map((run) => {
                 const failed = run.status === 'error'
                 const active = run.status === 'running'
                 return (
-                  <div
+                  <li
                     key={run.id}
-                    className="flex items-center justify-between gap-4 p-3 rounded-lg hover:bg-secondary transition"
+                    className="flex items-center justify-between gap-4 px-5 py-3"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex min-w-0 items-center gap-3">
                       <span
-                        className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                        className={cn(
+                          'flex size-7 shrink-0 items-center justify-center rounded-md border',
                           failed
-                            ? 'bg-destructive/10 text-destructive'
+                            ? 'border-destructive/25 bg-destructive/10 text-destructive'
                             : active
-                              ? 'bg-secondary text-foreground/50'
-                              : 'bg-emerald-500/10 text-emerald-500'
-                        }`}
+                              ? 'border-border bg-secondary text-muted-foreground'
+                              : 'border-success/25 bg-success/10 text-success',
+                        )}
                       >
                         {failed ? (
-                          <X className="w-4 h-4" />
+                          <X className="size-3.5" />
                         ) : active ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="size-3.5 animate-spin" />
                         ) : (
-                          <Check className="w-4 h-4" />
+                          <Check className="size-3.5" />
                         )}
                       </span>
                       <div className="min-w-0">
-                        <p className="font-medium">
-                          {PLATFORM_LABELS[run.platform] ?? run.platform}
+                        <p className="text-sm font-medium">
+                          {platformLabel(run.platform)}
                         </p>
-                        <p className="text-sm text-foreground/60">
+                        <p className="text-[0.8125rem] text-muted-foreground">
                           {new Date(run.startedAt).toLocaleString()}
                         </p>
                         {failed && run.error && (
-                          <p className="text-xs text-destructive mt-0.5 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-destructive">
+                            <TriangleAlert className="size-3 shrink-0" />
                             <span className="truncate">{run.error}</span>
                           </p>
                         )}
                       </div>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <p className="font-semibold text-accent">+{run.inserted}</p>
-                      <p className="text-xs text-foreground/50">of {run.found} found</p>
+                    <div className="shrink-0 text-right">
+                      <p className="text-sm font-medium text-primary tabular">
+                        +{run.inserted}
+                      </p>
+                      <p className="text-xs text-muted-foreground tabular">
+                        of {run.found} found
+                      </p>
                     </div>
-                  </div>
+                  </li>
                 )
               })}
-            </div>
+            </ul>
           )}
-        </Panel>
-      </div>
+        </Card>
+      </PageShell>
     </DashboardLayout>
   )
 }

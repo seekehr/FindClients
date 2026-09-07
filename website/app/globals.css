@@ -2,92 +2,340 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
-@custom-variant dark (&:is(.dark *));
+/* ==========================================================================
+   FindClients design tokens
 
-@theme inline {
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+   One palette (graphite + gold), one 4pt spacing rhythm, one radius scale,
+   one type ramp. Everything in the UI is built from what is defined here — if
+   a value is not in this file, it does not belong in a component.
+   ========================================================================== */
+
+/* --- Typeface: Instrument Sans for headings, Inter for everything else.
+       Self-hosted, so a build never depends on the network. ---------------- */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
 }
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+    U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/instrument-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/instrument-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+    U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* --- Raw palette -------------------------------------------------------- */
 
 :root {
   color-scheme: dark;
-  --background: oklch(0.06 0 0);
-  --foreground: oklch(0.95 0.01 0);
-  --card: oklch(0.1 0 0);
-  --card-foreground: oklch(0.95 0.01 0);
-  --popover: oklch(0.1 0 0);
-  --popover-foreground: oklch(0.95 0.01 0);
-  --primary: oklch(0.55 0.31 264);
-  --primary-foreground: oklch(0.06 0 0);
-  --secondary: oklch(0.15 0 0);
-  --secondary-foreground: oklch(0.95 0.01 0);
-  --muted: oklch(0.2 0 0);
-  --muted-foreground: oklch(0.65 0.08 264);
-  --accent: oklch(0.58 0.32 264);
-  --accent-foreground: oklch(0.06 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.15 0 0);
-  --input: oklch(0.12 0 0);
-  --ring: oklch(0.58 0.32 264);
-  --chart-1: oklch(0.58 0.32 264);
-  --chart-2: oklch(0.65 0.28 264);
-  --chart-3: oklch(0.5 0.25 264);
-  --chart-4: oklch(0.45 0.2 264);
-  --chart-5: oklch(0.35 0.15 264);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.08 0 0);
-  --sidebar-foreground: oklch(0.95 0.01 0);
-  --sidebar-primary: oklch(0.58 0.32 264);
-  --sidebar-primary-foreground: oklch(0.06 0 0);
-  --sidebar-accent: oklch(0.65 0.28 264);
-  --sidebar-accent-foreground: oklch(0.06 0 0);
-  --sidebar-border: oklch(0.15 0 0);
-  --sidebar-ring: oklch(0.58 0.32 264);
+
+  /* Graphite. A single neutral ramp with a trace of warmth (hue 95) so it
+     sits with the gold instead of fighting it. */
+  --graphite-950: oklch(0.158 0.004 95);
+  --graphite-900: oklch(0.191 0.004 95);
+  --graphite-850: oklch(0.213 0.005 95);
+  --graphite-800: oklch(0.246 0.005 95);
+  --graphite-750: oklch(0.278 0.005 95);
+  --graphite-700: oklch(0.315 0.005 95);
+  --graphite-600: oklch(0.4 0.005 95);
+  --graphite-500: oklch(0.52 0.006 95);
+  --graphite-400: oklch(0.655 0.006 95);
+  --graphite-300: oklch(0.765 0.005 95);
+  --graphite-200: oklch(0.87 0.004 95);
+  --graphite-100: oklch(0.945 0.003 95);
+
+  /* Gold. Brand only: primary actions, the active nav item, focus rings, and
+     the one number on a card that matters. Never decoration. */
+  --gold-300: oklch(0.885 0.068 88);
+  --gold-400: oklch(0.845 0.095 87);
+  --gold-500: oklch(0.792 0.113 86);
+  --gold-600: oklch(0.705 0.104 84);
+  --gold-700: oklch(0.575 0.086 82);
+
+  /* Status. Three, and only three. */
+  --status-success: oklch(0.735 0.13 155);
+  --status-warning: oklch(0.765 0.135 62);
+  --status-danger: oklch(0.665 0.165 25);
+
+  /* --- Semantic aliases ------------------------------------------------- */
+
+  --background: var(--graphite-950);
+  --foreground: var(--graphite-100);
+
+  --card: var(--graphite-900);
+  --card-foreground: var(--graphite-100);
+
+  --popover: var(--graphite-850);
+  --popover-foreground: var(--graphite-100);
+
+  --primary: var(--gold-500);
+  --primary-foreground: oklch(0.19 0.02 86);
+
+  --secondary: var(--graphite-800);
+  --secondary-foreground: var(--graphite-200);
+
+  --muted: var(--graphite-850);
+  --muted-foreground: var(--graphite-400);
+
+  --accent: var(--graphite-800);
+  --accent-foreground: var(--graphite-100);
+
+  --destructive: var(--status-danger);
+  --destructive-foreground: oklch(0.97 0.01 25);
+  --success: var(--status-success);
+  --warning: var(--status-warning);
+
+  --border: oklch(0.278 0.005 95);
+  --border-strong: oklch(0.34 0.005 95);
+  --input: oklch(0.238 0.005 95);
+  --ring: var(--gold-500);
+
+  --surface: var(--graphite-900);
+  --surface-raised: var(--graphite-850);
+  --sidebar: oklch(0.176 0.004 95);
+
+  /* Data series. Gold leads; the rest are neutral steps, so a chart never
+     turns into a fruit salad. */
+  --chart-1: var(--gold-500);
+  --chart-2: var(--graphite-500);
+  --chart-3: var(--graphite-600);
+  --chart-4: var(--graphite-700);
+  --chart-5: var(--graphite-750);
 }
 
+/* --- Theme mapping ------------------------------------------------------ */
 
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Instrument Sans', 'Inter', ui-sans-serif, system-ui,
+    -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-sidebar: var(--sidebar);
+
+  --color-graphite-950: var(--graphite-950);
+  --color-graphite-900: var(--graphite-900);
+  --color-graphite-850: var(--graphite-850);
+  --color-graphite-800: var(--graphite-800);
+  --color-graphite-750: var(--graphite-750);
+  --color-graphite-700: var(--graphite-700);
+  --color-graphite-600: var(--graphite-600);
+  --color-graphite-500: var(--graphite-500);
+  --color-graphite-400: var(--graphite-400);
+  --color-graphite-300: var(--graphite-300);
+  --color-graphite-200: var(--graphite-200);
+  --color-graphite-100: var(--graphite-100);
+
+  --color-gold-300: var(--gold-300);
+  --color-gold-400: var(--gold-400);
+  --color-gold-500: var(--gold-500);
+  --color-gold-600: var(--gold-600);
+  --color-gold-700: var(--gold-700);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* One radius scale, applied by three rules: controls use md, containers
+     use xl, badges and chips use sm. Nothing picks a radius outside them. */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.25rem;
+
+  /* Elevation is reserved for things that float. Cards get a border. */
+  --shadow-popover: 0 1px 1px oklch(0 0 0 / 0.3),
+    0 12px 32px -8px oklch(0 0 0 / 0.6);
+  --shadow-drawer: 24px 0 48px -16px oklch(0 0 0 / 0.7);
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* --- Base ---------------------------------------------------------------- */
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5rem;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.017em;
+    text-wrap: balance;
+  }
+
+  /* One visible focus treatment for the entire app. The outline follows each
+     element's own border-radius, so focusing something never reshapes it. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--gold-500) 28%, transparent);
+    color: var(--foreground);
+  }
+}
+
+/* --- Scrollbars: part of the surface, not a browser default -------------- */
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--graphite-750) transparent;
   }
-  body {
-    @apply bg-background text-foreground;
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--graphite-750);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--graphite-700);
+  }
+}
+
+/* --- Motion -------------------------------------------------------------- */
+
+@keyframes fc-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fc-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklab, var(--graphite-700) 60%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: fc-shimmer 1.6s linear infinite;
+}
+
+@utility animate-enter {
+  animation: fc-enter 180ms var(--ease-out-quint) both;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
