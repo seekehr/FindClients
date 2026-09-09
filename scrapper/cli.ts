@@ -76,10 +76,15 @@ function configFromCli(file: CliConfig): AppConfig {
     twitterMinLikes: tw.minLikes ?? 0,
     twitterMinViews: tw.minViews ?? 0,
     twitterLimitPerKeyword: tw.limitPerKeyword ?? 15,
+    upworkWatchEnabled: false,
     upworkJobsUrl:
       uw.jobsUrl ?? 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
     upworkFetchDetails: uw.fetchDetails ?? false,
     upworkMaxAgeHours: uw.maxAgeHours ?? 5,
+    upworkReloadMinMinutes: 5,
+    upworkReloadMaxMinutes: 10,
+    upworkAlertDelayMinSeconds: 120,
+    upworkAlertDelayMaxSeconds: 180,
     // The CLI never qualifies: it prints what the scrapers found. Reviewing
     // would need your Gemini key, which lives in data/config.json.
     aiEnabled: false,
@@ -102,6 +107,15 @@ async function runOne(platform: string, config: AppConfig, limit: number): Promi
 
   console.log(`── ${scraper.name} ────────────────────────────────`);
 
+  // Watched platforms have no scrape() to call, on purpose. Upwork is watched
+  // because bulk collection is what gets Upwork accounts banned, and a CLI
+  // escape hatch would put that back exactly where it was removed from.
+  if (scraper.mode === 'watch' || !scraper.scrape) {
+    console.log('skipped : this platform is watched, not scraped.');
+    console.log('          Run the app and open the Opportunities page for job alerts.');
+    return;
+  }
+
   if (!hasProfile(platform)) {
     console.log(`skipped : not signed in. Run: npm run cli -- --sign-in ${platform}`);
     return;
@@ -111,7 +125,7 @@ async function runOne(platform: string, config: AppConfig, limit: number): Promi
   console.log('');
 
   const started = Date.now();
-  const leads = await scraper.scrape({
+  const leads = await scraper.scrape!({
     config,
     limit,
     log: (m) => console.log('  ', m),

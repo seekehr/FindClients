@@ -1,10 +1,12 @@
 'use client'
 
-import { ArrowUpRight, Inbox, Plug } from 'lucide-react'
+import { ArrowUpRight, Inbox, Plug, Radio, ShieldAlert } from 'lucide-react'
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import DashboardLayout from '@/components/dashboard-layout'
+import OpportunityRow from '@/components/opportunity-row'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -15,8 +17,15 @@ import {
 } from '@/components/ui/feedback'
 import { Eyebrow, Meter, PageHeader, PageShell } from '@/components/ui/page'
 import { PlatformMark } from '@/components/ui/platform-mark'
-import { analyticsApi, leadsApi, type Lead } from '@/lib/api'
+import {
+  analyticsApi,
+  leadsApi,
+  opportunitiesApi,
+  type Lead,
+  type Opportunity,
+} from '@/lib/api'
 import { platformLabel } from '@/lib/platforms'
+import { countdown, describeWatchState, useWatchStatus } from '@/lib/use-watch-status'
 import { cn } from '@/lib/utils'
 
 interface Overview {
@@ -66,8 +75,22 @@ export default function DashboardPage() {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [platforms, setPlatforms] = useState<PlatformCount[]>([])
   const [recent, setRecent] = useState<Lead[]>([])
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  const loadOpportunities = useCallback(async () => {
+    try {
+      const { data } = await opportunitiesApi.list({ limit: 4 })
+      setOpportunities(data)
+    } catch {
+      // The panel's own empty state covers it.
+    }
+  }, [])
+
+  // Refreshes the moment the watcher releases an alert, so the Overview is
+  // never quietly older than the sidebar badge sitting next to it.
+  const watch = useWatchStatus(loadOpportunities)
 
   useEffect(() => {
     let cancelled = false
@@ -93,6 +116,15 @@ export default function DashboardPage() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    void loadOpportunities()
+  }, [loadOpportunities])
+
+  const watchState = describeWatchState(watch.watcher)
+  const watchLive =
+    watch.watcher?.enabled &&
+    (watch.watcher.state === 'watching' || watch.watcher.state === 'checking')
 
   const stats = overview
     ? [
@@ -125,7 +157,7 @@ export default function DashboardPage() {
       <PageShell className="space-y-6">
         <PageHeader
           title="Overview"
-          description="What the scrapers found for you, and what you have done with it."
+          description="Upwork job alerts as they arrive, what the scrapers found, and what you have done with it."
           actions={
             <Button variant="outline" render={<Link href="/dashboard/leads" />}>
               Browse leads
@@ -149,6 +181,103 @@ export default function DashboardPage() {
             {loading
               ? Array.from({ length: 4 }, (_, i) => <SkeletonCard key={i} />)
               : stats.map((stat) => <StatTile key={stat.label} {...stat} />)}
+          </section>
+        )}
+
+        {!error && (
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            {/* Upwork job alerts first: they are the time-sensitive ones. A job
+                you hear about tomorrow is a job someone else already took. */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <div className="flex min-w-0 items-center gap-2">
+                  <CardTitle>New Opportunities</CardTitle>
+                  {watch.unseen > 0 && <Badge tone="gold">{watch.unseen} new</Badge>}
+                </div>
+                <Link
+                  href="/dashboard/opportunities"
+                  className="rounded-sm text-[0.8125rem] font-medium text-primary hover:underline"
+                >
+                  View all
+                </Link>
+              </CardHeader>
+
+              {opportunities.length === 0 ? (
+                <EmptyState
+                  icon={Radio}
+                  title="No job alerts yet"
+                  description={
+                    watchLive
+                      ? 'A tab is open on your Upwork feed. New jobs land here a couple of minutes after they are posted.'
+                      : 'Start the Upwork watcher and new jobs will land here as they are posted.'
+                  }
+                  action={
+                    watchLive ? undefined : (
+                      <Button render={<Link href="/dashboard/opportunities" />}>
+                        <Radio className="size-4" />
+                        Open the watcher
+                      </Button>
+                    )
+                  }
+                />
+              ) : (
+                <ul className="divide-y divide-border">
+                  {opportunities.map((opportunity) => (
+                    <OpportunityRow key={opportunity.id} opportunity={opportunity} compact />
+                  ))}
+                </ul>
+              )}
+            </Card>
+
+            {/* The watcher is slow and quiet on purpose, so its state gets a
+                permanent home rather than surfacing only when something breaks. */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Upwork watcher</CardTitle>
+                <Badge tone={watchState.tone} dot>
+                  {watchState.label}
+                </Badge>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-[0.8125rem] leading-5 text-muted-foreground">
+                  {watch.watcher?.detail ?? 'Checking...'}
+                </p>
+
+                <dl className="space-y-2 text-[0.8125rem]">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Next look</dt>
+                    <dd className="font-medium tabular">
+                      {watchLive ? countdown(watch.watcher?.nextCheckAt ?? null) || 'soon' : '-'}
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Held back now</dt>
+                    <dd className="font-medium tabular">{watch.watcher?.queued.length ?? 0}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Alerts this session</dt>
+                    <dd className="font-medium tabular">{watch.watcher?.alerts ?? 0}</dd>
+                  </div>
+                </dl>
+
+                <div className="flex items-start gap-2 rounded-md border border-border bg-surface-raised px-3 py-2.5">
+                  <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Upwork is watched for job alerts, never scraped &mdash; bulk scraping it
+                    risks your account.
+                  </p>
+                </div>
+
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  render={<Link href="/dashboard/opportunities" />}
+                >
+                  Open Opportunities
+                  <ArrowUpRight className="size-4" />
+                </Button>
+              </CardContent>
+            </Card>
           </section>
         )}
 

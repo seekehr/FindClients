@@ -38,5 +38,18 @@ export function platformLabel(id: string): string {
   return platformMeta(id).label
 }
 
-/** The platforms that have a working scraper today. */
+/** The platforms FindClients can collect from today, one way or another. */
 export const SUPPORTED_PLATFORMS = new Set(['upwork', 'twitter'])
+
+/**
+ * Platforms that are watched rather than scraped.
+ *
+ * Upwork forbids automated collection and enforces it, so it gets one tab left
+ * open on the feed and a job alert now and then, never a scrape cycle. The UI
+ * uses this to explain why its card behaves differently from every other one.
+ */
+export const WATCHED_PLATFORMS = new Set(['upwork'])
+
+export function isWatchedPlatform(id: string): boolean {
+  return WATCHED_PLATFORMS.has(id)
+}

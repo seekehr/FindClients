@@ -115,6 +115,20 @@ function activeDismissals(): Set<string> {
   return new Set(live.map((d) => d.hash));
 }
 
+/**
+ * Have we seen this post before — as a stored lead, or as one you cleared?
+ *
+ * The watcher asks this before it queues an alert. Without it, every restart
+ * would re-announce whatever is currently on the Upwork feed as brand new,
+ * which is precisely the noise the whole delay-and-dedupe machinery exists to
+ * avoid.
+ */
+export function isLeadKnown(platform: string, url: string | null | undefined, title: string): boolean {
+  const hash = sourceHash(platform, url, title);
+  if (leadsStore.data.some((lead) => lead.sourceHash === hash)) return true;
+  return activeDismissals().has(hash);
+}
+
 export interface InsertLeadsResult {
   /** Leads that were genuinely new. Drives notifications. */
   inserted: LeadDTO[];

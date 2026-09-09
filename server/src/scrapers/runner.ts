@@ -10,7 +10,7 @@ import { notifyNewLeads } from '../services/notification.service';
 import { finishRun, startRun } from '../services/analytics.service';
 import { getAiApiKey, getConfig } from '../services/config.service';
 import { isConnected, markError, markUsed } from '../services/connection.service';
-import { loadScrapers } from './loader';
+import { loadBulkScrapers } from './loader';
 import { env } from '../config/env';
 import type { AppConfig, LeadDTO } from '../types';
 import type { Scraper } from './types';
@@ -23,9 +23,25 @@ import type { Scraper } from './types';
  * own Chromium instance, and two of those competing for the machine you are
  * working on is the difference between a background task and a laptop that
  * stops responding.
+ *
+ * Upwork is not in here and cannot be. It is a watch-mode platform: bulk
+ * collection is what gets Upwork accounts banned, so it is handled by the
+ * long-lived watcher in ../watcher/ instead, one open tab at a time. See
+ * `Scraper.mode` in ./types.ts.
  */
 
-async function review(leads: LeadDTO[], config: AppConfig, log: (msg: string) => void) {
+/**
+ * Run AI qualification over a batch of leads and store the verdicts.
+ *
+ * Exported because the Upwork watcher needs exactly this, one lead at a time,
+ * at the moment it releases an alert — a job the model rejects should never
+ * reach the New Opportunities panel in the first place.
+ */
+export async function reviewLeads(
+  leads: LeadDTO[],
+  config: AppConfig,
+  log: (msg: string) => void,
+): Promise<void> {
   if (!config.aiEnabled || !leads.length) return;
 
   const alreadyDone = leadsAlreadyReviewed(leads.map((l) => l.id));
@@ -69,7 +85,7 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
   try {
     let raw;
     try {
-      raw = await scraper.scrape({
+      raw = await scraper.scrape!({
         config,
         limit: config.leadsPerRun,
         log,
@@ -82,7 +98,7 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
     }
 
     const { inserted, all, skippedAsCleared } = insertLeads(raw);
-    await review(all, config, log);
+    await reviewLeads(all, config, log);
 
     finishRun(run.id, { status: 'success', found: raw.length, inserted: inserted.length });
     markUsed(scraper.platform);
@@ -123,7 +139,9 @@ export async function runScrapeCycle(): Promise<RunSummary> {
       return summary;
     }
 
-    const scrapers = await loadScrapers();
+    // Bulk scrapers only. Watch-mode platforms — Upwork — are owned by the
+    // watcher and must never be pulled through a cycle; see `loadBulkScrapers`.
+    const scrapers = await loadBulkScrapers();
     const allNew: LeadDTO[] = [];
 
     for (const scraper of scrapers) {

@@ -9,8 +9,10 @@ import {
   Eye,
   EyeOff,
   Radar,
+  Radio,
   RotateCcw,
   Save,
+  ShieldAlert,
   SlidersHorizontal,
   X,
 } from 'lucide-react'
@@ -45,7 +47,7 @@ import {
   type ConfigPatch,
   type UserConfig,
 } from '@/lib/api'
-import { platformLabel, SUPPORTED_PLATFORMS } from '@/lib/platforms'
+import { isWatchedPlatform, platformLabel, SUPPORTED_PLATFORMS } from '@/lib/platforms'
 import { cn } from '@/lib/utils'
 
 /** Where to get the key the AI section asks for. */
@@ -308,7 +310,7 @@ export default function ConfigPage() {
       <PageShell width="narrow" className="space-y-6 pb-6">
         <PageHeader
           title="Config"
-          description="What counts as a lead, how hard the scrapers work, and who hears about a match. Saved to data/config.json and applied on the next cycle."
+          description="What counts as a lead, how the Upwork watcher paces itself, and who hears about a match. Saved to data/config.json and applied immediately."
         />
 
         {error && <Alert tone="danger" title={error} />}
@@ -319,11 +321,35 @@ export default function ConfigPage() {
           description="Which opportunities count as a lead for you."
         >
           <div className="space-y-2">
-            <Label>Platforms to monitor</Label>
+            <Label>Platforms to scrape</Label>
             <div className="grid gap-2 sm:grid-cols-2">
               {platforms.map((p) => {
                 const on = config.platforms.includes(p)
                 const supported = SUPPORTED_PLATFORMS.has(p)
+
+                // A watched platform has no place in this list: the scrape
+                // cycle cannot reach it, so a checkbox here would be a control
+                // that quietly does nothing. Shown as a signpost instead.
+                if (isWatchedPlatform(p)) {
+                  return (
+                    <div
+                      key={p}
+                      className="flex h-11 items-center gap-3 rounded-md border border-dashed border-border px-3"
+                    >
+                      <Radio
+                        className="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                      <span className="text-sm font-medium text-muted-foreground">
+                        {platformLabel(p)}
+                      </span>
+                      <Badge tone="gold" className="ml-auto">
+                        Job alerts, not scraped
+                      </Badge>
+                    </div>
+                  )
+                }
+
                 return (
                   <label
                     key={p}
@@ -360,6 +386,8 @@ export default function ConfigPage() {
             </div>
             <Hint>
               A platform still needs a signed-in account on the Connections page.
+              Upwork is watched rather than scraped, so it is switched on and off
+              under <strong>Upwork job alerts</strong> below.
             </Hint>
           </div>
 
@@ -393,8 +421,13 @@ export default function ConfigPage() {
         <Section
           icon={Radar}
           title="Scraping"
-          description="How hard the scrapers work on each cycle."
+          description="How hard the scrapers work on each cycle. Upwork is not one of them — it has its own section below."
         >
+          <Alert tone="info" title="These settings do not touch Upwork.">
+            Upwork is watched for job alerts rather than scraped, so nothing here
+            applies to it. See <strong>Upwork job alerts</strong> below.
+          </Alert>
+
           <SwitchRow
             label="Scraping enabled"
             hint="Turn off to pause every scraper without losing your settings."
@@ -425,7 +458,7 @@ export default function ConfigPage() {
         <Section
           icon={SlidersHorizontal}
           title="Platform tuning"
-          description="Per-platform knobs. The defaults are sensible — change them if results are too noisy or too sparse."
+          description="Per-platform knobs for the scraped platforms. The defaults are sensible — change them if results are too noisy or too sparse."
         >
           <SubGroup title="Twitter / X">
             <div className="grid gap-4 sm:grid-cols-3">
@@ -456,23 +489,112 @@ export default function ConfigPage() {
             </div>
           </SubGroup>
 
-          <SubGroup title="Upwork">
-            <Field
-              label="Jobs feed URL"
-              hint='Paste any Upwork search URL to scrape that feed instead of "most recent".'
-              htmlFor="upwork-jobs-url"
-            >
-              <Input
-                id="upwork-jobs-url"
-                type="url"
-                value={config.upworkJobsUrl}
-                onChange={(e) => patch({ upworkJobsUrl: e.target.value })}
-                className="font-mono text-xs"
+        </Section>
+
+        <Section
+          icon={Radio}
+          title="Upwork job alerts"
+          description="A tab left open on your Upwork feed, reloaded now and then, telling you about new jobs after a short pause."
+        >
+          <Alert
+            tone="warning"
+            icon={<ShieldAlert className="size-4" />}
+            title="Upwork is never scraped, and there is no setting that changes that."
+          >
+            <p>
+              Bulk-scraping Upwork &mdash; paging through the feed and pulling
+              every listing &mdash; breaks its terms of service and is the
+              quickest way to get your account suspended. FindClients does not
+              do it.
+            </p>
+            <p className="mt-1.5">
+              What it does instead is keep one tab open on the feed you already
+              use and reload that single page on the schedule below. The
+              settings here only make it slower or faster within safe bounds;
+              none of them turn collection on.
+            </p>
+          </Alert>
+
+          <SwitchRow
+            label="Upwork job alerts"
+            hint="Off closes the tab and stops all Upwork alerts. Your other platforms are unaffected."
+            checked={config.upworkWatchEnabled}
+            onChange={(upworkWatchEnabled) => patch({ upworkWatchEnabled })}
+          />
+
+          <Field
+            label="Jobs feed URL"
+            hint="Paste any Upwork search URL to watch that feed instead of your most-recent list. Narrower searches mean fewer, better alerts."
+            htmlFor="upwork-jobs-url"
+          >
+            <Input
+              id="upwork-jobs-url"
+              type="url"
+              value={config.upworkJobsUrl}
+              onChange={(e) => patch({ upworkJobsUrl: e.target.value })}
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <SubGroup title="How often the tab reloads">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                label="Shortest gap (minutes)"
+                value={config.upworkReloadMinMinutes}
+                min={2}
+                max={120}
+                onChange={(upworkReloadMinMinutes) => patch({ upworkReloadMinMinutes })}
               />
-            </Field>
+              <NumberField
+                label="Longest gap (minutes)"
+                value={config.upworkReloadMaxMinutes}
+                min={2}
+                max={240}
+                onChange={(upworkReloadMaxMinutes) => patch({ upworkReloadMaxMinutes })}
+              />
+            </div>
+            <Hint>
+              A fresh interval is drawn between these two before every reload, and
+              now and then it takes a longer break. Five to ten minutes is a
+              person keeping half an eye on the feed; every two minutes, forever,
+              is not, and that regularity is what gets noticed.
+            </Hint>
+          </SubGroup>
+
+          <SubGroup title="How long a job is held before you hear about it">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                label="Shortest hold (seconds)"
+                value={config.upworkAlertDelayMinSeconds}
+                min={30}
+                max={3600}
+                onChange={(upworkAlertDelayMinSeconds) =>
+                  patch({ upworkAlertDelayMinSeconds })
+                }
+              />
+              <NumberField
+                label="Longest hold (seconds)"
+                value={config.upworkAlertDelayMaxSeconds}
+                min={30}
+                max={7200}
+                onChange={(upworkAlertDelayMaxSeconds) =>
+                  patch({ upworkAlertDelayMaxSeconds })
+                }
+              />
+            </div>
+            <Hint>
+              Drawn fresh for every job, and several jobs spotted at once are
+              spaced further apart still. Applying to a listing seconds after it
+              goes up, every single time, is the clearest sign that something
+              other than a person is reading the feed.
+            </Hint>
+          </SubGroup>
+
+          <SubGroup title="What counts as new">
             <div className="grid gap-4 sm:grid-cols-2">
               <NumberField
                 label="Max job age (hours)"
+                hint="Older jobs drifting back onto the feed are ignored."
                 value={config.upworkMaxAgeHours}
                 min={1}
                 max={720}
@@ -480,8 +602,8 @@ export default function ConfigPage() {
               />
               <div className="sm:pt-1">
                 <SwitchRow
-                  label="Fetch job details"
-                  hint="Slower, but adds client rating and hire rate."
+                  label="Open the job before alerting"
+                  hint="Adds client rating and hire rate, by clicking through to that one job the way you would."
                   checked={config.upworkFetchDetails}
                   onChange={(upworkFetchDetails) => patch({ upworkFetchDetails })}
                 />

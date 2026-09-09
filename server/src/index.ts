@@ -9,6 +9,7 @@ import { createApp } from './app';
 import { flushAll, initStore } from './store';
 import { closeStaleRuns } from './services/analytics.service';
 import { startScheduler, stopScheduler } from './scheduler';
+import { startWatcher, stopWatcher } from './watcher';
 
 /**
  * Load the built Next.js app and return its request handler, so the website
@@ -86,11 +87,17 @@ async function main() {
       logger.error('Server error', err.message);
     }
     stopScheduler();
+    void stopWatcher('the app could not start');
     flushAll();
     process.exit(1);
   });
 
   startScheduler();
+
+  // The Upwork watcher is not part of the scrape cycle and never will be: it
+  // holds one tab open and waits, rather than collecting. Starting it here is
+  // what makes job alerts work without anyone pressing anything.
+  startWatcher();
 
   let closing = false;
   const shutdown = (signal: string) => {
@@ -98,6 +105,9 @@ async function main() {
     closing = true;
     logger.info(`${signal} received — shutting down`);
     stopScheduler();
+    // Lets go of the Upwork tab. Best effort: the process is on its way out
+    // and a hung browser must not be the reason it never leaves.
+    void stopWatcher('the app is shutting down');
     // Write out anything still sitting in a debounce window. This is the last
     // chance to persist leads collected seconds before the user hit Ctrl-C.
     flushAll();

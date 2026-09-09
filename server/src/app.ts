@@ -11,6 +11,8 @@ import { configRouter } from './routes/config.routes';
 import { notificationsRouter } from './routes/notifications.routes';
 import { scrapeRouter } from './routes/scrape.routes';
 import { connectionsRouter } from './routes/connections.routes';
+import { watchRouter } from './routes/watch.routes';
+import { opportunitiesRouter } from './routes/opportunities.routes';
 import { totalLeadCount } from './services/lead.service';
 
 /**
@@ -64,6 +66,8 @@ export function createApp(website?: RequestHandler) {
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/scrape', scrapeRouter);
   app.use('/api/connections', connectionsRouter);
+  app.use('/api/watch', watchRouter);
+  app.use('/api/opportunities', opportunitiesRouter);
 
   // An unmatched /api/* path is a 404 from the API, never a page — otherwise a
   // typo in a fetch would render HTML into a JSON parser.

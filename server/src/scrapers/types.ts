@@ -1,7 +1,7 @@
-import type { AppConfig, Platform, RawLead } from '../types';
+import type { AppConfig, LeadMetadata, Platform, RawLead } from '../types';
 
 // Re-exported so the scrapper workspace has one import site for these.
-export type { AppConfig, Platform, RawLead };
+export type { AppConfig, LeadMetadata, Platform, RawLead };
 
 /**
  * Context handed to every scraper run.
@@ -61,8 +61,31 @@ export interface Scraper {
   platform: Platform;
   name: string;
 
-  /** Return raw leads discovered on this run (may be empty). */
-  scrape(ctx: ScrapeContext): Promise<RawLead[]>;
+  /**
+   * How this platform is collected from — and, just as importantly, how it is
+   * not.
+   *
+   *  - `'scrape'` — the scheduled cycle drives it. It opens a browser, pages
+   *    through a feed, takes everything matching, and closes again.
+   *  - `'watch'` — a long-lived watcher owns it (see `PlatformWatcher` below)
+   *    and the scrape cycle never touches it. One tab stays open, gets
+   *    reloaded now and then, and new posts are announced one at a time.
+   *
+   * Upwork is `'watch'`, and that is not a preference. Upwork's terms forbid
+   * automated collection and it enforces them: a session that walks the feed
+   * pulling every job, page after page, is the exact pattern behind the banned
+   * accounts. Watching one tab the way a person leaves it open is not.
+   */
+  mode: 'scrape' | 'watch';
+
+  /**
+   * Return raw leads discovered on this run (may be empty).
+   *
+   * Optional, and absent on every `'watch'` scraper — deliberately, so that
+   * "Upwork is never bulk-collected" is a fact about the code rather than a
+   * flag someone has to remember to check.
+   */
+  scrape?(ctx: ScrapeContext): Promise<RawLead[]>;
 
   /**
    * Check the saved profile without any interaction. Opens the profile
@@ -78,4 +101,75 @@ export interface Scraper {
 
   /** Forget the saved profile entirely. */
   signOut(): Promise<void>;
+}
+
+
+/* ── Watching ──────────────────────────────────────────────────────────────
+ *
+ * The other half of the contract, for platforms that must not be scraped.
+ *
+ * A scraper is a *visit*: open, take, leave. A watcher is a *tab you left
+ * open*: it sits on one page, reloads it at irregular intervals, and notices
+ * what changed. It never pages, never opens a job it was not shown, and never
+ * asks the site for more than the page it is already on.
+ */
+
+export interface WatchTabOptions {
+  /** The feed to sit on. Any Upwork search URL the user pasted. */
+  feedUrl: string;
+  log: (msg: string) => void;
+  /** Whether a person is around to clear a bot challenge in the window. */
+  interactive: boolean;
+  /** How long to leave that challenge on screen before giving up. */
+  captchaTimeoutMs: number;
+  /** Also read each new job's own page for client rating and hire rate. */
+  fetchDetails: boolean;
+}
+
+/** Why a poll came back with nothing useful. */
+export type WatchProblem = 'signed-out' | 'challenge' | 'no-feed' | 'closed';
+
+export interface WatchResult {
+  /** Everything currently on the feed — not only what is new. */
+  leads: RawLead[];
+  /** Set when the reload did not reach a readable feed. */
+  problem?: WatchProblem;
+  detail?: string;
+}
+
+/**
+ * One open tab, held for as long as the watcher runs.
+ *
+ * `poll()` is the only thing that touches the network, and it does exactly what
+ * a person pressing F5 does: reload the page in front of it and read what came
+ * back.
+ */
+export interface WatchTab {
+  /** Reload the feed and read it. Never navigates anywhere else. */
+  poll(): Promise<WatchResult>;
+
+  /**
+   * Open one job's own page and read what the feed tile could not show —
+   * client rating, hire rate — then come back to the feed.
+   *
+   * Called a couple of minutes after the job was spotted, never during a
+   * reload, and only for jobs that are about to be alerted on. That is the one
+   * click-through a person makes when something on the feed catches their eye;
+   * it is not a crawl, and it must never be used to walk a list.
+   */
+  inspect?(url: string): Promise<LeadMetadata | null>;
+
+  /** False once the tab or the browser behind it has gone away. */
+  isOpen(): boolean;
+
+  /** Close our tab. Never closes a browser the user started. */
+  close(): Promise<void>;
+}
+
+/** The contract a watched platform implements, in place of `scrape`. */
+export interface PlatformWatcher {
+  platform: Platform;
+  name: string;
+  /** Open the tab and land it on the feed. Throws if it cannot. */
+  open(opts: WatchTabOptions): Promise<WatchTab>;
 }

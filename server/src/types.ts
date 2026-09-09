@@ -127,10 +127,25 @@ export interface AppConfig {
   twitterMinViews: number;
   twitterLimitPerKeyword: number;
 
-  // Upwork tuning
+  /**
+   * Upwork job alerts.
+   *
+   * Upwork is deliberately not scraped. It is *watched*: one tab is left open
+   * on the feed, reloaded on a random interval, and each genuinely new job is
+   * announced after a random human-sized pause. Everything below tunes that
+   * watcher — there is no Upwork setting here that collects in bulk, because
+   * bulk collection is what gets an Upwork account banned.
+   */
+  upworkWatchEnabled: boolean;
   upworkJobsUrl: string;
   upworkFetchDetails: boolean;
   upworkMaxAgeHours: number;
+  /** Reload the open tab somewhere in this window, redrawn every time. */
+  upworkReloadMinMinutes: number;
+  upworkReloadMaxMinutes: number;
+  /** Hold a spotted job this long before it reaches you, so nothing is instant. */
+  upworkAlertDelayMinSeconds: number;
+  upworkAlertDelayMaxSeconds: number;
 
   // AI qualification — your definition of a lead worth your time.
   aiEnabled: boolean;
@@ -169,4 +184,43 @@ export interface Notification {
   leadId: string | null;
   read: boolean;
   createdAt: string;
+}
+
+/**
+ * One job alert, as it appears in the New Opportunities panel.
+ *
+ * A snapshot rather than a pointer: the panel is a live feed you skim, and it
+ * has to stay readable even after the lead behind it is archived or cleared.
+ * `leadId` links back to the full record when there still is one.
+ */
+export interface Opportunity {
+  id: string;
+  platform: Platform;
+  /** The stored lead this alert came from, when it still exists. */
+  leadId: string | null;
+  title: string;
+  url: string | null;
+  budget: string | null;
+  /** Short client summary — rating, hire rate, spend — as the watcher saw it. */
+  client: string;
+  tags: string[];
+  /** When the job went up on the platform. */
+  postedAt: string;
+  /** When the watcher first saw it. */
+  spottedAt: string;
+  /** When it was released to you, after the human delay. */
+  alertedAt: string;
+  /** How long it was held back, in seconds — shown so the pacing is visible. */
+  heldForSeconds: number;
+  /** AI verdict at the moment of alerting, when qualification is on. */
+  verdict: AiVerdict | null;
+  score: number | null;
+  seen: boolean;
+}
+
+/** An Opportunity as the API returns it, with a human-readable age. */
+export interface OpportunityDTO extends Opportunity {
+  /** e.g. "4 minutes ago" — computed on read, never stored. */
+  alertedTime: string;
+  postedTime: string;
 }

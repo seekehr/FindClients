@@ -1,6 +1,8 @@
 # FindClients
 
-Self-hosted lead discovery for freelancers. It watches Upwork and X/Twitter for people who are hiring, optionally screens each find with Google Gemini, and puts what survives in a dashboard.
+Self-hosted lead discovery for freelancers. It watches Upwork for new job postings and scrapes X/Twitter for people who are hiring, optionally screens each find with Google Gemini, and puts what survives in a dashboard.
+
+**Upwork is watched, never scraped.** Paging through the Upwork feed pulling every listing breaks its terms of service and is the quickest way to lose the account. Instead FindClients keeps one tab open on the feed you already use, reloads that single page every 5–10 minutes, and tells you about a new job 2–3 minutes after it appears — randomly, per job. Those alerts land in **New Opportunities**. There is no setting that turns bulk Upwork collection on.
 
 It runs **entirely on your own machine**. There is no account, no server to deploy and no database to install — one command starts it, and everything it knows lives in a folder you can delete.
 
@@ -36,7 +38,7 @@ Start Chrome with debugging on, in its own persistent profile:
 npm run chrome
 ```
 
-Sign in to Upwork and X in that window, then **leave it open**. That is the whole setup. Every scrape attaches to this browser over CDP and reuses the session, so you sign in once and never again — the profile lives in `data/chrome-profile/` and survives restarts.
+Sign in to Upwork and X in that window, then **leave it open**. That is the whole setup. Every scrape — and the Upwork watcher's permanent tab — attaches to this browser over CDP and reuses the session, so you sign in once and never again. The profile lives in `data/chrome-profile/` and survives restarts.
 
 Then set your keywords in the app under **Config**.
 
@@ -84,6 +86,7 @@ Everything is JSON files in `data/`:
 | `config.json` | Your settings, and your Gemini API key |
 | `leads.json` | Every lead, with its status, bookmark and AI verdict |
 | `dismissed.json` | Source hashes of leads you cleared, so they stay cleared |
+| `opportunities.json` | The New Opportunities feed — Upwork job alerts (last 300) |
 | `connections.json` | Which platforms are signed in, and how the last run went |
 | `chrome-profile/` | The Chrome profile `npm run chrome` uses — your live sessions |
 | `browser/` | Per-platform profiles, used only when not attaching over CDP |
@@ -110,11 +113,21 @@ Going local removes the shared-IP problem. It does not remove the *behavioural* 
 - `SCRAPE_JITTER_MS` adds up to 2 minutes of random delay so runs don't land on a clean clock tick.
 - `SCRAPE_ON_START` is **off**, so restarting the app doesn't hit the platforms again.
 
-Turning these up is the fastest way to get the account you are scraping with restricted. The jobs are not going anywhere.
+Turning these up is the fastest way to get the account you are scraping with restricted. The posts are not going anywhere.
+
+**Upwork gets stricter treatment still**, because its terms are stricter and its enforcement is real. It is not part of the scrape cycle at all:
+
+- One tab, left open on the feed you already use. It never clicks "Load More" and never opens a job you were not going to be told about.
+- Reloaded on an interval drawn fresh each time between **5 and 10 minutes**, with an occasional longer break.
+- Each new job is held **2–3 minutes** before it reaches you, drawn per job, and several spotted at once are spaced further apart. Replying to a listing seconds after it goes up, every single time, is the tell.
+
+Those windows are editable on the Config page under **Upwork job alerts**, with floors that keep them sane. Widening them is safe; narrowing them is the risk.
 
 ## How it works
 
-**Scraping** — every 30 minutes (jittered), the scheduler runs each enabled scraper you have connected an account for. Scrapers run one after another, not in parallel: each drives its own Chromium, and two at once on a laptop you are working on is the difference between a background task and a stall. Leads are de-duplicated by `sha1(platform + url||title)`, so re-seeing a post is a no-op. Full detail: [how_scrapping_works.md](how_scrapping_works.md).
+**Upwork job alerts** — a long-lived watcher, entirely separate from the scrape cycle ([server/src/watcher/](server/src/watcher)). It opens one tab on your jobs feed, reloads it every 5–10 minutes, and queues anything it has not seen before. Each queued job waits out its own random 2–3 minute hold, then — optionally — the tab clicks through to that one listing for the client's rating and hire rate, the lead is stored and AI-qualified like any other, and the alert appears in **New Opportunities** (and Discord, if configured). Pausing the watcher drops the queue rather than flushing it. The Opportunities page shows the queue and the countdown to the next reload, so the pacing is visible rather than something you have to take on trust.
+
+**Scraping** — every 30 minutes (jittered), the scheduler runs each enabled scraper you have connected an account for. Upwork is not one of them: it is a `mode: 'watch'` platform and has no `scrape()` method at all, so the cycle cannot reach it even by mistake. Scrapers run one after another, not in parallel: each drives its own Chromium, and two at once on a laptop you are working on is the difference between a background task and a stall. Leads are de-duplicated by `sha1(platform + url||title)`, so re-seeing a post is a no-op. Full detail: [how_scrapping_works.md](how_scrapping_works.md).
 
 **AI qualification** — opt-in, on your own Google Gemini key ([get one](https://aistudio.google.com/apikey)), entered on the Config page. Keyword scrapers are indiscriminate: searching "looking for a developer" finds the client who wants to hire *and* the developer announcing availability. The qualifier reads each lead against criteria you write in plain English and returns a 0–100 score plus a one-line reason. Gemini only (`gemini-2.5-pro | gemini-2.5-flash | gemini-2.5-flash-lite`, default flash), called over plain REST, 4 leads at a time. Failures record `error`, never `rejected` — a timeout is not evidence that a lead is bad. Already-reviewed leads are skipped, so turning qualification on later reviews the backlog.
 
@@ -134,6 +147,8 @@ Everything lives under `/api`, unauthenticated, on localhost.
 | Config | `GET/PUT /config` · `POST /config/reset` |
 | Credentials | `GET /credentials` · `PUT/DELETE /credentials/:platform` |
 | Scrape | `POST /scrape/run` · `GET /scrape/{status,runs}` |
+| Upwork watcher | `GET /watch` · `POST /watch/{start,stop,check}` |
+| Opportunities | `GET /opportunities` · `POST /opportunities/seen` · `POST /opportunities/:id/seen` · `DELETE /opportunities` |
 | Analytics | `GET /analytics/{overview,platforms,trend,scrape-runs}` |
 | Notifications | `GET /notifications` · `POST /notifications/read-all` · `POST /notifications/:id/read` |
 
@@ -144,6 +159,8 @@ Discord / Reddit / LinkedIn scrapers (the platforms are listed in the UI and mar
 ## Disclaimer
 
 Automating access to Upwork and X may violate their Terms of Service and can get the account you connect restricted or banned. Use accounts you own, at your own risk.
+
+FindClients does not bulk-scrape Upwork, and the pacing defaults exist for a reason. Turning them down until the watcher behaves like a poller puts your account back in exactly the position this design avoids.
 
 ## License
 

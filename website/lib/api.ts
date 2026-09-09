@@ -119,9 +119,15 @@ export interface UserConfig {
   twitterMinViews: number
   twitterLimitPerKeyword: number
 
+  /** Upwork is watched for job alerts, never scraped. See `watchApi`. */
+  upworkWatchEnabled: boolean
   upworkJobsUrl: string
   upworkFetchDetails: boolean
   upworkMaxAgeHours: number
+  upworkReloadMinMinutes: number
+  upworkReloadMaxMinutes: number
+  upworkAlertDelayMinSeconds: number
+  upworkAlertDelayMaxSeconds: number
 
   aiEnabled: boolean
   aiPrompt: string
@@ -190,6 +196,80 @@ export interface Notification {
   createdAt: string
 }
 
+/**
+ * One Upwork job alert, as shown in the New Opportunities panel.
+ *
+ * A snapshot, not a pointer: the panel stays readable after the lead behind it
+ * has been archived or cleared. `leadId` links back when there still is one.
+ */
+export interface Opportunity {
+  id: string
+  platform: string
+  leadId: string | null
+  title: string
+  url: string | null
+  budget: string | null
+  /** "4.9★ · 92% hire rate · $40k spent · United States", when known. */
+  client: string
+  tags: string[]
+  postedAt: string
+  postedTime: string
+  /** When the watcher first saw it on the feed. */
+  spottedAt: string
+  /** When it was released to you, after its human delay. */
+  alertedAt: string
+  alertedTime: string
+  /** How long it was deliberately held back. */
+  heldForSeconds: number
+  verdict: 'qualified' | 'rejected' | 'error' | null
+  score: number | null
+  seen: boolean
+}
+
+/** What the watcher is doing right now. */
+export type WatchState =
+  | 'off'
+  | 'starting'
+  | 'watching'
+  | 'checking'
+  | 'blocked'
+  | 'signed-out'
+  | 'browser-down'
+  | 'error'
+
+/** A job spotted on the feed and still waiting out its delay. */
+export interface QueuedAlert {
+  id: string
+  title: string
+  dueAt: string
+  dueInSeconds: number
+}
+
+export interface WatcherStatus {
+  platform: string
+  name: string
+  /** Job alerts are switched on in your config. */
+  enabled: boolean
+  /** The loop is alive right now. */
+  running: boolean
+  state: WatchState
+  /** One sentence, in plain words, for the UI to show as-is. */
+  detail: string
+  feedUrl: string
+  startedAt: string | null
+  lastCheckedAt: string | null
+  nextCheckAt: string | null
+  jobsOnFeed: number
+  checks: number
+  alerts: number
+  queued: QueuedAlert[]
+  lastError: string | null
+  /** [shortest, longest] gap between reloads, in minutes. */
+  reloadMinutes: [number, number]
+  /** [shortest, longest] hold before an alert reaches you, in seconds. */
+  delaySeconds: [number, number]
+}
+
 // ── Endpoint helpers ──────────────────────────────────────
 export const configApi = {
   get: () => api<{ config: UserConfig; platforms: string[]; ai: AiInfo }>('/config'),
@@ -229,6 +309,7 @@ export const connectionsApi = {
       connections: Connection[]
       signIn: SignInState | null
       browser: BrowserStatus
+      watcher: WatcherStatus
     }>('/connections'),
   /**
    * Opens a real browser window on the machine running the server and returns
@@ -274,6 +355,37 @@ export const notificationsApi = {
     ),
   markRead: (id: string) => api<{ ok: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
   markAllRead: () => api<{ ok: boolean }>('/notifications/read-all', { method: 'POST' }),
+}
+
+/**
+ * The Upwork job watcher.
+ *
+ * There is no "collect" call here and there will not be one. `check()` reloads
+ * the single tab the watcher already has open — the same thing pressing F5
+ * does — and everything it finds still waits out its random delay before it
+ * reaches the panel.
+ */
+export const watchApi = {
+  status: () => api<{ watcher: WatcherStatus; browser: BrowserStatus }>('/watch'),
+  start: () => api<{ watcher: WatcherStatus }>('/watch/start', { method: 'POST' }),
+  stop: () => api<{ watcher: WatcherStatus }>('/watch/stop', { method: 'POST' }),
+  check: () => api<{ watcher: WatcherStatus }>('/watch/check', { method: 'POST' }),
+}
+
+export const opportunitiesApi = {
+  list: (params: { unseen?: boolean; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.unseen) q.set('unseen', 'true')
+    if (params.limit !== undefined) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return api<{ data: Opportunity[]; total: number; unseen: number }>(
+      `/opportunities${qs ? `?${qs}` : ''}`,
+    )
+  },
+  markSeen: (id: string) => api<{ ok: boolean }>(`/opportunities/${id}/seen`, { method: 'POST' }),
+  markAllSeen: () => api<{ ok: boolean; marked: number }>('/opportunities/seen', { method: 'POST' }),
+  /** Empties the panel. The leads behind the alerts are left alone. */
+  clear: () => api<{ ok: boolean; removed: number }>('/opportunities', { method: 'DELETE' }),
 }
 
 export const scrapeApi = {

@@ -52,10 +52,16 @@ export function createNotification(input: {
   return notification;
 }
 
-/** Does this lead pass the platform / keyword / budget filters? */
-function matchesConfig(lead: LeadDTO, config: AppConfig): boolean {
-  if (config.platforms.length && !config.platforms.includes(lead.platform)) return false;
-
+/**
+ * Does this lead pass the keyword / budget filters?
+ *
+ * Split from the platform check below because the Upwork watcher needs exactly
+ * this half. A watched platform has already been chosen — you switched the
+ * watcher on and gave it a feed URL — so re-testing `config.platforms` there
+ * would silently mute every alert the moment Upwork was unticked on the Config
+ * page, with nothing in the UI to explain the silence.
+ */
+export function matchesLeadFilters(lead: LeadDTO, config: AppConfig): boolean {
   const haystack = `${lead.title} ${lead.description} ${lead.tags.join(' ')}`.toLowerCase();
 
   if (config.excludedKeywords.some((k) => haystack.includes(k.toLowerCase()))) return false;
@@ -71,6 +77,12 @@ function matchesConfig(lead: LeadDTO, config: AppConfig): boolean {
   }
 
   return true;
+}
+
+/** Does this lead pass the platform / keyword / budget filters? */
+function matchesConfig(lead: LeadDTO, config: AppConfig): boolean {
+  if (config.platforms.length && !config.platforms.includes(lead.platform)) return false;
+  return matchesLeadFilters(lead, config);
 }
 
 /**
@@ -111,6 +123,17 @@ async function postDiscord(webhookUrl: string, leads: LeadDTO[]): Promise<void> 
       .map((l) => `• [${l.platform}] ${l.title}`)
       .join('\n');
 
+  await postToDiscord(webhookUrl, content);
+}
+
+/**
+ * Post one message to a Discord webhook.
+ *
+ * Exported so the Upwork watcher can announce a single job in its own words,
+ * rather than being forced through the batched "N new leads" wording above,
+ * which reads oddly when N is always one.
+ */
+export async function postToDiscord(webhookUrl: string, content: string): Promise<void> {
   await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

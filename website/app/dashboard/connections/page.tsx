@@ -1,6 +1,7 @@
 'use client'
 
-import { LogIn, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { LogIn, Radio, RefreshCw, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react'
+import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import DashboardLayout from '@/components/dashboard-layout'
@@ -16,8 +17,9 @@ import {
   scrapeApi,
   type Connection,
   type SignInState,
+  type WatcherStatus,
 } from '@/lib/api'
-import { platformMeta } from '@/lib/platforms'
+import { isWatchedPlatform, platformMeta } from '@/lib/platforms'
 import {
   describePlatforms,
   refreshScrapeStatus,
@@ -33,6 +35,7 @@ const SIGN_IN_POLL_MS = 2_000
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Connection[]>([])
   const [signIn, setSignIn] = useState<SignInState | null>(null)
+  const [watcher, setWatcher] = useState<WatcherStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [scraping, setScraping] = useState(false)
@@ -40,9 +43,10 @@ export default function ConnectionsPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const { connections, signIn } = await connectionsApi.list()
+      const { connections, signIn, watcher } = await connectionsApi.list()
       setConnections(connections)
       setSignIn(signIn)
+      setWatcher(watcher)
     } catch {
       /* the empty state covers it */
     } finally {
@@ -150,6 +154,7 @@ export default function ConnectionsPage() {
               onClick={runScrape}
               loading={scraping || scrape.running}
               disabled={scrape.running || waiting || browserDown}
+              title="Runs the scraped platforms. Upwork is watched separately and is not included."
             >
               <RefreshCw className="size-4" />
               {scrape.running
@@ -182,6 +187,30 @@ export default function ConnectionsPage() {
             {browser?.hint} These buttons stay disabled until it is back.
           </Alert>
         )}
+
+        <Alert
+          tone="warning"
+          icon={<ShieldAlert className="size-4" />}
+          title="Upwork is used for job alerts only — it is never scraped."
+        >
+          <p>
+            Signing in to Upwork here lets FindClients keep one tab open on your
+            jobs feed and tell you when something new is posted. It does not, and
+            will not, page through the feed collecting listings: that breaks
+            Upwork&rsquo;s terms and is the fastest way to get an account
+            suspended. The &ldquo;Scrape now&rdquo; button above does not touch
+            Upwork.
+          </p>
+          <p className="mt-1.5">
+            <Link
+              href="/dashboard/opportunities"
+              className="font-medium text-primary hover:underline"
+            >
+              New Opportunities
+            </Link>{' '}
+            is where those alerts arrive.
+          </p>
+        </Alert>
 
         <Alert
           tone="info"
@@ -233,6 +262,12 @@ export default function ConnectionsPage() {
                           </Badge>
                         )}
                         {!connected && <Badge tone="outline">Not connected</Badge>}
+                        {isWatchedPlatform(id) && (
+                          <Badge tone="gold">
+                            <Radio className="size-3" aria-hidden />
+                            Job alerts only
+                          </Badge>
+                        )}
                       </div>
 
                       <p className="mt-1 text-[0.8125rem] leading-5 text-muted-foreground">
@@ -243,8 +278,16 @@ export default function ConnectionsPage() {
                             (conn!.lastUsedAt
                               ? ` · last used ${new Date(conn!.lastUsedAt).toLocaleString()}`
                               : ' · not used yet')
-                          : `Watch ${meta.site} for posts matching your keywords.`}
+                          : isWatchedPlatform(id)
+                            ? `Keep a tab open on ${meta.site} and get told when a new job is posted.`
+                            : `Watch ${meta.site} for posts matching your keywords.`}
                       </p>
+
+                      {connected && isWatchedPlatform(id) && watcher && (
+                        <p className="mt-1 text-[0.8125rem] leading-5 text-muted-foreground">
+                          {watcher.detail}
+                        </p>
+                      )}
 
                       {needsAttention && conn?.lastError && (
                         <p className="mt-1 text-[0.8125rem] text-destructive">
@@ -296,7 +339,9 @@ export default function ConnectionsPage() {
 
         <p className="text-xs leading-5 text-muted-foreground">
           Automating access to these platforms may breach their terms of service
-          and can put your account at risk. Only connect accounts you own.
+          and can put your account at risk. Only connect accounts you own, and
+          leave the Upwork pacing on its defaults unless you know what you are
+          trading away.
         </p>
       </PageShell>
     </DashboardLayout>

@@ -1,5 +1,11 @@
 # How scraping works
 
+> **Upwork is not scraped.** It is watched — one tab, reloaded every few
+> minutes, new jobs announced after a random pause. That is a different system
+> with a different file; see [The Upwork watcher](#the-upwork-watcher) at the
+> bottom. Everything above it describes the scrape cycle, which today means
+> X/Twitter.
+
 ## When
 
 - **Scheduled** — every 30 minutes by default (`SCRAPE_CRON`), plus up to 2 minutes of random jitter (`SCRAPE_JITTER_MS`), [scheduler/index.ts](server/src/scheduler/index.ts)
@@ -15,7 +21,7 @@ Off switches: `SCHEDULER_ENABLED=false` in `.env`, or **Scraping enabled** on th
 ```
 runScrapeCycle()                       server/src/scrapers/runner.ts
   ├─ read config.json
-  ├─ per scraper, one at a time:
+  ├─ per scraper, one at a time (watch-mode platforms are not in this list):
   │    ├─ skip if the platform isn't enabled in your config
   │    ├─ skip if you haven't connected an account for it
   │    ├─ scrape()  → raw leads
@@ -51,22 +57,46 @@ Adding a `KEYWORDS` variable to `.env` would do nothing. That split is why.
 ## Reading the log
 
 ```
-[Upwork] scrape started
-[Upwork] collected 40 job(s)
-[Upwork] dropped 12 job(s) older than 5h
-[Upwork] scrape finished — found 28, inserted 3
+[Twitter/X] scrape started
+[Twitter/X] scrape finished — found 28, inserted 3
 ```
 
 `found` = returned by the scraper. `inserted` = new to `leads.json`. **High found, zero inserted is de-duplication working, not breakage** — it means the feed had nothing new since last time, which is the normal steady state.
 
-`feed not visible yet — nudging` means the session lapsed or a challenge page appeared. It burns ~35s per attempt, three attempts, holding the cycle open. Hit **Check** on the Connections page to confirm, then **Sign in again**.
+## The Upwork watcher
 
-`bot challenge detected` followed by `reopening Upwork in a visible window` means a browser window is now waiting for you to click through a CAPTCHA. You have 5 minutes (`CAPTCHA_TIMEOUT_MS`).
+Upwork used to be a scraper in the cycle above: open the feed, click "Load More" up to twenty times, open every job. That is the behaviour Upwork's terms forbid and its systems are built to catch, and it is what gets accounts suspended. It was removed rather than tuned down, and `upworkScraper` no longer has a `scrape()` method at all — `Scraper.scrape` is optional precisely so a watched platform can decline to have one.
+
+What runs instead lives in [server/src/watcher/](server/src/watcher) and [scrapper/upwork/watch.ts](scrapper/upwork/watch.ts):
+
+```
+startWatcher()                        server/src/watcher/index.ts
+  └─ every 5-10 minutes (redrawn each time, sometimes much longer):
+       ├─ open the tab if it isn't already   scrapper/upwork/watch.ts
+       ├─ page.reload()  — one page, never "Load More"
+       ├─ read the tiles on screen
+       └─ for each job not already in leads.json or dismissed.json:
+            └─ hold it 2-3 minutes (drawn per job, staggered), then:
+                 ├─ optionally click through to that one job for client details
+                 ├─ insertLeads()  → the same de-duplication as everything else
+                 ├─ AI review, if qualification is on
+                 └─ recordOpportunity()  → New Opportunities + Discord
+```
+
+**The delays are the feature.** [`watcher/random.ts`](server/src/watcher/random.ts) is deliberately not uniform: intervals average two draws so they cluster toward the middle, roughly one in seven is a long break, and every value carries a few seconds of untidiness so no two gaps are the same round number. A perfectly even histogram is its own signature.
+
+**The first read of a tab is a baseline.** Everything currently on the feed is recorded as known and not alerted on, except jobs young enough to have appeared while the tab was connecting. Without that, every restart would announce a day of old listings as brand new.
+
+**Pausing drops the queue.** Held jobs were never stored, so the next run simply finds them on the feed again. Flushing them on Pause would defeat the pacing.
+
+**One profile, one holder.** The watcher sits on the Upwork tab indefinitely, so signing in or checking that session first suspends it and resumes it afterwards ([connections.routes.ts](server/src/routes/connections.routes.ts)). Only a watcher that was actually running is resumed.
+
+**Where it surfaces.** `GET /api/watch` carries the state, the countdown to the next reload and the queue with its per-job countdown; the Opportunities page renders all three, so the pacing is visible instead of being something you have to trust.
 
 ## Known rough edges
 
 1. **Keywords past the first two rarely run.** Twitter collects up to `twitterLimitPerKeyword` (15) per keyword but stops at `leadsPerRun` (25) overall — so keyword 1 gets 15, keyword 2 gets 10, and keywords 3+ never execute. Raise `leadsPerRun` or cut your keyword list.
-2. **Upwork leads rarely notify.** Notifications require a keyword match, but Upwork jobs come from a feed rather than a keyword search, so most of them match nothing in your list.
-3. **`ctx.since` is never set.** Every cycle re-scrapes the same window and relies on de-duplication to absorb it. Harmless, but it is why `found` stays high.
-4. **A challenge during an unattended run costs that cycle.** Solving one means opening a visible window and waiting for a person; at 3am there isn't one, so it times out after 5 minutes and gives up. Whatever the headless pass collected before the challenge is still kept.
-5. **Only Upwork detects challenges.** Twitter has no detection — a challenge there looks like a run that found nothing.
+2. **`ctx.since` is never set.** Every cycle re-scrapes the same window and relies on de-duplication to absorb it. Harmless, but it is why `found` stays high.
+3. **Twitter has no challenge detection.** A challenge there looks like a run that found nothing. The Upwork watcher does detect them and reports `blocked`.
+4. **A quiet Opportunities panel is the normal state.** The watcher looks at one screen of the feed every few minutes. Expect a handful of alerts a day, not a list of hundreds — that is the trade being made, on purpose.
+5. **The watcher needs a browser that stays up.** Attached over CDP, closing the Chrome window closes the tab; the watcher notices, reports `Chrome down`, and reopens when it comes back.

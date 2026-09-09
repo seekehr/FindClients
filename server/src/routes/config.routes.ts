@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/http';
 import { getConfig, resetConfig, updateConfig } from '../services/config.service';
 import { AI_MODELS, PLATFORMS } from '../types';
+import { syncWatcherWithConfig } from '../watcher';
 
 export const configRouter = Router();
 
@@ -32,9 +33,24 @@ const patchSchema = z
     twitterMinViews: z.number().int().min(0).max(100_000_000),
     twitterLimitPerKeyword: z.number().int().min(1).max(100),
 
+    upworkWatchEnabled: z.boolean(),
     upworkJobsUrl: z.string().url().max(500),
     upworkFetchDetails: z.boolean(),
     upworkMaxAgeHours: z.number().int().min(1).max(720),
+    /**
+     * The reload window, in minutes. The floor of 2 is not arbitrary: a tab
+     * that refreshes every thirty seconds is not a person leaving a page open,
+     * it is a poller, and it is exactly what gets an Upwork account flagged.
+     */
+    upworkReloadMinMinutes: z.number().int().min(2).max(120),
+    upworkReloadMaxMinutes: z.number().int().min(2).max(240),
+    /**
+     * How long a spotted job is held before you hear about it. The floor of 30
+     * seconds keeps the point of the feature intact — replying to a listing
+     * seconds after it goes up, every time, is the tell.
+     */
+    upworkAlertDelayMinSeconds: z.number().int().min(30).max(3600),
+    upworkAlertDelayMaxSeconds: z.number().int().min(30).max(7200),
 
     aiEnabled: z.boolean(),
     // Long enough for real criteria with examples, short enough that it cannot
@@ -60,7 +76,23 @@ const patchSchema = z
         .regex(/^[A-Za-z0-9_-]+$/, 'A Gemini API key contains only letters, digits, - and _.'),
     ]),
   })
-  .partial();
+  .partial()
+  // Ranges have to be ordered, and a silent swap would be worse than a 400:
+  // "reload every 10-5 minutes" would draw from an empty window forever.
+  .refine(
+    (v) =>
+      v.upworkReloadMinMinutes === undefined ||
+      v.upworkReloadMaxMinutes === undefined ||
+      v.upworkReloadMinMinutes <= v.upworkReloadMaxMinutes,
+    { message: 'The shortest reload gap must not be longer than the longest.', path: ['upworkReloadMinMinutes'] },
+  )
+  .refine(
+    (v) =>
+      v.upworkAlertDelayMinSeconds === undefined ||
+      v.upworkAlertDelayMaxSeconds === undefined ||
+      v.upworkAlertDelayMinSeconds <= v.upworkAlertDelayMaxSeconds,
+    { message: 'The shortest alert delay must not be longer than the longest.', path: ['upworkAlertDelayMinSeconds'] },
+  );
 
 configRouter.get(
   '/',
@@ -79,13 +111,19 @@ configRouter.get(
 configRouter.put(
   '/',
   asyncHandler(async (req, res) => {
-    res.json({ config: updateConfig(patchSchema.parse(req.body)) });
+    const config = updateConfig(patchSchema.parse(req.body));
+    // Switching Upwork alerts on or off has to take effect now, not at the
+    // next restart — the toggle is the only control most people will use.
+    syncWatcherWithConfig();
+    res.json({ config });
   }),
 );
 
 configRouter.post(
   '/reset',
   asyncHandler(async (_req, res) => {
-    res.json({ config: resetConfig() });
+    const config = resetConfig();
+    syncWatcherWithConfig();
+    res.json({ config });
   }),
 );

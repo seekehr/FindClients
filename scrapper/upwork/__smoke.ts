@@ -1,10 +1,10 @@
 /**
- * Manual smoke test for the Upwork scraper.
+ * Manual smoke test for the Upwork watcher.
  *
- * Runs the real `upworkScraper.scrape()` against Upwork using the saved browser
- * profile, and prints what came back. This is the fastest way to tell a *code*
- * problem (selectors changed, parser broken) apart from a *session* problem
- * (signed out, challenge), which the app can only report as "found 0".
+ * Opens the tab exactly the way the app does, reloads the feed once, and prints
+ * what came back. This is the fastest way to tell a *code* problem (selectors
+ * changed, parser broken) apart from a *session* problem (signed out,
+ * challenge), which the app can only report as "nothing new".
  *
  * Run from the `scrapper/` folder:
  *
@@ -12,19 +12,21 @@
  *
  * Reads `data/` directly, so the app does not need to be running — but it does
  * need the profile, so sign in first (in the app, or `npm run cli -- --sign-in
- * upwork`). `UPWORK_HEADLESS=false` lets you watch the browser work.
+ * upwork`). It performs exactly one reload and then closes: this is a diagnostic,
+ * not a way to collect jobs from the terminal.
  */
 
 import { loadRootEnv } from '../lib/env';
 import { readSavedConfig } from '../lib/local';
 import { hasProfile, openProfile } from '../lib/profile';
-import { loadUpworkConfig, loadUpworkRuntimeConfig } from './config';
-import { parseJobTile, upworkScraper } from './index';
+import { loadUpworkRuntimeConfig } from './config';
+import { parseJobTile } from './index';
+import { upworkWatcher } from './watch';
 
 loadRootEnv();
 
 /**
- * Look at the feed directly, without the scraper, so a zero-lead run can be
+ * Look at the feed directly, without the watcher, so an empty poll can be
  * explained: is it a challenge page, a signed-out redirect, or a real feed
  * whose tiles we failed to parse?
  */
@@ -47,7 +49,6 @@ async function inspectFeed(jobsUrl: string) {
       '[data-test="job-tile"]',
       '.job-tile-title',
       'article',
-      "[data-test='load-more-button']",
     ];
     const counts: Record<string, number> = {};
     for (const sel of selectors) counts[sel] = await page.locator(sel).count();
@@ -85,24 +86,29 @@ async function main() {
   }
 
   const jobsUrl = saved.upworkJobsUrl || 'https://www.upwork.com/nx/find-work/most-recent';
-  const cfg = loadUpworkConfig({ jobsUrl, maxAgeHours: 24, fetchDetails: false });
-  console.log('headless  :', cfg.headless);
-  console.log('');
-
   await inspectFeed(jobsUrl);
 
   console.log('');
-  console.log('── full scrape() ───────────────────────────────');
+  console.log('── one watcher poll ────────────────────────────');
   const started = Date.now();
-  const leads = await upworkScraper.scrape({
-    config: { ...saved, upworkJobsUrl: jobsUrl },
-    limit: 10,
+  const tab = await upworkWatcher.open({
+    feedUrl: jobsUrl,
     log: (m) => console.log('   ', m),
+    // Run from a terminal, so you are by definition sitting in front of it.
     interactive: true,
     captchaTimeoutMs: 5 * 60 * 1000,
+    fetchDetails: false,
   });
-  console.log(`leads: ${leads.length} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
-  for (const lead of leads.slice(0, 3)) console.log(JSON.stringify(lead, null, 2));
+
+  try {
+    const result = await tab.poll();
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    console.log(`jobs on the feed: ${result.leads.length} in ${secs}s`);
+    if (result.problem) console.log(`problem: ${result.problem} ${result.detail ?? ''}`);
+    for (const lead of result.leads.slice(0, 3)) console.log(JSON.stringify(lead, null, 2));
+  } finally {
+    await tab.close();
+  }
 }
 
 main().catch((err) => {

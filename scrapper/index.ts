@@ -1,29 +1,37 @@
 /**
- * Scraper registry.
+ * Scraper and watcher registry.
  *
- * The server loads this file at runtime and runs every scraper you export in
- * the `scrapers` array on a schedule. Implement each platform in its own file
- * (see ./upwork, ./twitter, ./discord) and add it here.
+ * The server loads this file at runtime. There are two lists, and which one a
+ * platform belongs in is a decision about that platform's terms of service, not
+ * a technical convenience:
  *
- * Each run is handed your saved configuration — see `ScrapeContext` in
- * ../server/src/scrapers/types.ts. Sessions come from the browser profile, not
- * from anything passed in.
+ *  - `scrapers` — everything the server knows how to sign in to. Those with
+ *    `mode: 'scrape'` are also run by the scheduled cycle, which opens a feed,
+ *    takes what matches, and closes again.
+ *
+ *  - `watchers` — long-lived tabs, for platforms that must not be scraped.
+ *    Upwork is the only one today: it forbids automated collection and enforces
+ *    it, so instead of a cycle it gets one tab left open on the feed, reloaded
+ *    every few minutes, with new jobs announced after a human-sized pause. See
+ *    ./upwork/watch.ts and ../server/src/watcher/.
+ *
+ * A platform in `watchers` still appears in `scrapers` — it needs sign-in and
+ * session checking like any other — but with `mode: 'watch'` and no `scrape`
+ * method at all, so the cycle cannot collect from it even by accident.
  */
-import type { Scraper } from '../server/src/scrapers/types';
+import type { PlatformWatcher, Scraper } from '../server/src/scrapers/types';
 
 import { upworkScraper } from './upwork';
+import { upworkWatcher } from './upwork/watch';
 import { twitterScraper } from './twitter';
-/**
- * Order matters: the runner works through this list one at a time.
- *
- * Upwork goes first because it is the one that can stop and ask for a human —
- * it sits behind Cloudflare and may need a challenge cleared by hand. Running
- * it first puts that prompt in front of you at the start of a cycle, rather
- * than several minutes in, by which time you may have walked away.
- */
+
 export const scrapers: Scraper[] = [
   upworkScraper,
   twitterScraper,
 ];
 
-export { upworkScraper, twitterScraper };
+export const watchers: PlatformWatcher[] = [
+  upworkWatcher,
+];
+
+export { upworkScraper, upworkWatcher, twitterScraper };

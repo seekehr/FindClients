@@ -2,12 +2,19 @@ import path from 'node:path';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 import { JsonFile, registerForFlush, flushAll } from './json-file';
-import { DEFAULT_AI_MODEL, type AppConfig, type Lead, type Notification, type ScrapeRun } from '../types';
+import {
+  DEFAULT_AI_MODEL,
+  type AppConfig,
+  type Lead,
+  type Notification,
+  type Opportunity,
+  type ScrapeRun,
+} from '../types';
 
 export { flushAll };
 
 /**
- * The whole database: six JSON files in one folder.
+ * The whole database: a handful of JSON files in one folder.
  *
  * Each export below is a file kept in memory. Read `.data`, mutate it, call
  * `.save()`. There are no queries, no transactions and no connection — the
@@ -78,9 +85,14 @@ export function defaultConfig(): StoredConfig {
     twitterMinViews: 0,
     twitterLimitPerKeyword: 15,
 
+    upworkWatchEnabled: true,
     upworkJobsUrl: 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
     upworkFetchDetails: true,
     upworkMaxAgeHours: 5,
+    upworkReloadMinMinutes: 5,
+    upworkReloadMaxMinutes: 10,
+    upworkAlertDelayMinSeconds: 120,
+    upworkAlertDelayMaxSeconds: 180,
 
     aiEnabled: false,
     aiPrompt:
@@ -153,9 +165,23 @@ export const notificationsStore = registerForFlush(
   new JsonFile<Notification[]>(file('notifications.json'), () => []),
 );
 
-/** History is for glancing at, not for archiving. Keep both lists bounded. */
+/**
+ * The New Opportunities feed: Upwork job alerts, newest first.
+ *
+ * Kept apart from `leadsStore` on purpose. A lead is a record you work — you
+ * archive it, bookmark it, mark it won. An opportunity is an *event*: this job
+ * appeared at this time and reached you at that one. Storing the event
+ * separately is what lets the panel keep saying "3 new since you last looked"
+ * after you have archived every lead behind it.
+ */
+export const opportunitiesStore = registerForFlush(
+  new JsonFile<Opportunity[]>(file('opportunities.json'), () => []),
+);
+
+/** History is for glancing at, not for archiving. Keep the lists bounded. */
 export const MAX_RUNS = 200;
 export const MAX_NOTIFICATIONS = 200;
+export const MAX_OPPORTUNITIES = 300;
 
 export function initStore(): void {
   logger.info(`Data directory: ${env.dataDir}`);

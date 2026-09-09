@@ -108,7 +108,16 @@ function record(platform: string, patch: Partial<StoredConnection>): void {
  * takes, and an HTTP request should not be held open for it. The Connections
  * page follows along with `getSignInState`.
  */
-export function startSignIn(platform: ConnectablePlatform): void {
+export function startSignIn(
+  platform: ConnectablePlatform,
+  /**
+   * Called once the window has closed, however it ended. The caller uses this
+   * to give the browser profile back to whoever it took it from — the Upwork
+   * watcher, in practice — because signing in takes as long as a person takes
+   * and nothing else can hold that profile in the meantime.
+   */
+  onSettled?: () => void,
+): void {
   if (signInState?.status === 'waiting') {
     throw conflict(`Already waiting for you to sign in to ${signInState.platform}.`);
   }
@@ -153,6 +162,8 @@ export function startSignIn(platform: ConnectablePlatform): void {
       logger.error(`[${platform}] sign-in failed`, message);
       record(platform, { status: 'error', lastError: message });
       signInState = { ...signInState!, status: 'failed', message };
+    } finally {
+      onSettled?.();
     }
   })();
 }

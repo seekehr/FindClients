@@ -321,6 +321,9 @@ export const twitterScraper: Scraper = {
   platform: PLATFORM,
   name: 'Twitter/X',
 
+  /** Collected by the scheduled cycle, unlike Upwork. See `Scraper.mode`. */
+  mode: 'scrape',
+
   async checkSession(log) {
     if (!hasProfile(PLATFORM)) return { hasProfile: false, signedIn: false };
 

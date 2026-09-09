@@ -9,6 +9,7 @@ import {
   Loader2,
   Menu,
   Plug,
+  Radio,
   SlidersHorizontal,
   Target,
   TriangleAlert,
@@ -21,6 +22,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Wordmark } from '@/components/brand'
 import { notificationsApi, type Notification } from '@/lib/api'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
+import { describeWatchState, useWatchStatus } from '@/lib/use-watch-status'
 import { cn } from '@/lib/utils'
 
 interface DashboardLayoutProps {
@@ -31,10 +33,12 @@ interface NavItem {
   label: string
   href: string
   icon: React.ComponentType<{ className?: string }>
+  /** Marks the item that carries the unread job-alert count. */
+  badge?: 'opportunities'
 }
 
 /**
- * Two groups, because the six screens do two different jobs: four you use
+ * Two groups, because the seven screens do two different jobs: five you use
  * daily, two you set up once.
  */
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
@@ -42,6 +46,12 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Workspace',
     items: [
       { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
+      {
+        label: 'Opportunities',
+        href: '/dashboard/opportunities',
+        icon: Radio,
+        badge: 'opportunities',
+      },
       { label: 'Leads', href: '/dashboard/leads', icon: Target },
       { label: 'Bookmarks', href: '/dashboard/bookmarks', icon: Bookmark },
       { label: 'Analytics', href: '/dashboard/analytics', icon: ChartNoAxesColumn },
@@ -86,6 +96,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   // notifications on the finished edge means new-lead alerts land immediately.
   const scrape = useScrapeStatus(loadNotifications)
 
+  // The Upwork watcher runs on its own clock, so the sidebar badge and the
+  // header pill are the only places most people will ever see it working.
+  const watch = useWatchStatus(loadNotifications)
+
   useEffect(() => {
     void loadNotifications()
     const timer = setInterval(() => void loadNotifications(), POLL_MS)
@@ -111,6 +125,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     )
 
   const browserDown = scrape.browser && !scrape.browser.reachable
+
+  const watchState = describeWatchState(watch.watcher)
+  const watchLive =
+    watch.watcher?.enabled &&
+    (watch.watcher.state === 'watching' || watch.watcher.state === 'checking')
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -175,6 +194,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                     )}
                     <Icon className="size-4 shrink-0" />
                     {item.label}
+                    {item.badge === 'opportunities' && watch.unseen > 0 && (
+                      <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[0.6875rem] font-semibold text-primary-foreground tabular">
+                        {watch.unseen > 99 ? '99+' : watch.unseen}
+                      </span>
+                    )}
                   </Link>
                 )
               })}
@@ -218,6 +242,21 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <div className="flex-1" />
 
+          {/* The watcher is deliberately quiet and slow, so the one place it
+              can prove it is alive is here, on every screen. */}
+          {watchLive && (
+            <span
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-success/25 bg-success/10 px-2.5 text-[0.8125rem] font-medium text-success"
+              title={watch.watcher?.detail}
+            >
+              <Radio
+                className={cn('size-3.5', watch.watcher?.state === 'checking' && 'animate-pulse')}
+                aria-hidden
+              />
+              <span className="hidden sm:inline">{watchState.label} Upwork</span>
+            </span>
+          )}
+
           {/* Visible on every page, however the run was started. */}
           {scrape.running && (
             <span className="inline-flex h-8 items-center gap-2 rounded-md border border-gold-500/25 bg-gold-500/10 px-2.5 text-[0.8125rem] font-medium text-gold-400">
@@ -254,7 +293,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                   </div>
                   {notifications.length === 0 ? (
                     <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-                      No alerts yet. New matching leads show up here.
+                      No alerts yet. New Upwork jobs and matching leads show up here.
                     </p>
                   ) : (
                     <ul className="max-h-80 overflow-y-auto">
