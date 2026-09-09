@@ -85,24 +85,6 @@ function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
   )
 }
 
-function Select({ className, ...props }: React.ComponentProps<'select'>) {
-  return (
-    <select
-      data-slot="select"
-      className={cn(
-        controlClass,
-        'h-9 cursor-pointer appearance-none bg-no-repeat px-3 pr-9 text-sm',
-        // Chevron drawn in the token colour rather than the OS default arrow,
-        // which is the one part of a native select that never matches a theme.
-        "bg-[url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a7a5a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")]",
-        'bg-[position:right_0.75rem_center]',
-        className,
-      )}
-      {...props}
-    />
-  )
-}
-
 /**
  * Numeric input that clamps on the way out, so a field can never submit a
  * value the API would reject.
@@ -143,4 +125,7 @@ function NumberField({
   )
 }
 
-export { Field, Hint, Input, Label, NumberField, Select, Textarea, controlClass }
+// `Select` lives in ./select.tsx rather than here: a native <select> cannot show
+// a description under each option, and its option list is drawn by the OS, so on
+// a dark page it opens as a white menu in the system font.
+export { Field, Hint, Input, Label, NumberField, Textarea, controlClass }

@@ -95,12 +95,30 @@ function isAiModel(model: string): boolean {
 }
 
 /**
- * Thinking costs the user money and buys nothing on a screening call, so it is
- * switched off where the model allows it. 2.5 Pro cannot disable thinking, so
- * it keeps the dynamic default.
+ * Models that refuse `thinkingBudget: 0`.
+ *
+ * Not a guess and not a version rule — there isn't one. Every model on the
+ * allow-list was sent the exact request below; these two answered
+ * `400 Request contains an invalid argument` to the budget and nothing else,
+ * while their siblings on either side of them accepted it. Reasoning is
+ * mandatory on some releases and optional on others, so the only honest form
+ * this can take is a list, checked against the API.
+ *
+ * A model missing from here that should be in it costs one failed review per
+ * lead, reported as `error` rather than `rejected` — visible, and never a
+ * silently dropped lead.
+ */
+const THINKING_ALWAYS_ON = new Set(['gemini-3.6-flash', 'gemini-3.5-flash-lite']);
+
+/**
+ * Thinking costs the user money and buys nothing on a screening call — the
+ * verdict is a short judgment against fixed criteria, not a problem to work
+ * through — so it is switched off wherever the model allows it. Where it does
+ * not, omitting the field leaves the model on its own dynamic default, which
+ * is the only other thing it will accept.
  */
 function thinkingConfig(model: string): Record<string, unknown> | undefined {
-  return model === 'gemini-2.5-pro' ? undefined : { thinkingBudget: 0 };
+  return THINKING_ALWAYS_ON.has(model) ? undefined : { thinkingBudget: 0 };
 }
 
 /** Render one lead as the compact fact sheet the model scores. */

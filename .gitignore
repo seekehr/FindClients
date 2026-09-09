@@ -16,6 +16,7 @@ dist/
 .claude/
 .cursor/
 *.log
+.idea/
 
 # Build metadata
 *.tsbuildinfo

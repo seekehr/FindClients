@@ -89,7 +89,7 @@ function configFromCli(file: CliConfig): AppConfig {
     // would need your Gemini key, which lives in data/config.json.
     aiEnabled: false,
     aiPrompt: '',
-    aiModel: 'gemini-2.5-flash',
+    aiModel: 'gemini-3.8-flash',
     aiMinScore: 60,
     aiAutoArchive: true,
     aiApiKeySet: false,

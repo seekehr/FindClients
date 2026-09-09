@@ -1,5 +1,5 @@
 import { configStore, defaultConfig, type StoredConfig } from '../store';
-import { DEFAULT_AI_MODEL, type AppConfig } from '../types';
+import { AI_MODELS, DEFAULT_AI_MODEL, type AppConfig } from '../types';
 
 /**
  * Your configuration — the one record that decides what gets scraped.
@@ -10,11 +10,25 @@ import { DEFAULT_AI_MODEL, type AppConfig } from '../types';
  * receives over HTTP.
  */
 
+/**
+ * A model that is no longer on the allow-list reads as the default.
+ *
+ * Config files outlive allow-lists: a `data/config.json` written when the app
+ * offered Gemini 2.5 still says so after the list moves on. `qualifyLeads`
+ * already falls back at call time, so without this the Config page would show
+ * a dropdown with no matching option while the qualifier quietly ran something
+ * else — the UI disagreeing with the machine, which is worse than either being
+ * wrong on its own.
+ */
+function knownModel(model: string): string {
+  return (AI_MODELS as readonly string[]).includes(model) ? model : DEFAULT_AI_MODEL;
+}
+
 function toDTO(row: StoredConfig): AppConfig {
   const { aiApiKey, ...rest } = row;
   return {
     ...rest,
-    aiModel: rest.aiModel || DEFAULT_AI_MODEL,
+    aiModel: knownModel(rest.aiModel),
     aiApiKeySet: Boolean(aiApiKey),
     // Enough to recognise a key, far too little to use one.
     aiApiKeyHint: aiApiKey ? `••••${aiApiKey.slice(-4)}` : '',

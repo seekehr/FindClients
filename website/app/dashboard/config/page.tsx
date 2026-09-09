@@ -35,9 +35,9 @@ import {
   Input,
   Label,
   NumberField,
-  Select,
   Textarea,
 } from '@/components/ui/field'
+import { Select } from '@/components/ui/select'
 import { PageHeader, PageShell } from '@/components/ui/page'
 import { SwitchRow } from '@/components/ui/switch'
 import {
@@ -53,11 +53,47 @@ import { cn } from '@/lib/utils'
 /** Where to get the key the AI section asks for. */
 const GEMINI_KEY_URL = 'https://aistudio.google.com/apikey'
 
-/** The models the server accepts, with what each one is actually for. */
-const MODEL_LABELS: Record<string, string> = {
-  'gemini-2.5-pro': 'Gemini 2.5 Pro — most accurate, slowest and priciest',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash — recommended balance',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite — cheapest, roughest',
+/**
+ * The models the server accepts, with what each one is actually for.
+ *
+ * All Flash-class: qualification is one short judgment call per lead, and the
+ * trade-off worth showing here is sharpness against cost per lead, not the full
+ * Gemini catalogue.
+ *
+ * Name and blurb are separate fields rather than one string, so the trigger can
+ * stay short while the list stays informative. Squeezing both into one line is
+ * what made the old dropdown truncate mid-word.
+ */
+const MODEL_META: Record<string, { name: string; blurb: string }> = {
+  'gemini-3.8-flash': {
+    name: 'Gemini 3.8 Flash',
+    blurb: 'Newest and sharpest. The recommended default.',
+  },
+  'gemini-3.7-flash': {
+    name: 'Gemini 3.7 Flash',
+    blurb: 'Previous generation, still a strong judge.',
+  },
+  'gemini-3.6-flash': {
+    name: 'Gemini 3.6 Flash',
+    blurb: 'Previous generation, balanced speed and quality.',
+  },
+  'gemini-3.5-flash': {
+    name: 'Gemini 3.5 Flash',
+    blurb: 'Older. Baseline quality, noticeably slower.',
+  },
+  'gemini-3.5-flash-lite': {
+    name: 'Gemini 3.5 Flash-Lite',
+    blurb: 'Fastest and cheapest. Rougher on close calls.',
+  },
+  'gemini-3.1-flash-lite': {
+    name: 'Gemini 3.1 Flash-Lite',
+    blurb: 'Near-frontier judgment at Lite pricing.',
+  },
+}
+
+/** Falls back to the raw id, so a model the server adds still renders. */
+function modelMeta(id: string) {
+  return MODEL_META[id] ?? { name: id, blurb: '' }
 }
 
 // ── Small building blocks ────────────────────────────────
@@ -739,20 +775,21 @@ export default function ConfigPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
               label="Model"
-              hint="One call per lead, charged to your key."
+              // The blurb moves down here once a model is chosen, so the
+              // trade-off you picked stays visible without opening the list.
+              hint={`${modelMeta(config.aiModel).blurb} One call per lead, charged to your key.`}
               htmlFor="ai-model"
             >
               <Select
                 id="ai-model"
                 value={config.aiModel}
-                onChange={(e) => patch({ aiModel: e.target.value })}
-              >
-                {ai.models.map((model) => (
-                  <option key={model} value={model}>
-                    {MODEL_LABELS[model] ?? model}
-                  </option>
-                ))}
-              </Select>
+                onChange={(aiModel) => patch({ aiModel })}
+                options={ai.models.map((model) => ({
+                  value: model,
+                  label: modelMeta(model).name,
+                  description: modelMeta(model).blurb,
+                }))}
+              />
             </Field>
 
             <NumberField

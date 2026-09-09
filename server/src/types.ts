@@ -20,13 +20,25 @@ export const LEAD_STATUSES: LeadStatus[] = ['new', 'viewed', 'contacted', 'won',
  * Google Gemini only, and an allow-list rather than free text: a typo would
  * burn a scrape cycle failing on every lead and read as "the AI is broken"
  * rather than "that model does not exist".
+ *
+ * Flash and Flash-Lite only, deliberately. Qualification is one short judgment
+ * call per lead, billed per lead, on text a Flash model reads perfectly well —
+ * a Pro model here costs several times as much to reach the same verdict on
+ * "is this person hiring". Newest first, which is also the dropdown order.
  */
-export const AI_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
+export const AI_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+] as const;
 
 export type AiModel = (typeof AI_MODELS)[number];
 
-/** Screening is a short judgment call on every lead — cheap and fast by default. */
-export const DEFAULT_AI_MODEL: AiModel = 'gemini-2.5-flash';
+/** The newest and sharpest of the Flash line, and still cheap enough per lead. */
+export const DEFAULT_AI_MODEL: AiModel = 'gemini-3.8-flash';
 
 /**
  * Platform-specific facts a scraper collected about a lead, beyond the fields
