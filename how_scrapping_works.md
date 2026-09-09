@@ -72,8 +72,10 @@ What runs instead lives in [server/src/watcher/](server/src/watcher) and [scrapp
 ```
 startWatcher()                        server/src/watcher/index.ts
   └─ every 5-10 minutes (redrawn each time, sometimes much longer):
-       ├─ open the tab if it isn't already   scrapper/upwork/watch.ts
-       ├─ page.reload()  — one page, never "Load More"
+       ├─ find the Upwork tab           scrapper/upwork/watch.ts
+       │    ├─ already on the feed?     → reload it
+       │    ├─ on Upwork, wrong page?   → send it to the feed
+       │    └─ no Upwork tab at all?    → open one
        ├─ read the tiles on screen
        └─ for each job not already in leads.json or dismissed.json:
             └─ hold it 2-3 minutes (drawn per job, staggered), then:
@@ -86,6 +88,10 @@ startWatcher()                        server/src/watcher/index.ts
 **The delays are the feature.** [`watcher/random.ts`](server/src/watcher/random.ts) is deliberately not uniform: intervals average two draws so they cluster toward the middle, roughly one in seven is a long break, and every value carries a few seconds of untidiness so no two gaps are the same round number. A perfectly even histogram is its own signature.
 
 **The first read of a tab is a baseline.** Everything currently on the feed is recorded as known and not alerted on, except jobs young enough to have appeared while the tab was connecting. Without that, every restart would announce a day of old listings as brand new.
+
+**It works in the tab you already have open.** Every poll re-scans all the browser's tabs rather than trusting the one it used last time — you may have closed it, or opened your own. Preference goes to a tab already on the feed, then any other `/nx/find-work` page, then anything else on Upwork, because the tab it picks is the tab it is about to reload and an arbitrary Upwork tab might be a proposal you are halfway through writing. A tab it opened itself is closed on Pause; a tab of yours that it adopted never is.
+
+**A tab that wandered is navigated, not reloaded.** Upwork will bounce `/nx/find-work/most-recent` to `/nx/project-dashboard/?ref=fwh`, and reloading *that* forever is a watcher that never sees another job while reporting only `feed not visible yet — nudging`. The poll compares paths (not whole URLs — Upwork rewrites its own query string) and navigates back to your feed when they differ. If it still lands somewhere else, it says where, instead of nudging an unrelated page three times.
 
 **Pausing drops the queue.** Held jobs were never stored, so the next run simply finds them on the feed again. Flushing them on Pause would defeat the pacing.
 
@@ -100,3 +106,4 @@ startWatcher()                        server/src/watcher/index.ts
 3. **Twitter has no challenge detection.** A challenge there looks like a run that found nothing. The Upwork watcher does detect them and reports `blocked`.
 4. **A quiet Opportunities panel is the normal state.** The watcher looks at one screen of the feed every few minutes. Expect a handful of alerts a day, not a list of hundreds — that is the trade being made, on purpose.
 5. **The watcher needs a browser that stays up.** Attached over CDP, closing the Chrome window closes the tab; the watcher notices, reports `Chrome down`, and reopens when it comes back.
+6. **It will reload an Upwork tab of yours.** If the only Upwork tab open is one you were using, the watcher adopts it and reloads it on its own schedule. Keeping your feed open in its own tab is enough to avoid that — the feed is what it prefers.

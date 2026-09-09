@@ -63,7 +63,9 @@ export const myWatcher: PlatformWatcher = {
 };
 ```
 
-`WatchTab` is one open page with `poll()` (reload and read — never paginate, never navigate away), an optional `inspect(url)` for the single click-through before an alert, `isOpen()` and `close()`. Timing is not its business: when to reload and how long to hold a job live in [server/src/watcher/](../server/src/watcher), because they are properties of the whole system rather than of one page.
+`WatchTab` is one open page with `poll()` (find the tab, put it on the feed, read it — never paginate), an optional `inspect(url)` for the single click-through before an alert, `isOpen()` and `close()`. Timing is not its business: when to reload and how long to hold a job live in [server/src/watcher/](../server/src/watcher), because they are properties of the whole system rather than of one page.
+
+Every `poll()` re-resolves which tab to use out of `context.pages()`, preferring one already on the feed, then any other `/nx/find-work` page, then anything else on Upwork. It reloads that tab when it is already on the feed and navigates it there when it is not — Upwork redirects `find-work` to the project dashboard often enough that reloading whatever the tab happens to show is how a watcher goes quiet for hours. Tabs it opened itself are closed on `close()`; tabs of yours that it adopted are not.
 
 `ScrapeContext` carries `config` (your saved settings), `limit`, `log`, and two challenge fields:
 
