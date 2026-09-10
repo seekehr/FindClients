@@ -97,7 +97,7 @@ export default function DashboardPage() {
     Promise.all([
       analyticsApi.overview(),
       analyticsApi.platforms(),
-      leadsApi.list({ limit: 5 }),
+      leadsApi.list({ limit: 5, ai: 'not-rejected' }),
     ])
       .then(([overview, platforms, leads]) => {
         if (cancelled) return

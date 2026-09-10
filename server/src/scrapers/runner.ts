@@ -5,7 +5,7 @@ import {
   saveAiReviews,
   type AiReviewToSave,
 } from '../services/lead.service';
-import { qualifyLeads } from '../services/ai.service';
+import { qualifyLeads, type LeadReview } from '../services/ai.service';
 import { notifyNewLeads } from '../services/notification.service';
 import { finishRun, startRun } from '../services/analytics.service';
 import { getAiApiKey, getConfig } from '../services/config.service';
@@ -34,27 +34,31 @@ import type { Scraper } from './types';
  * Run AI qualification over a batch of leads and store the verdicts.
  *
  * Exported because the Upwork watcher needs exactly this, one lead at a time,
- * at the moment it releases an alert — a job the model rejects should never
- * reach the New Opportunities panel in the first place.
+ * at the moment it releases an alert — a job the model rejects goes to the
+ * panel's Rejected filter rather than its main list.
+ *
+ * Returns this pass's reviews, so the watcher can tell a job the rate limit
+ * skipped from one qualification never ran on.
  */
 export async function reviewLeads(
   leads: LeadDTO[],
   config: AppConfig,
   log: (msg: string) => void,
-): Promise<void> {
-  if (!config.aiEnabled || !leads.length) return;
+): Promise<Map<string, LeadReview>> {
+  if (!config.aiEnabled || !leads.length) return new Map();
 
   const alreadyDone = leadsAlreadyReviewed(leads.map((l) => l.id));
   const toReview = leads.filter((l) => !alreadyDone.has(l.id));
-  if (!toReview.length) return;
+  if (!toReview.length) return new Map();
 
   // Read the key only when there is actually something to review, so it is
   // never held in memory during the scrape itself.
   const verdicts = await qualifyLeads(toReview, config, getAiApiKey(), log);
-  if (!verdicts.size) return;
 
   const rows: AiReviewToSave[] = [];
   for (const [leadId, verdict] of verdicts) {
+    // A skipped lead is left unchecked, so a pass after the pause reviews it.
+    if (verdict.verdict === 'skipped') continue;
     rows.push({
       leadId,
       verdict: verdict.verdict,
@@ -66,6 +70,7 @@ export async function reviewLeads(
   }
 
   saveAiReviews(rows);
+  return verdicts;
 }
 
 let running = false;

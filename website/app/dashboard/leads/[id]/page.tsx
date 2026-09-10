@@ -172,7 +172,7 @@ export default function LeadDetailPage({
                         </Badge>
                       )}
                       {lead.ai.verdict === 'rejected' && (
-                        <Badge tone="neutral" dot>
+                        <Badge tone="danger" dot>
                           Rejected
                           {lead.ai.score !== null ? ` ${lead.ai.score}` : ''}
                         </Badge>
@@ -238,10 +238,20 @@ export default function LeadDetailPage({
                 <CardHeader>
                   <CardTitle>AI review</CardTitle>
                   <Badge
-                    tone={lead.ai.verdict === 'qualified' ? 'success' : 'neutral'}
+                    tone={
+                      lead.ai.verdict === 'qualified'
+                        ? 'success'
+                        : lead.ai.verdict === 'rejected'
+                          ? 'danger'
+                          : 'warning'
+                    }
                     dot
                   >
-                    {lead.ai.verdict === 'qualified' ? 'Qualified' : 'Rejected'}
+                    {lead.ai.verdict === 'qualified'
+                      ? 'Qualified'
+                      : lead.ai.verdict === 'rejected'
+                        ? 'Rejected'
+                        : 'Check failed'}
                     {lead.ai.score !== null ? ` · ${lead.ai.score}` : ''}
                   </Badge>
                 </CardHeader>

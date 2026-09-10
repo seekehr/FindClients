@@ -1,5 +1,6 @@
 import { configStore, defaultConfig, type StoredConfig } from '../store';
 import { AI_MODELS, DEFAULT_AI_MODEL, type AppConfig } from '../types';
+import { resumeAiReviews } from './ai.service';
 
 /**
  * Your configuration — the one record that decides what gets scraped.
@@ -53,6 +54,12 @@ export function updateConfig(patch: ConfigPatch): AppConfig {
 
   // An empty string is a deliberate "forget my key", not a no-op.
   if (aiApiKey !== undefined) next.aiApiKey = aiApiKey.trim();
+
+  // A new key or model comes with its own quota, so a rate-limit pause
+  // earned by the old one should not hold it back.
+  if (next.aiApiKey !== configStore.data.aiApiKey || next.aiModel !== configStore.data.aiModel) {
+    resumeAiReviews();
+  }
 
   next.updatedAt = new Date().toISOString();
   configStore.data = next;

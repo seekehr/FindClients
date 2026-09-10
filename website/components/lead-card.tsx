@@ -113,7 +113,7 @@ export default function LeadCard({
               </Badge>
             )}
             {ai?.verdict === 'rejected' && (
-              <Badge tone="neutral" dot>
+              <Badge tone="danger" dot>
                 Rejected{ai.score !== null ? ` ${ai.score}` : ''}
               </Badge>
             )}

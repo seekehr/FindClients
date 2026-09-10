@@ -221,7 +221,8 @@ export interface Opportunity {
   alertedTime: string
   /** How long it was deliberately held back. */
   heldForSeconds: number
-  verdict: 'qualified' | 'rejected' | 'error' | null
+  /** 'skipped': went out unreviewed because Gemini's rate limit was reached. */
+  verdict: 'qualified' | 'rejected' | 'error' | 'skipped' | null
   score: number | null
   seen: boolean
 }
@@ -373,12 +374,17 @@ export const watchApi = {
 }
 
 export const opportunitiesApi = {
-  list: (params: { unseen?: boolean; limit?: number } = {}) => {
+  /**
+   * The main feed, or with `rejected` the jobs the AI turned down. `total` and
+   * `unseen` count the main feed only; `rejected` counts the other list.
+   */
+  list: (params: { unseen?: boolean; rejected?: boolean; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.unseen) q.set('unseen', 'true')
+    if (params.rejected) q.set('rejected', 'true')
     if (params.limit !== undefined) q.set('limit', String(params.limit))
     const qs = q.toString()
-    return api<{ data: Opportunity[]; total: number; unseen: number }>(
+    return api<{ data: Opportunity[]; total: number; rejected: number; unseen: number }>(
       `/opportunities${qs ? `?${qs}` : ''}`,
     )
   },

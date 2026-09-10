@@ -488,34 +488,41 @@ async function release(key: string): Promise<void> {
     return;
   }
 
-  await reviewLeads(inserted, config, log);
+  const reviews = await reviewLeads(inserted, config, log);
 
   // Re-read the lead, so the alert carries whatever verdict the review just
   // wrote rather than the blank one `insertLeads` handed back.
   const reviewed = getLead(inserted[0].id) ?? inserted[0];
-
-  if (config.aiEnabled && config.aiAutoArchive && reviewed.ai.verdict === 'rejected') {
-    log(`"${short}" was rejected by AI qualification — not alerting`);
-    return;
-  }
 
   if (!matchesLeadFilters(reviewed, config)) {
     log(`"${short}" did not match your keyword or budget filters`);
     return;
   }
 
+  // The rate limit leaves the lead unchecked, so only this pass's reviews can
+  // tell a skipped job from one qualification never ran on.
+  const skipped = reviews.get(reviewed.id)?.verdict === 'skipped';
+  const rejected = reviewed.ai.verdict === 'rejected';
+
   const opportunity = recordOpportunity({
     platform: PLATFORM,
     lead: reviewed,
     spottedAt: item.spottedAt,
     heldForSeconds: (Date.now() - new Date(item.spottedAt).getTime()) / 1000,
-    verdict: reviewed.ai.verdict,
+    verdict: skipped ? 'skipped' : reviewed.ai.verdict,
     score: reviewed.ai.score,
     client: clientLine(reviewed.metadata),
   });
 
+  // Filed under the panel's Rejected filter, where you can overrule the model.
+  // It is not an alert, so nothing pings you about it.
+  if (rejected) {
+    log(`"${short}" was rejected by AI qualification — filed under Rejected`);
+    return;
+  }
+
   runtime.alerts += 1;
-  log(`new opportunity: "${short}"`);
+  log(`new opportunity: "${short}"` + (skipped ? ' (not AI reviewed — rate limit)' : ''));
 
   if (!config.newLeadsNotification) return;
 
@@ -529,9 +536,10 @@ async function release(key: string): Promise<void> {
   if (config.discordWebhookUrl) {
     const budget = opportunity.budget ? ` — ${opportunity.budget}` : '';
     const link = opportunity.url ? `\n${opportunity.url}` : '';
+    const unreviewed = skipped ? '\n_Not AI reviewed — Gemini rate limit reached_' : '';
     await postToDiscord(
       config.discordWebhookUrl,
-      `**New Upwork opportunity**\n${opportunity.title}${budget}${link}`,
+      `**New Upwork opportunity**\n${opportunity.title}${budget}${link}${unreviewed}`,
     ).catch((err) => logger.warn('Discord webhook failed', (err as Error).message));
   }
 }

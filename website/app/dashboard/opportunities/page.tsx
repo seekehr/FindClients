@@ -68,17 +68,24 @@ export default function OpportunitiesPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<'start' | 'stop' | 'check' | 'clear' | null>(null)
   const [notice, setNotice] = useState('')
+  // Jobs the AI rejected are kept, but only under their own filter.
+  const [showRejected, setShowRejected] = useState(false)
+  const [counts, setCounts] = useState({ total: 0, rejected: 0 })
 
   const load = useCallback(async () => {
     try {
-      const { data } = await opportunitiesApi.list({ limit: 100 })
+      const { data, total, rejected } = await opportunitiesApi.list({
+        limit: 100,
+        rejected: showRejected,
+      })
       setItems(data)
+      setCounts({ total, rejected })
     } catch {
       // The empty state covers it; the status card carries the real diagnosis.
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [showRejected])
 
   // Pull the list the moment the watcher releases an alert, rather than on this
   // page's own timer — the whole promise is that a job shows up without a
@@ -119,6 +126,7 @@ export default function OpportunitiesPage() {
     try {
       await opportunitiesApi.clear()
       setItems([])
+      setCounts({ total: 0, rejected: 0 })
       refreshWatchStatus()
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : 'Could not clear the feed.')
@@ -316,7 +324,7 @@ export default function OpportunitiesPage() {
 
               <div className="flex-1" />
 
-              {items.length > 0 && (
+              {counts.total + counts.rejected > 0 && (
                 <Button
                   variant="ghost"
                   className="text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -334,15 +342,58 @@ export default function OpportunitiesPage() {
         {/* ── The feed ───────────────────────────────────────── */}
         <Card>
           <CardHeader>
-            <CardTitle>Job alerts</CardTitle>
-            <span className="text-xs text-muted-foreground tabular">
-              {unseen > 0 ? `${unseen} unread · ` : ''}
-              {items.length}
-            </span>
+            <div className="flex min-w-0 items-center gap-3">
+              <CardTitle>Job alerts</CardTitle>
+              <span className="text-xs text-muted-foreground tabular">
+                {unseen > 0 ? `${unseen} unread · ` : ''}
+                {counts.total}
+              </span>
+            </div>
+
+            <div
+              role="tablist"
+              aria-label="Filter job alerts"
+              className="flex gap-1 rounded-md border border-border bg-card p-1"
+            >
+              <button
+                role="tab"
+                type="button"
+                aria-selected={!showRejected}
+                onClick={() => setShowRejected(false)}
+                className={cn(
+                  'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out',
+                  !showRejected
+                    ? 'bg-gold-500/12 text-primary'
+                    : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                )}
+              >
+                All
+              </button>
+              <button
+                role="tab"
+                type="button"
+                aria-selected={showRejected}
+                onClick={() => setShowRejected(true)}
+                className={cn(
+                  'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out tabular',
+                  showRejected
+                    ? 'bg-destructive/12 text-destructive'
+                    : 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive',
+                )}
+              >
+                Rejected{counts.rejected > 0 ? ` ${counts.rejected}` : ''}
+              </button>
+            </div>
           </CardHeader>
 
           {loading ? (
             <LoadingRow label="Loading opportunities" />
+          ) : items.length === 0 && showRejected ? (
+            <EmptyState
+              icon={Radio}
+              title="Nothing rejected"
+              description="Jobs the AI turns down are filed here instead of in your feed, and never trigger an alert."
+            />
           ) : items.length === 0 ? (
             <EmptyState
               icon={Radio}

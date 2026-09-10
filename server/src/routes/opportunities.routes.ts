@@ -12,14 +12,15 @@ export const opportunitiesRouter = Router();
 
 const listQuery = z.object({
   unseen: z.coerce.boolean().optional(),
+  rejected: z.coerce.boolean().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
 opportunitiesRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { unseen, limit } = listQuery.parse(req.query);
-    res.json(listOpportunities({ unseenOnly: unseen ?? false, limit }));
+    const { unseen, rejected, limit } = listQuery.parse(req.query);
+    res.json(listOpportunities({ unseenOnly: unseen ?? false, rejected: rejected ?? false, limit }));
   }),
 );
 

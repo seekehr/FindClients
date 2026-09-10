@@ -804,7 +804,7 @@ export default function ConfigPage() {
 
           <SwitchRow
             label="Archive rejected leads"
-            hint="Keeps your inbox to what passed. Rejected leads stay searchable under the Archived filter."
+            hint="Sets rejected leads to Archived. Either way they only show under the Rejected filter."
             checked={config.aiAutoArchive}
             onChange={(aiAutoArchive) => patch({ aiAutoArchive })}
           />

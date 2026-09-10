@@ -18,11 +18,15 @@ import {
 } from '@/lib/use-scrape-status'
 import { cn } from '@/lib/utils'
 
+/** Not a platform: the leads the AI turned down, which no other filter shows. */
+const REJECTED = 'rejected'
+
 const FILTERS: { id: string | null; label: string }[] = [
   { id: null, label: 'All' },
   { id: 'upwork', label: 'Upwork' },
   { id: 'twitter', label: 'Twitter' },
   { id: 'discord', label: 'Discord' },
+  { id: REJECTED, label: 'Rejected' },
 ]
 
 /** Matches the real card's box so the grid does not jump when leads arrive. */
@@ -68,8 +72,10 @@ export default function LeadsPage() {
     setRefreshing(true)
     setError('')
     try {
+      const rejected = selectedPlatform === REJECTED
       const res = await leadsApi.list({
-        platform: selectedPlatform ?? undefined,
+        platform: rejected ? undefined : (selectedPlatform ?? undefined),
+        ai: rejected ? 'rejected' : 'not-rejected',
         q: debounced || undefined,
         limit: 60,
       })
@@ -190,11 +196,12 @@ export default function LeadsPage() {
           {/* Segmented control: one container, one radius, no gaps to drift. */}
           <div
             role="tablist"
-            aria-label="Filter by platform"
+            aria-label="Filter leads"
             className="flex w-full gap-1 overflow-x-auto rounded-md border border-border bg-card p-1 lg:w-auto"
           >
             {FILTERS.map((filter) => {
               const active = selectedPlatform === filter.id
+              const rejected = filter.id === REJECTED
               return (
                 <button
                   key={filter.label}
@@ -204,9 +211,13 @@ export default function LeadsPage() {
                   onClick={() => setSelectedPlatform(filter.id)}
                   className={cn(
                     'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out',
-                    active
-                      ? 'bg-gold-500/12 text-primary'
-                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                    rejected
+                      ? active
+                        ? 'bg-destructive/12 text-destructive'
+                        : 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive'
+                      : active
+                        ? 'bg-gold-500/12 text-primary'
+                        : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
                   )}
                 >
                   {filter.label}
@@ -239,6 +250,12 @@ export default function LeadsPage() {
                     Review your keywords
                   </Button>
                 }
+              />
+            ) : selectedPlatform === REJECTED && !debounced ? (
+              <EmptyState
+                icon={Inbox}
+                title="Nothing rejected"
+                description="Leads the AI turns down land here instead of in your main list."
               />
             ) : filtered ? (
               <EmptyState

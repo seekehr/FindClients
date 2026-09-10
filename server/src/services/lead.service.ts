@@ -36,7 +36,10 @@ export interface ListLeadsParams {
   q?: string;
   status?: string;
   bookmarked?: boolean;
-  /** 'qualified' | 'rejected' | 'unchecked' */
+  /**
+   * 'qualified' | 'rejected' | 'not-rejected' | 'unchecked'. The main Leads
+   * list asks for 'not-rejected', so rejections only show under their filter.
+   */
   ai?: string;
   page?: number;
   limit?: number;
@@ -55,6 +58,7 @@ export function listLeads(params: ListLeadsParams) {
     if (params.ai === 'unchecked' && lead.ai.verdict !== null) return false;
     if (params.ai === 'qualified' && lead.ai.verdict !== 'qualified') return false;
     if (params.ai === 'rejected' && lead.ai.verdict !== 'rejected') return false;
+    if (params.ai === 'not-rejected' && lead.ai.verdict === 'rejected') return false;
 
     if (needle) {
       const haystack = [lead.title, lead.description, lead.author ?? '', lead.tags.join(' ')]

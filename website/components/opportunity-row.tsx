@@ -34,6 +34,9 @@ export default function OpportunityRow({
   ].filter(Boolean)
 
   const href = opportunity.leadId ? `/dashboard/leads/${opportunity.leadId}` : null
+  // Rejections are filed under their own filter, never announced, so they are
+  // never "unread" — including ones stored before that rule existed.
+  const unread = !opportunity.seen && opportunity.verdict !== 'rejected'
 
   const title = (
     <span className={cn('line-clamp-2 font-display font-semibold', compact ? 'text-sm' : 'text-[0.9375rem] leading-5')}>
@@ -45,12 +48,12 @@ export default function OpportunityRow({
     <li
       className={cn(
         'relative flex items-start gap-3 px-5 py-4 transition-colors',
-        !opportunity.seen && 'bg-gold-500/[0.06]',
+        unread && 'bg-gold-500/[0.06]',
       )}
     >
       {/* Unread marker. A rail rather than a dot, so a run of new alerts reads
           as one block at a glance. */}
-      {!opportunity.seen && (
+      {unread && (
         <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary" />
       )}
 
@@ -87,6 +90,16 @@ export default function OpportunityRow({
             {opportunity.verdict === 'qualified' && (
               <Badge tone="success" dot>
                 Qualified{opportunity.score !== null ? ` ${opportunity.score}` : ''}
+              </Badge>
+            )}
+            {opportunity.verdict === 'rejected' && (
+              <Badge tone="danger" dot>
+                Rejected{opportunity.score !== null ? ` ${opportunity.score}` : ''}
+              </Badge>
+            )}
+            {opportunity.verdict === 'skipped' && (
+              <Badge tone="warning" title="Gemini's rate limit was reached, so this job was sent without an AI review.">
+                Not AI reviewed
               </Badge>
             )}
             {opportunity.verdict === 'error' && <Badge tone="warning">AI check failed</Badge>}

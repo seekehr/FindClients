@@ -2,14 +2,14 @@ import crypto from 'node:crypto';
 import { MAX_OPPORTUNITIES, opportunitiesStore } from '../store';
 import { relativeTime } from '../utils/time';
 import { sanitizeText } from '../utils/text';
-import type { AiVerdict, LeadDTO, Opportunity, OpportunityDTO, Platform } from '../types';
+import type { LeadDTO, Opportunity, OpportunityDTO, OpportunityVerdict, Platform } from '../types';
 
 /**
  * The New Opportunities feed.
  *
  * This is the front end of the Upwork watcher: a chronological list of job
  * alerts, each one released after its human delay. It is deliberately thin —
- * no filtering, no pipeline, no statuses. The Leads pages do that work; this is
+ * no pipeline, no statuses, one filter (the AI's rejections). The Leads pages do that work; this is
  * the thing you glance at to see what has come in while you were working.
  */
 
@@ -21,26 +21,44 @@ function toDTO(row: Opportunity): OpportunityDTO {
   };
 }
 
+/**
+ * Jobs the AI rejected are kept, but only under the Rejected filter. They never
+ * appear in the main feed or count toward the unread badge.
+ */
+function isRejected(row: Opportunity): boolean {
+  return row.verdict === 'rejected';
+}
+
+function isUnseen(row: Opportunity): boolean {
+  return !row.seen && !isRejected(row);
+}
+
 export interface ListOpportunitiesParams {
   /** Only the ones you have not looked at yet. */
   unseenOnly?: boolean;
+  /** The AI-rejected jobs instead of the main feed. */
+  rejected?: boolean;
   limit?: number;
 }
 
 export function listOpportunities(params: ListOpportunitiesParams = {}) {
   const limit = Math.min(200, Math.max(1, params.limit ?? 50));
-  const all = opportunitiesStore.data;
-  const rows = params.unseenOnly ? all.filter((o) => !o.seen) : all;
+  const inbox = opportunitiesStore.data.filter((o) => !isRejected(o));
+  const rejected = opportunitiesStore.data.filter(isRejected);
+
+  let rows = params.rejected ? rejected : inbox;
+  if (params.unseenOnly) rows = rows.filter(isUnseen);
 
   return {
     data: rows.slice(0, limit).map(toDTO),
-    total: all.length,
-    unseen: all.filter((o) => !o.seen).length,
+    total: inbox.length,
+    rejected: rejected.length,
+    unseen: inbox.filter(isUnseen).length,
   };
 }
 
 export function unseenOpportunityCount(): number {
-  return opportunitiesStore.data.filter((o) => !o.seen).length;
+  return opportunitiesStore.data.filter(isUnseen).length;
 }
 
 export function markOpportunitySeen(id: string): void {
@@ -82,7 +100,7 @@ export interface RecordOpportunityInput {
   spottedAt: string;
   /** How long it was deliberately held before being released to you. */
   heldForSeconds: number;
-  verdict?: AiVerdict | null;
+  verdict?: OpportunityVerdict | null;
   score?: number | null;
   /** One-line client summary, when the watcher managed to read one. */
   client?: string;
@@ -107,7 +125,8 @@ export function recordOpportunity(input: RecordOpportunityInput): OpportunityDTO
     heldForSeconds: Math.round(input.heldForSeconds),
     verdict: input.verdict ?? null,
     score: input.score ?? null,
-    seen: false,
+    // A rejection is filed, not announced, so there is nothing to mark read.
+    seen: input.verdict === 'rejected',
   };
 
   opportunitiesStore.data.unshift(row);
