@@ -1,176 +1,43 @@
-# FindClients Website
+# website/
 
-This is a SaaS that basically allows you to monitor all leads through scrapping coming from platforms including: Upwork, Twitter, and Discord, and other platforms in the future.
+The FindClients dashboard: Next.js 16, React 19, Tailwind 4. It is a client of the local API in [`../server`](../server) — no accounts, no database of its own. Everything it shows comes from `/api`.
 
-## Components
+## Running it
 
-### 🌐 Website (Frontend)
-The web application used by customers to:
+From the repository root:
 
-- View newly discovered leads
-- Search and filter opportunities
-- Save/bookmark leads
-- Configure scraping preferences
-- Manage subscriptions
-- Receive notifications
-- View analytics and activity
-
----
-
-### 🔐 Authentication Service
-Responsible for:
-
-- User registration
-- Login
-- Password resets
-- Session/JWT management
-- Email verification
-
----
-
-### ⚙️ API Server
-The central backend responsible for:
-
-- User management
-- Authentication
-- Subscription handling
-- Lead management
-- Notifications
-- Billing integration
-- Dashboard data
-- REST API
-
----
-
-### 🕷️ Scraper Workers
-Independent workers that scrape supported platforms.
-
-Examples:
-
-- Upwork Scraper
-- Twitter/X Scraper
-- Discord Scraper
-- Reddit Scraper *(future)*
-- LinkedIn Scraper *(future)*
-- Freelancer Scraper *(future)*
-
-Responsibilities:
-
-- Fetch new posts/jobs
-- Parse data
-- Remove duplicates
-- Push leads into the database
-
----
-
-### ⏰ Scheduler
-Runs scraping jobs on a schedule.
-
-Responsibilities:
-
-- Queue scraping tasks
-- Respect platform rate limits
-- Retry failed jobs
-- Distribute work across workers
-
----
-
-### 📨 Notification Service
-Notifies users when matching leads are found.
-
-Supports:
-
-- Email
-- Discord Webhooks
-- Browser Push
-- Slack *(future)*
-
----
-
-### 💳 Billing Service
-Handles subscriptions.
-
-Responsibilities:
-
-- Payments
-- Subscription plans
-- Invoices
-- Usage limits
-
----
-
-### 🗄️ Database
-Stores:
-
-- Users
-- Leads
-- Saved leads
-- Scraping history
-- Notifications
-- Billing data
-- Settings
-
----
-
-### ⚡ Cache
-Used for:
-
-- Frequently accessed leads
-- Sessions
-- Rate limiting
-- Temporary scraper data
-
----
-
-### 📊 Analytics
-Tracks:
-
-- Leads discovered
-- Platform performance
-- User activity
-- Search trends
-- Conversion metrics
-
----
-
-### 📂 Storage
-Stores:
-
-- User avatars
-- Exported reports
-- Scraper logs
-- Attachments (if applicable)
-
-## Data Flow
-
-```
-Scrapers
-      ↓
- Scheduler
-      ↓
- Processing
-      ↓
- Database
-      ↓
- API Server
-      ↓
- Frontend
-      ↓
- Notifications
+```bash
+npm run dev    # website on :3000, API on :4000, both reloading on save
+npm start      # the server serves the built website and the API on :4000
 ```
 
-## Supported Platforms
+`npm start` builds the website only if there is no build yet, so after changing it either use `npm run dev` or rebuild with `npm run build`.
 
-- Upwork
-- Twitter/X
-- Discord
+Inside this folder: `npm run typecheck` and `npm run lint`.
 
-### Planned
+The API base URL is `NEXT_PUBLIC_API_URL`, defaulting to `/api` (same origin, as under `npm start`). `npm run dev` points it at `http://127.0.0.1:4000/api`.
 
-- Reddit
-- LinkedIn
-- Freelancer
-- PeoplePerHour
-- Fiverr
-- RemoteOK
-- Wellfound (AngelList)
+## Pages
+
+| Route | What |
+| --- | --- |
+| `/` | Redirects to `/dashboard` |
+| `/dashboard` | Overview — stats, latest job alerts, watcher state, latest leads |
+| `/dashboard/opportunities` | New Opportunities — Upwork job alerts, the watcher's status and queue |
+| `/dashboard/leads` | Leads — search, platform filters, and a red **Rejected** filter for leads the AI turned down |
+| `/dashboard/leads/[id]` | One lead, its AI review and its pipeline status |
+| `/dashboard/bookmarks` | Saved leads |
+| `/dashboard/analytics` | Leads over time, by platform, and scrape history |
+| `/dashboard/connections` | Sign in to X and Upwork |
+| `/dashboard/config` | Keywords, scraping, Upwork watcher pacing, AI criteria and key, notifications |
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `app/` | The routes above |
+| `components/` | `lead-card`, `opportunity-row`, `proposals-badge`, the dashboard shell |
+| `components/ui/` | Badges, buttons, cards, fields and other primitives |
+| `lib/api.ts` | Typed client for every API call, and the shapes it returns |
+| `lib/use-scrape-status.ts`, `lib/use-watch-status.ts` | One shared poller each for scrape state and the Upwork watcher, so every component reads the same snapshot |
+| `lib/platforms.ts` | Platform labels and marks |

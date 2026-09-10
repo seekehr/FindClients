@@ -306,6 +306,19 @@ export default function DashboardPage() {
                     </div>
                   ))}
                 </div>
+              ) : recent.length === 0 && (overview?.totalLeads ?? 0) > 0 ? (
+                // There are leads — the AI rejected every one, and rejections
+                // are kept off this list. "Connect an account" would be wrong.
+                <EmptyState
+                  icon={Inbox}
+                  title="Nothing has passed the AI yet"
+                  description="Every lead so far was rejected. They are under the Rejected filter on the Leads page."
+                  action={
+                    <Button variant="outline" render={<Link href="/dashboard/leads" />}>
+                      Browse leads
+                    </Button>
+                  }
+                />
               ) : recent.length === 0 ? (
                 <EmptyState
                   icon={Inbox}

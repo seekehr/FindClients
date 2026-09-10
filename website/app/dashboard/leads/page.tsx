@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Alert, EmptyState } from '@/components/ui/feedback'
 import { Input } from '@/components/ui/field'
 import { PageHeader, PageShell } from '@/components/ui/page'
-import { leadsApi, scrapeApi, type Lead } from '@/lib/api'
+import { connectionsApi, leadsApi, scrapeApi, type Lead } from '@/lib/api'
 import {
   describePlatforms,
   refreshScrapeStatus,
@@ -61,6 +61,21 @@ export default function LeadsPage() {
   const [error, setError] = useState('')
   const [scraping, setScraping] = useState(false)
   const [clearing, setClearing] = useState(false)
+  // Both feed the empty state, so it can tell "nothing connected" apart from
+  // "connected, nothing found yet" and "found some, the AI rejected them all".
+  const [rejectedCount, setRejectedCount] = useState(0)
+  const [connected, setConnected] = useState<string[] | null>(null)
+
+  useEffect(() => {
+    connectionsApi
+      .list()
+      .then((res) =>
+        setConnected(
+          res.connections.filter((c) => c.status !== 'disconnected').map((c) => c.platform),
+        ),
+      )
+      .catch(() => setConnected(null))
+  }, [])
 
   // Debounce the search box.
   useEffect(() => {
@@ -73,13 +88,17 @@ export default function LeadsPage() {
     setError('')
     try {
       const rejected = selectedPlatform === REJECTED
-      const res = await leadsApi.list({
-        platform: rejected ? undefined : (selectedPlatform ?? undefined),
-        ai: rejected ? 'rejected' : 'not-rejected',
-        q: debounced || undefined,
-        limit: 60,
-      })
+      const [res, rejectedRes] = await Promise.all([
+        leadsApi.list({
+          platform: rejected ? undefined : (selectedPlatform ?? undefined),
+          ai: rejected ? 'rejected' : 'not-rejected',
+          q: debounced || undefined,
+          limit: 60,
+        }),
+        leadsApi.list({ ai: 'rejected', limit: 1 }),
+      ])
       setLeads(res.data)
+      setRejectedCount(rejectedRes.pagination.total)
     } catch {
       setError('Could not load leads. Is the FindClients server running?')
     } finally {
@@ -271,6 +290,29 @@ export default function LeadsPage() {
                     }}
                   >
                     Clear filters
+                  </Button>
+                }
+              />
+            ) : rejectedCount > 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title="Nothing has passed the AI yet"
+                description={`${rejectedCount} lead${rejectedCount === 1 ? '' : 's'} did not match your criteria, so ${rejectedCount === 1 ? 'it is' : 'they are'} under the Rejected filter rather than here.`}
+                action={
+                  <Button variant="outline" onClick={() => setSelectedPlatform(REJECTED)}>
+                    Show rejected
+                  </Button>
+                }
+              />
+            ) : connected?.length ? (
+              <EmptyState
+                icon={Inbox}
+                title="No leads yet"
+                description="Your accounts are connected. Run a scrape to search X, and new Upwork jobs land here as the watcher spots them."
+                action={
+                  <Button onClick={runScrape} loading={scraping}>
+                    <RefreshCw className="size-4" />
+                    Scrape now
                   </Button>
                 }
               />

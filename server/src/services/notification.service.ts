@@ -55,11 +55,8 @@ export function createNotification(input: {
 /**
  * Does this lead pass the keyword / budget filters?
  *
- * Split from the platform check below because the Upwork watcher needs exactly
- * this half. A watched platform has already been chosen — you switched the
- * watcher on and gave it a feed URL — so re-testing `config.platforms` there
- * would silently mute every alert the moment Upwork was unticked on the Config
- * page, with nothing in the UI to explain the silence.
+ * Scraped leads only. Upwork alerts skip filtering entirely: the watched feed
+ * is already the user's own Upwork search.
  */
 export function matchesLeadFilters(lead: LeadDTO, config: AppConfig): boolean {
   const haystack = `${lead.title} ${lead.description} ${lead.tags.join(' ')}`.toLowerCase();

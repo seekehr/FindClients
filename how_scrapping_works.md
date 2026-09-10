@@ -34,15 +34,15 @@ runScrapeCycle()                       server/src/scrapers/runner.ts
 
 **Config is passed in, not fetched.** `ScrapeContext.config` carries your settings straight into `scrape()`. This used to be an authenticated HTTP call to the server's own `/api/internal` route — a boundary that existed so a scraper could run on a different machine. Nothing does, so the scraper was making a network round trip to the process it was already inside.
 
-**Eligibility is a signed-in profile.** No profile for a platform, no scrape of it. The profile is a real Chromium user-data directory in `data/browser/<platform>/`, so the scraper starts already logged in rather than replaying injected cookies.
+**Eligibility is a connected account.** A platform you have not signed in to on the Connections page is skipped. The session lives in the Chrome you started with `npm run chrome` (attached over CDP) or, without that, in a real Chromium user-data directory in `data/browser/<platform>/` — either way the scraper starts already logged in rather than replaying injected cookies.
 
-**One process at a time per profile.** Chromium locks the directory, which is why signing in is refused while a scrape is running and vice versa.
+**No sign-in during a scrape.** A launched profile's directory is locked by Chromium while a scrape has it open, so signing in is refused until the scrape finishes.
 
 ## De-duplication
 
-Every lead gets `sha1(platform + (url || title))`. Already in `leads.json` → skipped. Listed in `dismissed.json` → skipped, which is what makes "Clear leads" stick instead of being undone by the next cycle. Bookmarked leads are never cleared.
+Every lead gets `sha1(platform + (url || title))`. Already in `leads.json` → skipped. Listed in `dismissed.json` → skipped, which is what makes "Clear leads" stick instead of being undone by the next cycle. A dismissal lasts 30 days; `POST /api/leads/restore-cleared` forgets them all early. Bookmarked leads are never cleared.
 
-`inserted` (genuinely new) drives notifications. `all` (new *and* already-known) is what the AI pass runs over, so switching qualification on later reviews the backlog rather than only new arrivals.
+`inserted` (genuinely new) drives notifications. `all` (new *and* already-known) is what the AI pass runs over, so switching qualification on later reviews the backlog rather than only new arrivals. Leads skipped because Gemini was rate-limited are left without a verdict for the same reason: the next pass that sees them reviews them.
 
 ## Where each setting comes from
 
@@ -50,7 +50,7 @@ Every lead gets `sha1(platform + (url || title))`. Already in `leads.json` → s
 | --- | --- | --- |
 | What to look for | `data/config.json`, edited on the Config page | keywords, thresholds, limits, Upwork feed URL, AI criteria and key |
 | How this machine runs a browser | root `.env` | headless, user agent, proxies, timeouts, cron |
-| Who you are | `data/browser/<platform>/` | the signed-in Chromium profile itself |
+| Who you are | `data/chrome-profile/` (CDP) or `data/browser/<platform>/` | the signed-in browser profile itself |
 
 Adding a `KEYWORDS` variable to `.env` would do nothing. That split is why.
 
@@ -79,11 +79,13 @@ startWatcher()                        server/src/watcher/index.ts
        ├─ read the tiles on screen
        └─ for each job not already in leads.json or dismissed.json:
             └─ hold it 2-3 minutes (drawn per job, staggered), then:
-                 ├─ optionally click through to that one job for client details
+                 ├─ optionally click through to that one job for client
+                 │  details and the proposal count
                  ├─ insertLeads()  → the same de-duplication as everything else
-                 ├─ AI review, if qualification is on
                  └─ recordOpportunity()  → New Opportunities + Discord
 ```
+
+**Every new job is announced.** There is no AI review and no keyword or budget filter on this path: the feed being watched is already your own Upwork search, so a second screen would only lose jobs and spend Gemini quota.
 
 **The delays are the feature.** [`watcher/random.ts`](server/src/watcher/random.ts) is deliberately not uniform: intervals average two draws so they cluster toward the middle, roughly one in seven is a long break, and every value carries a few seconds of untidiness so no two gaps are the same round number. A perfectly even histogram is its own signature.
 
@@ -95,7 +97,7 @@ startWatcher()                        server/src/watcher/index.ts
 
 **Pausing drops the queue.** Held jobs were never stored, so the next run simply finds them on the feed again. Flushing them on Pause would defeat the pacing.
 
-**One profile, one holder.** The watcher sits on the Upwork tab indefinitely, so signing in or checking that session first suspends it and resumes it afterwards ([connections.routes.ts](server/src/routes/connections.routes.ts)). Only a watcher that was actually running is resumed.
+**One profile, one holder.** The watcher sits on the Upwork tab indefinitely, so an Upwork sign-in, session check or disconnect first suspends it and resumes it afterwards ([connections.routes.ts](server/src/routes/connections.routes.ts)). Only a watcher that was actually running is resumed. Other platforms use their own profile or tab, so signing in to X leaves it running.
 
 **Where it surfaces.** `GET /api/watch` carries the state, the countdown to the next reload and the queue with its per-job countdown; the Opportunities page renders all three, so the pacing is visible instead of being something you have to trust.
 

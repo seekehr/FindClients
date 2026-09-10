@@ -12,7 +12,7 @@ There are **two exported lists**, and which one a platform is in is a decision a
 | `twitter/` | X live-search scraper — keywords, like/view thresholds, age window |
 | `upwork/` | Upwork connector — sign-in, session checks, feed parsing |
 | `upwork/watch.ts` | The Upwork tab: reload, read, occasionally click through to one job |
-| `lib/profile.ts` | Persistent Chromium profiles — one per platform, where sessions live |
+| `lib/profile.ts` | Where sessions live: attaches to your Chrome over CDP, or launches a persistent profile per platform |
 | `lib/local.ts` | Reads `data/config.json` for the standalone tools |
 | `cli.ts` | Standalone runner and `--sign-in`, no app needed |
 
@@ -32,9 +32,13 @@ checkSession()→ same profile, headless, "does this still work?"
 signOut()     → delete the directory
 ```
 
+With `CHROME_CDP_URL` set — the recommended setup — every one of these attaches to the Chrome you started with `npm run chrome` instead and closes only the tabs it opened. `signOut()` refuses there, because that profile is yours, not ours.
+
 There are no cookies anywhere in this design. `ScrapeContext` carries no credential, the server stores none, and nothing has to be re-pasted when a token rotates — a real browser refreshes its own session as it is used.
 
-**One process may hold a profile at a time.** Chromium locks the directory; `openProfile` turns that lock into a readable error, the server refuses to sign in during a scrape, and the Upwork watcher is suspended for the duration of an Upwork sign-in or session check and resumed afterwards. Other platforms have their own profiles, so signing in to them leaves the watcher running. A sign-in is cancelled by closing its tab — the browser itself can stay open.
+**One process may hold a launched profile at a time.** Chromium locks the directory; `openProfile` turns that lock into a readable error, the server refuses to sign in during a scrape, and the Upwork watcher is suspended for the duration of an Upwork sign-in, session check or disconnect and resumed afterwards. Other platforms have their own profiles, so signing in to them leaves the watcher running.
+
+`waitForSignIn()` ends a sign-in once the scraper's own check confirms the session, and cancels it when the sign-in tab is closed — the browser itself can stay open. For X, the `auth_token` cookie counts as signed in, so it does not depend on which page layout X happens to render.
 
 No profile → the scraper logs it and returns `[]`.
 
@@ -63,7 +67,7 @@ export const myWatcher: PlatformWatcher = {
 };
 ```
 
-`WatchTab` is one open page with `poll()` (find the tab, put it on the feed, read it — never paginate), an optional `inspect(url)` for the single click-through before an alert, `isOpen()` and `close()`. Timing is not its business: when to reload and how long to hold a job live in [server/src/watcher/](../server/src/watcher), because they are properties of the whole system rather than of one page.
+`WatchTab` is one open page with `poll()` (find the tab, put it on the feed, read it — never paginate), an optional `inspect(url)` for the single click-through before an alert (client rating, hire rate, proposal count), `isOpen()` and `close()`. Timing is not its business: when to reload and how long to hold a job live in [server/src/watcher/](../server/src/watcher), because they are properties of the whole system rather than of one page.
 
 Every `poll()` re-resolves which tab to use out of `context.pages()`, preferring one already on the feed, then any other `/nx/find-work` page, then anything else on Upwork. It reloads that tab when it is already on the feed and navigates it there when it is not — Upwork redirects `find-work` to the project dashboard often enough that reloading whatever the tab happens to show is how a watcher goes quiet for hours. Tabs it opened itself are closed on `close()`; tabs of yours that it adopted are not.
 
@@ -74,7 +78,7 @@ Every `poll()` re-resolves which tab to use out of `context.pages()`, preferring
 | `interactive` | A person is at the machine — you may open a visible window and wait. |
 | `captchaTimeoutMs` | How long to leave that window open before giving up. |
 
-`RawLead`: `{ title, platform, description, budget?, timeline?, url?, author?, tags?, postedAt? }` — `url` drives de-duplication, so prefer a stable permalink.
+`RawLead`: `{ title, platform, description, budget?, timeline?, url?, author?, tags?, metadata?, postedAt? }` — `url` drives de-duplication, so prefer a stable permalink. `metadata` holds platform-specific facts (for Upwork: client rating, hire rate, spend, country, proposal tier).
 
 Keep scrapers side-effect free (fetch → parse → return, never write anything). Throwing is safe: the server records the failure in `data/runs.json` and the remaining scrapers still run.
 
@@ -91,7 +95,7 @@ poll() → challenge on screen → you solve it → jobs
 
 Set `CAPTCHA_OPEN_WINDOW=false` to skip challenges outright instead of waiting.
 
-Detection is keyword-based on URL + title (`captcha`, `challenge`, `verify`, `robot`, `blocked`), plus a 403/503 on the navigation itself, which is how Cloudflare's "Just a moment..." arrives. Solved means those signals are gone. **Wired into Upwork only** — Twitter has no challenge detection yet.
+Detection is keyword-based on URL + title (`just a moment`, `checking your browser`, `attention required`, `access denied`, `captcha`, `challenge`, `verify`, `robot`, `blocked`), plus Cloudflare's challenge markup and a 403/503 on the navigation itself, which is how Cloudflare's "Just a moment..." arrives. Solved means those signals are gone. **Wired into Upwork only** — Twitter has no challenge detection yet.
 
 ## CLI
 
@@ -120,7 +124,7 @@ Runtime (machine-level) settings only. What to search for lives in `data/config.
 | Var | Default |
 | --- | --- |
 | `UPWORK_HEADLESS` / `X_HEADLESS` | `true` |
-| `UPWORK_USER_AGENT` / `X_USER_AGENT` | Chrome 125 UA |
+| `UPWORK_USER_AGENT` / `X_USER_AGENT` | unset — the browser's own |
 | `UPWORK_REQUEST_DELAY_MS` | `1500` |
 | `UPWORK_DETAIL_TIMEOUT_MS` | `10000` |
 | `X_PROXY_LIST` | — (comma-separated, rotating) |
