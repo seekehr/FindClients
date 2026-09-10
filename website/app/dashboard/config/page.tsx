@@ -47,6 +47,10 @@ import {
   type ConfigPatch,
   type UserConfig,
 } from '@/lib/api'
+import {
+  setDesktopNotifications,
+  useDesktopNotificationState,
+} from '@/lib/desktop-notifications'
 import { isWatchedPlatform, platformLabel, SUPPORTED_PLATFORMS } from '@/lib/platforms'
 import { cn } from '@/lib/utils'
 
@@ -232,6 +236,7 @@ export default function ConfigPage() {
   const [config, setConfig] = useState<UserConfig | null>(null)
   const [platforms, setPlatforms] = useState<string[]>([])
   const [ai, setAi] = useState<AiInfo>({ available: false, models: [] })
+  const [desktop, setDesktop] = useDesktopNotificationState()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -821,9 +826,23 @@ export default function ConfigPage() {
             checked={config.newLeadsNotification}
             onChange={(newLeadsNotification) => patch({ newLeadsNotification })}
           />
+          {/* Per browser, not per config: it takes effect at once, with no Save. */}
+          <SwitchRow
+            label="Desktop notifications"
+            hint={
+              desktop === 'unsupported'
+                ? 'This browser cannot show desktop notifications.'
+                : desktop === 'blocked'
+                  ? 'Blocked for this site in your browser settings — allow notifications for it, then switch this on.'
+                  : 'Pop up new jobs and leads on your desktop while a FindClients tab is open. Applies to this browser only.'
+            }
+            checked={desktop === 'on'}
+            disabled={desktop === 'unsupported' || desktop === 'blocked'}
+            onChange={(on) => void setDesktopNotifications(on).then(setDesktop)}
+          />
           <Field
             label="Discord webhook"
-            hint="Optional. Matching leads get posted to this channel as they are found."
+            hint="Optional. New Upwork jobs and matching leads get posted to this channel — the way to get them on your phone."
             htmlFor="discord-webhook"
           >
             <Input

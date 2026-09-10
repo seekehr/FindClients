@@ -13,7 +13,7 @@ npm start      # the server serves the built website and the API on :4000
 
 `npm start` builds the website only if there is no build yet, so after changing it either use `npm run dev` or rebuild with `npm run build`.
 
-Inside this folder: `npm run typecheck` and `npm run lint`.
+Inside this folder: `npm run typecheck`.
 
 The API base URL is `NEXT_PUBLIC_API_URL`, defaulting to `/api` (same origin, as under `npm start`). `npm run dev` points it at `http://127.0.0.1:4000/api`.
 
@@ -40,4 +40,5 @@ The API base URL is `NEXT_PUBLIC_API_URL`, defaulting to `/api` (same origin, as
 | `components/ui/` | Badges, buttons, cards, fields and other primitives |
 | `lib/api.ts` | Typed client for every API call, and the shapes it returns |
 | `lib/use-scrape-status.ts`, `lib/use-watch-status.ts` | One shared poller each for scrape state and the Upwork watcher, so every component reads the same snapshot |
+| `lib/desktop-notifications.ts` | Pops new notifications up on the desktop while a dashboard tab is open; switched on per browser in Config |
 | `lib/platforms.ts` | Platform labels and marks |

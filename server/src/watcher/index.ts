@@ -502,19 +502,25 @@ async function release(key: string): Promise<void> {
 
   if (!config.newLeadsNotification) return;
 
+  // What decides whether to open it, on one line: the pay and the competition.
+  const facts = [
+    opportunity.budget,
+    opportunity.proposals ? `${opportunity.proposals} proposals` : '',
+  ].filter(Boolean);
+  const factLine = facts.length ? `\n${facts.join(' · ')}` : '';
+
   createNotification({
     type: 'opportunity',
     title: 'New Upwork opportunity',
-    message: opportunity.title,
+    message: `${opportunity.title}${factLine}`,
     leadId: job.id,
   });
 
   if (config.discordWebhookUrl) {
-    const budget = opportunity.budget ? ` — ${opportunity.budget}` : '';
     const link = opportunity.url ? `\n${opportunity.url}` : '';
     await postToDiscord(
       config.discordWebhookUrl,
-      `**New Upwork opportunity**\n${opportunity.title}${budget}${link}`,
+      `**New Upwork opportunity**\n${opportunity.title}${factLine}${link}`,
     ).catch((err) => logger.warn('Discord webhook failed', (err as Error).message));
   }
 }

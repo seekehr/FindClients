@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Wordmark } from '@/components/brand'
 import { notificationsApi, type Notification } from '@/lib/api'
+import { useDesktopNotifications } from '@/lib/desktop-notifications'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
 import { describeWatchState, useWatchStatus } from '@/lib/use-watch-status'
 import { cn } from '@/lib/utils'
@@ -75,6 +76,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unread, setUnread] = useState(0)
+  const [notificationsLoaded, setNotificationsLoaded] = useState(false)
   const pathname = usePathname()
 
   const loadNotifications = useCallback(async () => {
@@ -82,6 +84,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       const { data, unread } = await notificationsApi.list()
       setNotifications(data)
       setUnread(unread)
+      setNotificationsLoaded(true)
     } catch {
       // The app not being up yet is not worth an error in the UI chrome.
     }
@@ -105,6 +108,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     const timer = setInterval(() => void loadNotifications(), POLL_MS)
     return () => clearInterval(timer)
   }, [loadNotifications])
+
+  // Anything new in the feed also pops up on the desktop, if switched on in Config.
+  useDesktopNotifications(notifications, notificationsLoaded)
 
   // Close the mobile drawer on navigation rather than in every link handler.
   useEffect(() => {
@@ -304,7 +310,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                         >
                           <p className="text-sm font-medium">{n.title}</p>
                           {n.message && (
-                            <p className="mt-1 line-clamp-2 text-[0.8125rem] leading-5 text-muted-foreground">
+                            <p className="mt-1 line-clamp-2 text-[0.8125rem] leading-5 whitespace-pre-line text-muted-foreground">
                               {n.message}
                             </p>
                           )}
