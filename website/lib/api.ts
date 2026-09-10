@@ -10,9 +10,12 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api'
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** On a 400, zod's flattened errors: `{ fieldErrors: { field: [message] } }`. */
+  details?: { fieldErrors?: Record<string, string[] | undefined> }
+  constructor(status: number, message: string, details?: ApiError['details']) {
     super(message)
     this.status = status
+    this.details = details
   }
 }
 
@@ -35,7 +38,8 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
 
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new ApiError(res.status, (data as { error?: string })?.error ?? res.statusText)
+    const body = data as { error?: string; details?: ApiError['details'] }
+    throw new ApiError(res.status, body?.error ?? res.statusText, body?.details)
   }
   return data as T
 }

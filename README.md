@@ -6,6 +6,13 @@ Self-hosted lead discovery for freelancers. It watches Upwork for new job postin
 
 It runs **entirely on your own machine**. There is no account, no server to deploy and no database to install — one command starts it, and everything it knows lives in a folder you can delete.
 
+## Preview
+
+<p>
+  <img src="images/preview.png" alt="Preview" width="400">
+  <img src="images/preview_2.png" alt="Preview" width="400">
+</p>
+
 ## Setup
 
 Requires Node 22.5+.

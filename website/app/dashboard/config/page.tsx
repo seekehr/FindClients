@@ -232,11 +232,50 @@ function SubGroup({
 
 // ── Page ─────────────────────────────────────────────────
 
+/** The on-page label for each setting, so a refused save names what to fix. */
+const FIELD_LABELS: Record<string, string> = {
+  platforms: 'Platforms to scrape',
+  keywords: 'Keywords',
+  excludedKeywords: 'Excluded keywords',
+  minBudget: 'Minimum budget',
+  leadsPerRun: 'Leads per run',
+  maxPostAgeHours: 'Max post age',
+  twitterMinLikes: 'Min likes',
+  twitterMinViews: 'Min views',
+  twitterLimitPerKeyword: 'Per keyword',
+  upworkJobsUrl: 'Jobs feed URL',
+  upworkReloadMinMinutes: 'Shortest gap',
+  upworkReloadMaxMinutes: 'Longest gap',
+  upworkAlertDelayMinSeconds: 'Shortest hold',
+  upworkAlertDelayMaxSeconds: 'Longest hold',
+  upworkMaxAgeHours: 'Max job age',
+  aiPrompt: 'What counts as a qualified lead',
+  aiModel: 'Model',
+  aiMinScore: 'Minimum score',
+  aiApiKey: 'Gemini API key',
+  discordWebhookUrl: 'Discord webhook',
+}
+
+function saveErrorMessage(err: unknown): string {
+  if (!(err instanceof ApiError)) return 'Could not save your config'
+  const fields = Object.entries(err.details?.fieldErrors ?? {})
+  if (!fields.length) return err.message
+  return fields
+    .map(([field, messages]) => `${FIELD_LABELS[field] ?? field}: ${messages?.[0] ?? 'invalid'}`)
+    .join(' · ')
+}
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<UserConfig | null>(null)
   const [platforms, setPlatforms] = useState<string[]>([])
   const [ai, setAi] = useState<AiInfo>({ available: false, models: [] })
   const [desktop, setDesktop] = useDesktopNotificationState()
+  /**
+   * The desktop-notifications switch as edited but not yet saved. Kept apart
+   * from `config` because it is stored in this browser, not data/config.json —
+   * but saved with the same button as everything else on the page.
+   */
+  const [desktopDraft, setDesktopDraft] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -272,20 +311,49 @@ export default function ConfigPage() {
 
   function patch(changes: Partial<UserConfig>) {
     setSaved(false)
+    setError('')
     setConfig((prev) => (prev ? { ...prev, ...changes } : prev))
   }
 
   const keyDirty = apiKeyDraft.trim() !== '' || clearApiKey
-  const dirty =
+  // A saved key needs no box to type in — only a way to remove it. Removing
+  // brings the box back, so a replacement can go in before saving.
+  const keyInputShown = !config?.aiApiKeySet || clearApiKey
+  const configDirty =
     !!config &&
     !!baseline.current &&
     (JSON.stringify(config) !== JSON.stringify(baseline.current) || keyDirty)
+  const desktopOn = desktop === 'on'
+  const desktopDirty = desktopDraft !== null && desktopDraft !== desktopOn
+  const dirty = configDirty || desktopDirty
 
   async function save() {
     if (!config) return
     setSaving(true)
     setError('')
     try {
+      // First, before anything is awaited: browsers only show the permission
+      // prompt in direct response to a click, and this is still the click.
+      let refused = false
+      if (desktopDirty) {
+        const wanted = desktopDraft === true
+        const result = await setDesktopNotifications(wanted)
+        setDesktop(result)
+        setDesktopDraft(null)
+        if (wanted && result !== 'on') {
+          refused = true
+          setError(
+            result === 'blocked'
+              ? 'Desktop notifications: blocked for this site in your browser settings'
+              : 'Desktop notifications: the browser did not grant permission',
+          )
+        }
+      }
+      if (!configDirty) {
+        if (!refused) setSaved(true)
+        return
+      }
+
       // aiApiKeySet / aiApiKeyHint are server-derived views of the stored key,
       // so they are dropped rather than sent back.
       const { updatedAt, aiApiKeySet, aiApiKeyHint, ...body } = config
@@ -302,9 +370,7 @@ export default function ConfigPage() {
       setAi((prev) => ({ ...prev, available: fresh.aiApiKeySet }))
       setSaved(true)
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Could not save your config',
-      )
+      setError(saveErrorMessage(err))
     } finally {
       setSaving(false)
     }
@@ -312,6 +378,7 @@ export default function ConfigPage() {
 
   function reset() {
     if (baseline.current) setConfig(baseline.current)
+    setDesktopDraft(null)
     setApiKeyDraft('')
     setClearApiKey(false)
     setShowApiKey(false)
@@ -660,9 +727,9 @@ export default function ConfigPage() {
         >
           {/* The key comes first: nothing else in this section works without it. */}
           <div className="space-y-2">
-            <Label htmlFor="gemini-api-key">Gemini API key</Label>
+            <Label htmlFor={keyInputShown ? 'gemini-api-key' : undefined}>Gemini API key</Label>
 
-            {config.aiApiKeySet && !clearApiKey && !apiKeyDraft && (
+            {!keyInputShown && (
               <div className="flex items-center justify-between gap-3 rounded-md border border-success/25 bg-success/8 px-3 py-2">
                 <span className="text-[0.8125rem] text-graphite-300">
                   A key is saved{' '}
@@ -686,11 +753,17 @@ export default function ConfigPage() {
             {clearApiKey && (
               <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
                 <span className="text-[0.8125rem] text-graphite-200">
-                  Your key will be deleted when you save.
+                  {apiKeyDraft.trim()
+                    ? 'Your key will be replaced when you save.'
+                    : 'Your key will be deleted when you save.'}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setClearApiKey(false)}
+                  onClick={() => {
+                    setClearApiKey(false)
+                    setApiKeyDraft('')
+                    setShowApiKey(false)
+                  }}
                   className="rounded-sm text-[0.8125rem] font-medium transition-opacity hover:opacity-70"
                 >
                   Undo
@@ -698,41 +771,41 @@ export default function ConfigPage() {
               </div>
             )}
 
-            <div className="relative">
-              <Input
-                id="gemini-api-key"
-                type={showApiKey ? 'text' : 'password'}
-                value={apiKeyDraft}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={
-                  config.aiApiKeySet && !clearApiKey
-                    ? 'Enter a new key to replace it'
-                    : 'AIza…'
-                }
-                onChange={(e) => {
-                  setApiKeyDraft(e.target.value)
-                  setSaved(false)
-                }}
-                className="pr-10 font-mono text-xs"
-              />
-              <button
-                type="button"
-                aria-label={showApiKey ? 'Hide the key' : 'Show the key'}
-                onClick={() => setShowApiKey((v) => !v)}
-                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-md text-graphite-500 transition-colors hover:text-foreground"
-              >
-                {showApiKey ? (
-                  <EyeOff className="size-4" />
-                ) : (
-                  <Eye className="size-4" />
-                )}
-              </button>
-            </div>
+            {keyInputShown && (
+              <div className="relative">
+                <Input
+                  id="gemini-api-key"
+                  type={showApiKey ? 'text' : 'password'}
+                  value={apiKeyDraft}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="AIza…"
+                  onChange={(e) => {
+                    setApiKeyDraft(e.target.value)
+                    setSaved(false)
+                    setError('')
+                  }}
+                  className="pr-10 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  aria-label={showApiKey ? 'Hide the key' : 'Show the key'}
+                  onClick={() => setShowApiKey((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-md text-graphite-500 transition-colors hover:text-foreground"
+                >
+                  {showApiKey ? (
+                    <EyeOff className="size-4" />
+                  ) : (
+                    <Eye className="size-4" />
+                  )}
+                </button>
+              </div>
+            )}
 
             <Hint>
               Your own key — reviews are billed to your Google account, not ours.
-              Stored encrypted and never shown again after you save.{' '}
+              Kept on this machine in data/config.json and never shown again after
+              you save.{' '}
               <a
                 href={GEMINI_KEY_URL}
                 target="_blank"
@@ -826,7 +899,8 @@ export default function ConfigPage() {
             checked={config.newLeadsNotification}
             onChange={(newLeadsNotification) => patch({ newLeadsNotification })}
           />
-          {/* Per browser, not per config: it takes effect at once, with no Save. */}
+          {/* Stored in this browser rather than config.json, but saved with the
+              same button — Save is also the click the permission prompt needs. */}
           <SwitchRow
             label="Desktop notifications"
             hint={
@@ -834,11 +908,15 @@ export default function ConfigPage() {
                 ? 'This browser cannot show desktop notifications.'
                 : desktop === 'blocked'
                   ? 'Blocked for this site in your browser settings — allow notifications for it, then switch this on.'
-                  : 'Pop up new jobs and leads on your desktop while a FindClients tab is open. Applies to this browser only.'
+                  : 'Pop up new jobs and leads on your desktop while a FindClients tab is open. Applies to this browser only; your browser asks for permission when you save.'
             }
-            checked={desktop === 'on'}
+            checked={desktopDraft ?? desktopOn}
             disabled={desktop === 'unsupported' || desktop === 'blocked'}
-            onChange={(on) => void setDesktopNotifications(on).then(setDesktop)}
+            onChange={(on) => {
+              setSaved(false)
+              setError('')
+              setDesktopDraft(on)
+            }}
           />
           <Field
             label="Discord webhook"
@@ -864,8 +942,15 @@ export default function ConfigPage() {
       {/* Sticky save bar — the page is long, so the action follows you down it. */}
       <div className="sticky bottom-0 z-10 border-t border-border bg-background/90 backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-3 sm:px-6">
-          <div className="flex-1 text-[0.8125rem]">
-            {dirty ? (
+          <div className="min-w-0 flex-1 text-[0.8125rem]">
+            {/* Here, not only at the top of the page: this bar is where you
+                are looking when you press Save. */}
+            {error ? (
+              <span className="inline-flex items-start gap-2 font-medium text-destructive" role="alert">
+                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />
+                <span>Not saved — {error}</span>
+              </span>
+            ) : dirty ? (
               <span className="inline-flex items-center gap-2 text-muted-foreground">
                 <span
                   className="size-1.5 rounded-full bg-warning"
