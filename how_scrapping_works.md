@@ -71,7 +71,7 @@ What runs instead lives in [server/src/watcher/](server/src/watcher) and [scrapp
 
 ```
 startWatcher()                        server/src/watcher/index.ts
-  └─ every 5-10 minutes (redrawn each time, sometimes much longer):
+  └─ every 10-15 minutes, never under 10 (redrawn each time, sometimes much longer):
        ├─ find the Upwork tab           scrapper/upwork/watch.ts
        │    ├─ already on the feed?     → reload it
        │    ├─ on Upwork, wrong page?   → send it to the feed

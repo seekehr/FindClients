@@ -649,23 +649,24 @@ export default function ConfigPage() {
               <NumberField
                 label="Shortest gap (minutes)"
                 value={config.upworkReloadMinMinutes}
-                min={2}
+                min={10}
                 max={120}
                 onChange={(upworkReloadMinMinutes) => patch({ upworkReloadMinMinutes })}
               />
               <NumberField
                 label="Longest gap (minutes)"
                 value={config.upworkReloadMaxMinutes}
-                min={2}
+                min={10}
                 max={240}
                 onChange={(upworkReloadMaxMinutes) => patch({ upworkReloadMaxMinutes })}
               />
             </div>
             <Hint>
               A fresh interval is drawn between these two before every reload, and
-              now and then it takes a longer break. Five to ten minutes is a
-              person keeping half an eye on the feed; every two minutes, forever,
-              is not, and that regularity is what gets noticed.
+              now and then it takes a longer break. Ten minutes is the floor: a
+              tab reloading more often than that, all day, stops looking like a
+              person keeping half an eye on the feed, and that regularity is what
+              gets noticed.
             </Hint>
           </SubGroup>
 

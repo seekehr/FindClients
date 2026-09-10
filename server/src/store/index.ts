@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { JsonFile, registerForFlush, flushAll } from './json-file';
 import {
   DEFAULT_AI_MODEL,
+  UPWORK_RELOAD_FLOOR_MINUTES,
   type AppConfig,
   type Lead,
   type Notification,
@@ -89,8 +90,8 @@ export function defaultConfig(): StoredConfig {
     upworkJobsUrl: 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
     upworkFetchDetails: true,
     upworkMaxAgeHours: 5,
-    upworkReloadMinMinutes: 5,
-    upworkReloadMaxMinutes: 10,
+    upworkReloadMinMinutes: UPWORK_RELOAD_FLOOR_MINUTES,
+    upworkReloadMaxMinutes: 15,
     upworkAlertDelayMinSeconds: 120,
     upworkAlertDelayMaxSeconds: 180,
 
@@ -120,6 +121,22 @@ export const configStore = registerForFlush(
   new JsonFile<StoredConfig>(file('config.json'), defaultConfig),
 );
 configStore.data = { ...defaultConfig(), ...configStore.data };
+
+// A file saved before the reload floor existed can still say "every 5
+// minutes". Raise it rather than honour it — the floor is the point. The
+// window moves up with it: 5–10 clamped to 10–10 would be a fixed interval,
+// which is its own giveaway.
+{
+  const c = configStore.data;
+  if (c.upworkReloadMinMinutes < UPWORK_RELOAD_FLOOR_MINUTES) {
+    c.upworkReloadMinMinutes = UPWORK_RELOAD_FLOOR_MINUTES;
+    c.upworkReloadMaxMinutes = Math.max(
+      c.upworkReloadMaxMinutes,
+      defaultConfig().upworkReloadMaxMinutes,
+    );
+  }
+  c.upworkReloadMaxMinutes = Math.max(c.upworkReloadMinMinutes, c.upworkReloadMaxMinutes);
+}
 
 export const leadsStore = registerForFlush(new JsonFile<Lead[]>(file('leads.json'), () => []));
 

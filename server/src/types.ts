@@ -41,6 +41,13 @@ export type AiModel = (typeof AI_MODELS)[number];
 export const DEFAULT_AI_MODEL: AiModel = 'gemini-3.8-flash';
 
 /**
+ * The shortest the Upwork tab may ever go between reloads, in minutes. Every
+ * reload is one more data point in a pattern Upwork can see, and below ten
+ * minutes a tab that stays open all day stops looking like a person.
+ */
+export const UPWORK_RELOAD_FLOOR_MINUTES = 10;
+
+/**
  * Platform-specific facts a scraper collected about a lead, beyond the fields
  * every platform shares. Free-form on purpose: an Upwork job has a client hire
  * rate, a tweet has view counts, and neither should force a field on the other.

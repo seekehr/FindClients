@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/http';
 import { getConfig, resetConfig, updateConfig } from '../services/config.service';
-import { AI_MODELS, PLATFORMS } from '../types';
+import { AI_MODELS, PLATFORMS, UPWORK_RELOAD_FLOOR_MINUTES } from '../types';
 import { syncWatcherWithConfig } from '../watcher';
 
 export const configRouter = Router();
@@ -38,12 +38,12 @@ const patchSchema = z
     upworkFetchDetails: z.boolean(),
     upworkMaxAgeHours: z.number().int().min(1).max(720),
     /**
-     * The reload window, in minutes. The floor of 2 is not arbitrary: a tab
-     * that refreshes every thirty seconds is not a person leaving a page open,
-     * it is a poller, and it is exactly what gets an Upwork account flagged.
+     * The reload window, in minutes. The floor is not arbitrary: a tab that
+     * refreshes every few minutes, all day, is not a person leaving a page
+     * open, it is a poller, and it is exactly what gets an Upwork account flagged.
      */
-    upworkReloadMinMinutes: z.number().int().min(2).max(120),
-    upworkReloadMaxMinutes: z.number().int().min(2).max(240),
+    upworkReloadMinMinutes: z.number().int().min(UPWORK_RELOAD_FLOOR_MINUTES).max(120),
+    upworkReloadMaxMinutes: z.number().int().min(UPWORK_RELOAD_FLOOR_MINUTES).max(240),
     /**
      * How long a spotted job is held before you hear about it. The floor of 30
      * seconds keeps the point of the feature intact — replying to a listing

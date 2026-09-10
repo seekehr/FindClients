@@ -81,8 +81,8 @@ function configFromCli(file: CliConfig): AppConfig {
       uw.jobsUrl ?? 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
     upworkFetchDetails: uw.fetchDetails ?? false,
     upworkMaxAgeHours: uw.maxAgeHours ?? 5,
-    upworkReloadMinMinutes: 5,
-    upworkReloadMaxMinutes: 10,
+    upworkReloadMinMinutes: 10,
+    upworkReloadMaxMinutes: 15,
     upworkAlertDelayMinSeconds: 120,
     upworkAlertDelayMaxSeconds: 180,
     // The CLI never qualifies: it prints what the scrapers found. Reviewing

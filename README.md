@@ -2,7 +2,7 @@
 
 Self-hosted lead discovery for freelancers. It watches Upwork for new job postings and scrapes X/Twitter for people who are hiring, optionally screens the X finds with Google Gemini, and puts it all in a dashboard.
 
-**Upwork is watched, never scraped.** Paging through the Upwork feed pulling every listing breaks its terms of service and is the quickest way to lose the account. Instead FindClients keeps one tab open on the feed you already use, reloads that single page every 5–10 minutes, and tells you about a new job 2–3 minutes after it appears, randomly, per job. Those alerts land in **New Opportunities**. There is no setting that turns bulk Upwork collection on.
+**Upwork is watched, never scraped.** Paging through the Upwork feed pulling every listing breaks its terms of service and is the quickest way to lose the account. Instead FindClients keeps one tab open on the feed you already use, reloads that single page every 10–15 minutes (never more often than every 10), and tells you about a new job 2–3 minutes after it appears, randomly, per job. Those alerts land in **New Opportunities**. There is no setting that turns bulk Upwork collection on.
 
 It runs **entirely on your own machine**. There is no account, no server to deploy and no database to install — one command starts it, and everything it knows lives in a folder you can delete.
 

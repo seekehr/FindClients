@@ -24,7 +24,7 @@ import type { LeadMetadata } from '../types';
  * accounts that do it get banned.
  *
  * The watcher does not visit. It leaves one tab open on the feed you already
- * use, reloads that single page every five to ten minutes, and reads what came
+ * use, reloads that single page every ten to fifteen minutes, and reads what came
  * back. It never pages, never asks for more than the first screen, and never
  * opens a job it was not already shown. When something new appears it waits two
  * or three minutes — drawn fresh for each job — before telling you, because an
