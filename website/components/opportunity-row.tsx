@@ -97,11 +97,6 @@ export default function OpportunityRow({
                 Rejected{opportunity.score !== null ? ` ${opportunity.score}` : ''}
               </Badge>
             )}
-            {opportunity.verdict === 'skipped' && (
-              <Badge tone="warning" title="Gemini's rate limit was reached, so this job was sent without an AI review.">
-                Not AI reviewed
-              </Badge>
-            )}
             {opportunity.verdict === 'error' && <Badge tone="warning">AI check failed</Badge>}
             {opportunity.tags.slice(0, 3).map((tag) => (
               <Badge key={tag} tone="neutral">

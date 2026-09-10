@@ -4,13 +4,8 @@ import { loadWatcher } from '../scrapers/loader';
 import { browserStatus, invalidateBrowserStatus } from '../services/browser.service';
 import { getConfig } from '../services/config.service';
 import { isConnected, markError, markUsed } from '../services/connection.service';
-import { getLead, insertLeads, isLeadKnown } from '../services/lead.service';
-import { reviewLeads } from '../scrapers/runner';
-import {
-  createNotification,
-  matchesLeadFilters,
-  postToDiscord,
-} from '../services/notification.service';
+import { insertLeads, isLeadKnown } from '../services/lead.service';
+import { createNotification, postToDiscord } from '../services/notification.service';
 import { recordOpportunity } from '../services/opportunity.service';
 import { alertDelayMs, nextReloadDelayMs, staggerMs } from './random';
 import type { RawLead, WatchTab } from '../scrapers/types';
@@ -462,6 +457,10 @@ function clientLine(metadata: LeadMetadata | undefined): string {
  * Enrichment happens here rather than at spotting time on purpose. Opening a
  * listing a couple of minutes after noticing it is what a person does, and it
  * keeps the reload itself down to one page load.
+ *
+ * Every new job is announced. There is no AI review and no keyword or budget
+ * filter here: the feed being watched is already the user's own Upwork search,
+ * tuned to them, so a second screen only loses jobs and spends Gemini quota.
  */
 async function release(key: string): Promise<void> {
   const item = runtime.queue.get(key);
@@ -488,41 +487,18 @@ async function release(key: string): Promise<void> {
     return;
   }
 
-  const reviews = await reviewLeads(inserted, config, log);
-
-  // Re-read the lead, so the alert carries whatever verdict the review just
-  // wrote rather than the blank one `insertLeads` handed back.
-  const reviewed = getLead(inserted[0].id) ?? inserted[0];
-
-  if (!matchesLeadFilters(reviewed, config)) {
-    log(`"${short}" did not match your keyword or budget filters`);
-    return;
-  }
-
-  // The rate limit leaves the lead unchecked, so only this pass's reviews can
-  // tell a skipped job from one qualification never ran on.
-  const skipped = reviews.get(reviewed.id)?.verdict === 'skipped';
-  const rejected = reviewed.ai.verdict === 'rejected';
+  const job = inserted[0];
 
   const opportunity = recordOpportunity({
     platform: PLATFORM,
-    lead: reviewed,
+    lead: job,
     spottedAt: item.spottedAt,
     heldForSeconds: (Date.now() - new Date(item.spottedAt).getTime()) / 1000,
-    verdict: skipped ? 'skipped' : reviewed.ai.verdict,
-    score: reviewed.ai.score,
-    client: clientLine(reviewed.metadata),
+    client: clientLine(job.metadata),
   });
 
-  // Filed under the panel's Rejected filter, where you can overrule the model.
-  // It is not an alert, so nothing pings you about it.
-  if (rejected) {
-    log(`"${short}" was rejected by AI qualification — filed under Rejected`);
-    return;
-  }
-
   runtime.alerts += 1;
-  log(`new opportunity: "${short}"` + (skipped ? ' (not AI reviewed — rate limit)' : ''));
+  log(`new opportunity: "${short}"`);
 
   if (!config.newLeadsNotification) return;
 
@@ -530,16 +506,15 @@ async function release(key: string): Promise<void> {
     type: 'opportunity',
     title: 'New Upwork opportunity',
     message: opportunity.title,
-    leadId: reviewed.id,
+    leadId: job.id,
   });
 
   if (config.discordWebhookUrl) {
     const budget = opportunity.budget ? ` — ${opportunity.budget}` : '';
     const link = opportunity.url ? `\n${opportunity.url}` : '';
-    const unreviewed = skipped ? '\n_Not AI reviewed — Gemini rate limit reached_' : '';
     await postToDiscord(
       config.discordWebhookUrl,
-      `**New Upwork opportunity**\n${opportunity.title}${budget}${link}${unreviewed}`,
+      `**New Upwork opportunity**\n${opportunity.title}${budget}${link}`,
     ).catch((err) => logger.warn('Discord webhook failed', (err as Error).message));
   }
 }

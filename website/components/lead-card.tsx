@@ -27,6 +27,25 @@ interface LeadCardProps {
   onToggleBookmark?: () => void
 }
 
+/**
+ * Every lead says where it stands with the AI, so an untagged lead can never be
+ * mistaken for one that passed. Upwork is the exception: its alerts are not
+ * reviewed by design, so "not reviewed" would sit on every one of them.
+ */
+export function AiVerdictBadge({ ai, platform }: { ai?: LeadAiReview; platform: string }) {
+  const score = ai?.score !== null && ai?.score !== undefined ? ` ${ai.score}` : ''
+  switch (ai?.verdict) {
+    case 'qualified':
+      return <Badge tone="success" dot>Qualified{score}</Badge>
+    case 'rejected':
+      return <Badge tone="danger" dot>Rejected{score}</Badge>
+    case 'error':
+      return <Badge tone="warning">AI check failed</Badge>
+    default:
+      return platform === 'upwork' ? null : <Badge tone="warning">Not AI reviewed</Badge>
+  }
+}
+
 export default function LeadCard({
   id,
   title,
@@ -99,7 +118,7 @@ export default function LeadCard({
           {description}
         </p>
 
-        {(facts.length > 0 || tags.length > 0 || ai?.verdict) && (
+        {(facts.length > 0 || tags.length > 0 || ai?.verdict || platform !== 'upwork') && (
           <div className="mt-4 flex flex-wrap items-center gap-1.5">
             {facts.map((fact) => (
               <Badge key={fact.label} tone="outline">
@@ -107,16 +126,7 @@ export default function LeadCard({
                 <span className="text-graphite-200 tabular">{fact.value}</span>
               </Badge>
             ))}
-            {ai?.verdict === 'qualified' && (
-              <Badge tone="success" dot>
-                Qualified{ai.score !== null ? ` ${ai.score}` : ''}
-              </Badge>
-            )}
-            {ai?.verdict === 'rejected' && (
-              <Badge tone="danger" dot>
-                Rejected{ai.score !== null ? ` ${ai.score}` : ''}
-              </Badge>
-            )}
+            <AiVerdictBadge ai={ai} platform={platform} />
             {tags.slice(0, 2).map((tag) => (
               <Badge key={tag} tone="neutral">
                 {tag}

@@ -68,7 +68,8 @@ export default function OpportunitiesPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<'start' | 'stop' | 'check' | 'clear' | null>(null)
   const [notice, setNotice] = useState('')
-  // Jobs the AI rejected are kept, but only under their own filter.
+  // Jobs the AI rejected are kept, but only under their own filter. New alerts
+  // are not reviewed any more, so the filter only appears while old ones exist.
   const [showRejected, setShowRejected] = useState(false)
   const [counts, setCounts] = useState({ total: 0, rejected: 0 })
 
@@ -350,40 +351,42 @@ export default function OpportunitiesPage() {
               </span>
             </div>
 
-            <div
-              role="tablist"
-              aria-label="Filter job alerts"
-              className="flex gap-1 rounded-md border border-border bg-card p-1"
-            >
-              <button
-                role="tab"
-                type="button"
-                aria-selected={!showRejected}
-                onClick={() => setShowRejected(false)}
-                className={cn(
-                  'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out',
-                  !showRejected
-                    ? 'bg-gold-500/12 text-primary'
-                    : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
-                )}
+            {(counts.rejected > 0 || showRejected) && (
+              <div
+                role="tablist"
+                aria-label="Filter job alerts"
+                className="flex gap-1 rounded-md border border-border bg-card p-1"
               >
-                All
-              </button>
-              <button
-                role="tab"
-                type="button"
-                aria-selected={showRejected}
-                onClick={() => setShowRejected(true)}
-                className={cn(
-                  'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out tabular',
-                  showRejected
-                    ? 'bg-destructive/12 text-destructive'
-                    : 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive',
-                )}
-              >
-                Rejected{counts.rejected > 0 ? ` ${counts.rejected}` : ''}
-              </button>
-            </div>
+                <button
+                  role="tab"
+                  type="button"
+                  aria-selected={!showRejected}
+                  onClick={() => setShowRejected(false)}
+                  className={cn(
+                    'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out',
+                    !showRejected
+                      ? 'bg-gold-500/12 text-primary'
+                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                  )}
+                >
+                  All
+                </button>
+                <button
+                  role="tab"
+                  type="button"
+                  aria-selected={showRejected}
+                  onClick={() => setShowRejected(true)}
+                  className={cn(
+                    'h-7 shrink-0 rounded-sm px-3 text-[0.8125rem] font-medium transition-colors duration-150 ease-out tabular',
+                    showRejected
+                      ? 'bg-destructive/12 text-destructive'
+                      : 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive',
+                  )}
+                >
+                  Rejected{counts.rejected > 0 ? ` ${counts.rejected}` : ''}
+                </button>
+              </div>
+            )}
           </CardHeader>
 
           {loading ? (
@@ -392,7 +395,7 @@ export default function OpportunitiesPage() {
             <EmptyState
               icon={Radio}
               title="Nothing rejected"
-              description="Jobs the AI turns down are filed here instead of in your feed, and never trigger an alert."
+              description="Jobs the AI turned down before Upwork alerts stopped being reviewed."
             />
           ) : items.length === 0 ? (
             <EmptyState

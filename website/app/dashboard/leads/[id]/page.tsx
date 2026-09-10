@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { use, useEffect, useState } from 'react'
 
 import DashboardLayout from '@/components/dashboard-layout'
+import { AiVerdictBadge } from '@/components/lead-card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -165,18 +166,7 @@ export default function LeadDetailPage({
                       <span className="text-[0.8125rem] text-muted-foreground">
                         Posted {lead.postedTime}
                       </span>
-                      {lead.ai.verdict === 'qualified' && (
-                        <Badge tone="success" dot>
-                          Qualified
-                          {lead.ai.score !== null ? ` ${lead.ai.score}` : ''}
-                        </Badge>
-                      )}
-                      {lead.ai.verdict === 'rejected' && (
-                        <Badge tone="danger" dot>
-                          Rejected
-                          {lead.ai.score !== null ? ` ${lead.ai.score}` : ''}
-                        </Badge>
-                      )}
+                      <AiVerdictBadge ai={lead.ai} platform={lead.platform} />
                     </div>
                     <h1 className="mt-2 font-display text-2xl leading-8 font-semibold tracking-[-0.02em]">
                       {lead.title}

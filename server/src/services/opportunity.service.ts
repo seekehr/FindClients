@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { MAX_OPPORTUNITIES, opportunitiesStore } from '../store';
 import { relativeTime } from '../utils/time';
 import { sanitizeText } from '../utils/text';
-import type { LeadDTO, Opportunity, OpportunityDTO, OpportunityVerdict, Platform } from '../types';
+import type { AiVerdict, LeadDTO, Opportunity, OpportunityDTO, Platform } from '../types';
 
 /**
  * The New Opportunities feed.
@@ -100,7 +100,7 @@ export interface RecordOpportunityInput {
   spottedAt: string;
   /** How long it was deliberately held before being released to you. */
   heldForSeconds: number;
-  verdict?: OpportunityVerdict | null;
+  verdict?: AiVerdict | null;
   score?: number | null;
   /** One-line client summary, when the watcher managed to read one. */
   client?: string;

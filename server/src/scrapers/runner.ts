@@ -5,7 +5,7 @@ import {
   saveAiReviews,
   type AiReviewToSave,
 } from '../services/lead.service';
-import { qualifyLeads, type LeadReview } from '../services/ai.service';
+import { qualifyLeads } from '../services/ai.service';
 import { notifyNewLeads } from '../services/notification.service';
 import { finishRun, startRun } from '../services/analytics.service';
 import { getAiApiKey, getConfig } from '../services/config.service';
@@ -33,23 +33,19 @@ import type { Scraper } from './types';
 /**
  * Run AI qualification over a batch of leads and store the verdicts.
  *
- * Exported because the Upwork watcher needs exactly this, one lead at a time,
- * at the moment it releases an alert — a job the model rejects goes to the
- * panel's Rejected filter rather than its main list.
- *
- * Returns this pass's reviews, so the watcher can tell a job the rate limit
- * skipped from one qualification never ran on.
+ * Scraped leads only. Upwork alerts skip it: the watched feed is already the
+ * user's own tuned search.
  */
-export async function reviewLeads(
+async function reviewLeads(
   leads: LeadDTO[],
   config: AppConfig,
   log: (msg: string) => void,
-): Promise<Map<string, LeadReview>> {
-  if (!config.aiEnabled || !leads.length) return new Map();
+): Promise<void> {
+  if (!config.aiEnabled || !leads.length) return;
 
   const alreadyDone = leadsAlreadyReviewed(leads.map((l) => l.id));
   const toReview = leads.filter((l) => !alreadyDone.has(l.id));
-  if (!toReview.length) return new Map();
+  if (!toReview.length) return;
 
   // Read the key only when there is actually something to review, so it is
   // never held in memory during the scrape itself.
@@ -70,7 +66,6 @@ export async function reviewLeads(
   }
 
   saveAiReviews(rows);
-  return verdicts;
 }
 
 let running = false;

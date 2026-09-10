@@ -221,8 +221,8 @@ export interface Opportunity {
   alertedTime: string
   /** How long it was deliberately held back. */
   heldForSeconds: number
-  /** 'skipped': went out unreviewed because Gemini's rate limit was reached. */
-  verdict: 'qualified' | 'rejected' | 'error' | 'skipped' | null
+  /** Null for new alerts: Upwork jobs are not AI-reviewed. Older alerts keep theirs. */
+  verdict: 'qualified' | 'rejected' | 'error' | null
   score: number | null
   seen: boolean
 }

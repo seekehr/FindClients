@@ -51,13 +51,6 @@ export type LeadMetadata = Record<string, string | number | boolean | null>;
 
 export type AiVerdict = 'qualified' | 'rejected' | 'error';
 
-/**
- * What an alert says about its AI review. `skipped` means Gemini's rate limit
- * was hit, so the job went out unreviewed. It is never stored on a lead: the
- * lead stays unchecked, which lets a later pass review it.
- */
-export type OpportunityVerdict = AiVerdict | 'skipped';
-
 export interface LeadAiReview {
   verdict: AiVerdict | null;
   /** 0–100 confidence that the lead is worth your time. */
@@ -231,8 +224,11 @@ export interface Opportunity {
   alertedAt: string;
   /** How long it was held back, in seconds — shown so the pacing is visible. */
   heldForSeconds: number;
-  /** AI verdict at the moment of alerting, when qualification is on. */
-  verdict: OpportunityVerdict | null;
+  /**
+   * AI verdict at the moment of alerting. Always null for new alerts — Upwork
+   * jobs are no longer reviewed — but alerts stored before that keep theirs.
+   */
+  verdict: AiVerdict | null;
   score: number | null;
   seen: boolean;
 }
