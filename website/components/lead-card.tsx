@@ -3,12 +3,13 @@
 import { Bookmark, BookmarkCheck, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
+import { ProposalsBadge, proposalsTier } from '@/components/proposals-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { PlatformMark } from '@/components/ui/platform-mark'
 import { platformMeta } from '@/lib/platforms'
-import type { LeadAiReview } from '@/lib/api'
+import type { LeadAiReview, LeadMetadata } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface LeadCardProps {
@@ -24,6 +25,7 @@ interface LeadCardProps {
   postedTime: string
   tags: string[]
   ai?: LeadAiReview
+  metadata?: LeadMetadata
   onToggleBookmark?: () => void
 }
 
@@ -58,9 +60,11 @@ export default function LeadCard({
   postedTime,
   tags,
   ai,
+  metadata,
   onToggleBookmark,
 }: LeadCardProps) {
   const meta = platformMeta(platform)
+  const proposals = platform === 'upwork' ? proposalsTier(metadata?.proposals) : ''
   const facts = [
     budget ? { label: 'Budget', value: budget } : null,
     timeline ? { label: 'Timeline', value: timeline } : null,
@@ -118,8 +122,10 @@ export default function LeadCard({
           {description}
         </p>
 
-        {(facts.length > 0 || tags.length > 0 || ai?.verdict || platform !== 'upwork') && (
+        {(facts.length > 0 || tags.length > 0 || ai?.verdict || platform !== 'upwork' || proposals) && (
           <div className="mt-4 flex flex-wrap items-center gap-1.5">
+            {/* First: how crowded the job already is. */}
+            <ProposalsBadge value={proposals} />
             {facts.map((fact) => (
               <Badge key={fact.label} tone="outline">
                 <span className="text-muted-foreground">{fact.label}</span>

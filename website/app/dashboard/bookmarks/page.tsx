@@ -74,6 +74,7 @@ export default function BookmarksPage() {
                 postedTime={lead.postedTime}
                 tags={lead.tags}
                 ai={lead.ai}
+                metadata={lead.metadata}
                 bookmarked
                 onToggleBookmark={() => removeBookmark(lead.id)}
               />

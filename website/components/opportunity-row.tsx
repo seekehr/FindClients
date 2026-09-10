@@ -3,6 +3,7 @@
 import { ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
+import { ProposalsBadge } from '@/components/proposals-badge'
 import { Badge } from '@/components/ui/badge'
 import { PlatformMark } from '@/components/ui/platform-mark'
 import type { Opportunity } from '@/lib/api'
@@ -74,11 +75,16 @@ export default function OpportunityRow({
             )}
           </div>
 
-          {opportunity.budget && (
-            <span className="shrink-0 text-[0.8125rem] font-medium text-graphite-200 tabular">
-              {opportunity.budget}
-            </span>
-          )}
+          {/* Proposals up here, beside the budget, in both sizes: how crowded a
+              job already is decides whether it is worth opening at all. */}
+          <div className="flex shrink-0 items-center gap-2">
+            <ProposalsBadge value={opportunity.proposals} />
+            {opportunity.budget && (
+              <span className="text-[0.8125rem] font-medium text-graphite-200 tabular">
+                {opportunity.budget}
+              </span>
+            )}
+          </div>
         </div>
 
         <p className="mt-1 truncate text-[0.8125rem] leading-5 text-muted-foreground">

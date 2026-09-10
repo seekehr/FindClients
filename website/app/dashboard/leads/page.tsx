@@ -308,6 +308,7 @@ export default function LeadsPage() {
                 postedTime={lead.postedTime}
                 tags={lead.tags}
                 ai={lead.ai}
+                metadata={lead.metadata}
                 bookmarked={lead.bookmarked}
                 onToggleBookmark={() => toggleBookmark(lead)}
               />

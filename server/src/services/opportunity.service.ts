@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { MAX_OPPORTUNITIES, opportunitiesStore } from '../store';
+import { getLead } from './lead.service';
 import { relativeTime } from '../utils/time';
 import { sanitizeText } from '../utils/text';
 import type { AiVerdict, LeadDTO, Opportunity, OpportunityDTO, Platform } from '../types';
@@ -16,6 +17,10 @@ import type { AiVerdict, LeadDTO, Opportunity, OpportunityDTO, Platform } from '
 function toDTO(row: Opportunity): OpportunityDTO {
   return {
     ...row,
+    // Alerts stored before the tier was snapshotted borrow it from their lead.
+    proposals:
+      row.proposals ??
+      String((row.leadId && getLead(row.leadId)?.metadata?.proposals) || ''),
     alertedTime: relativeTime(row.alertedAt),
     postedTime: relativeTime(row.postedAt),
   };
@@ -118,6 +123,7 @@ export function recordOpportunity(input: RecordOpportunityInput): OpportunityDTO
     url: lead.url,
     budget: lead.budget,
     client: sanitizeText(input.client ?? ''),
+    proposals: sanitizeText(String(lead.metadata?.proposals ?? '')),
     tags: lead.tags.slice(0, 6),
     postedAt: lead.postedAt,
     spottedAt: input.spottedAt,

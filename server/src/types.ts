@@ -215,6 +215,11 @@ export interface Opportunity {
   budget: string | null;
   /** Short client summary — rating, hire rate, spend — as the watcher saw it. */
   client: string;
+  /**
+   * Upwork's proposal tier ("Less than 5", "5 to 10", …) — how much competition
+   * there is. '' when unknown; missing on alerts stored before it was kept.
+   */
+  proposals?: string;
   tags: string[];
   /** When the job went up on the platform. */
   postedAt: string;

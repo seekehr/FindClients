@@ -211,6 +211,8 @@ export interface Opportunity {
   budget: string | null
   /** "4.9★ · 92% hire rate · $40k spent · United States", when known. */
   client: string
+  /** Upwork's proposal tier, e.g. "Less than 5". Missing on older alerts. */
+  proposals?: string
   tags: string[]
   postedAt: string
   postedTime: string

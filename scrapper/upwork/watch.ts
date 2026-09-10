@@ -255,6 +255,8 @@ class UpworkWatchTab implements WatchTab {
       const meta: LeadMetadata = {};
       if (detail.clientRating) meta.clientRating = detail.clientRating;
       if (detail.clientHireRate) meta.clientHireRate = detail.clientHireRate;
+      // Fresher than the tile's, which was read minutes ago when it was spotted.
+      if (detail.proposals) meta.proposals = detail.proposals;
       return Object.keys(meta).length ? meta : null;
     } catch (err) {
       this.opts.log(`could not read that job's page: ${(err as Error).message}`);

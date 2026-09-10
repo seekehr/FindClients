@@ -139,6 +139,14 @@ export async function parseJobTile(section: ElementHandle): Promise<UpworkJob> {
   };
 }
 
+/**
+ * "Proposals: Less than 5" → "Less than 5". The tile and the job page both
+ * label it, sometimes across a line break; the app wants just the tier.
+ */
+export function proposalsTier(text: string): string {
+  return text.replace(/\s+/g, ' ').replace(/^proposals:\s*/i, '').trim();
+}
+
 /** Every fact about the client, in the shape the app stores and renders. */
 export function clientMetadata(job: UpworkJob): LeadMetadata {
   const meta: LeadMetadata = {};
@@ -147,7 +155,7 @@ export function clientMetadata(job: UpworkJob): LeadMetadata {
   if (job.clientMoneySpent) meta.clientSpent = job.clientMoneySpent;
   if (job.paymentVerified) meta.paymentVerified = job.paymentVerified;
   if (job.clientCountry) meta.clientCountry = job.clientCountry;
-  if (job.proposals) meta.proposals = job.proposals;
+  if (proposalsTier(job.proposals)) meta.proposals = proposalsTier(job.proposals);
   if (job.rate) meta.jobType = job.rate;
   return meta;
 }
@@ -266,14 +274,14 @@ export async function waitForCaptchaSolved(
   return false;
 }
 
-/** Visit a job's detail page to enrich client rating + hire rate. */
+/** Visit a job's detail page to enrich client rating, hire rate and proposal count. */
 export async function readJobDetail(
   page: Page,
   url: string,
   cfg: UpworkRuntimeConfig,
   log: (m: string) => void,
-): Promise<{ clientRating: string; clientHireRate: string }> {
-  const result = { clientRating: '', clientHireRate: '' };
+): Promise<{ clientRating: string; clientHireRate: string; proposals: string }> {
+  const result = { clientRating: '', clientHireRate: '', proposals: '' };
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await page.waitForSelector('text=/hire rate/i', { timeout: cfg.detailTimeoutMs });
@@ -303,6 +311,10 @@ export async function readJobDetail(
   const body = await page.innerText('body').catch(() => '');
   const hire = body.match(/\d+%\s+hire rate/i);
   if (hire) result.clientHireRate = hire[0].trim();
+
+  // "Activity on this job" — the label and the tier sit on separate lines.
+  const proposals = body.match(/Proposals:\s*([^\n]+)/i);
+  if (proposals) result.proposals = proposalsTier(proposals[1]);
 
   return result;
 }

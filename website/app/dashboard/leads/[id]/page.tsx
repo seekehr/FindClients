@@ -12,6 +12,7 @@ import { use, useEffect, useState } from 'react'
 
 import DashboardLayout from '@/components/dashboard-layout'
 import { AiVerdictBadge } from '@/components/lead-card'
+import { ProposalsBadge, proposalsTier } from '@/components/proposals-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -166,6 +167,9 @@ export default function LeadDetailPage({
                       <span className="text-[0.8125rem] text-muted-foreground">
                         Posted {lead.postedTime}
                       </span>
+                      {lead.platform === 'upwork' && (
+                        <ProposalsBadge value={lead.metadata?.proposals} />
+                      )}
                       <AiVerdictBadge ai={lead.ai} platform={lead.platform} />
                     </div>
                     <h1 className="mt-2 font-display text-2xl leading-8 font-semibold tracking-[-0.02em]">
@@ -199,7 +203,15 @@ export default function LeadDetailPage({
 
                 <div className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-surface-raised p-4 sm:grid-cols-3">
                   <Fact label="Budget" value={lead.budget || '—'} />
-                  <Fact label="Timeline" value={lead.timeline || '—'} />
+                  {/* Upwork jobs have no timeline; their proposal count matters more. */}
+                  {lead.platform === 'upwork' ? (
+                    <Fact
+                      label="Proposals"
+                      value={proposalsTier(lead.metadata?.proposals) || '—'}
+                    />
+                  ) : (
+                    <Fact label="Timeline" value={lead.timeline || '—'} />
+                  )}
                   <Fact label="Found" value={lead.postedTime} />
                 </div>
               </CardContent>
