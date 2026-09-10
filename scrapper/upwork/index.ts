@@ -434,6 +434,7 @@ export const upworkScraper: Scraper = {
       await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       return await waitForSignIn(
         session,
+        page,
         () => isSignedIn(page),
         () => confirmSignedIn(page),
         timeoutMs,

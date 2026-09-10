@@ -174,7 +174,9 @@ export default function ConnectionsPage() {
           >
             <p>{signIn?.message}</p>
             <p className="mt-1">
-              Take as long as you need. Close the window to cancel.
+              Take as long as you need — this notices on its own once you are
+              in. Close the sign-in tab to cancel; the rest of the browser can
+              stay open.
             </p>
           </Alert>
         )}

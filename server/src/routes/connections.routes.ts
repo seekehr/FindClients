@@ -21,6 +21,15 @@ function platformParam(value: string) {
 }
 
 /**
+ * Pause the watcher only when it would actually collide: it holds the Upwork
+ * profile, and nothing else. X lives in its own profile — or, attached to your
+ * Chrome, in its own tab — so signing in to X must not cost you Upwork alerts.
+ */
+function suspendWatcherFor(platform: string): Promise<boolean> {
+  return platform === 'upwork' ? suspendWatcher() : Promise.resolve(false);
+}
+
+/**
  * Take the browser profile off the Upwork watcher for the duration of `fn`.
  *
  * Only one process may hold a Chromium profile open. The watcher sits on the
@@ -33,8 +42,8 @@ function platformParam(value: string) {
  * an hour ago should not find alerts switched back on because they re-checked
  * a session.
  */
-async function withProfile<T>(fn: () => Promise<T>): Promise<T> {
-  const paused = await suspendWatcher();
+async function withProfile<T>(platform: string, fn: () => Promise<T>): Promise<T> {
+  const paused = await suspendWatcherFor(platform);
   try {
     return await fn();
   } finally {
@@ -77,7 +86,7 @@ connectionsRouter.post(
     // Not `withProfile`: the window stays open for as long as the person needs
     // it, so the profile goes back from sign-in's own completion callback
     // rather than when this request returns a moment from now.
-    const paused = await suspendWatcher();
+    const paused = await suspendWatcherFor(platform);
     try {
       startSignIn(platform, () => {
         if (paused) resumeWatcher('sign-in finished');
@@ -111,7 +120,7 @@ connectionsRouter.post(
       return;
     }
 
-    const session = await withProfile(() => checkConnection(platform));
+    const session = await withProfile(platform, () => checkConnection(platform));
     res.json({ session, connections: listConnections() });
   }),
 );
@@ -120,7 +129,7 @@ connectionsRouter.delete(
   '/:platform',
   asyncHandler(async (req, res) => {
     const platform = platformParam(req.params.platform);
-    await withProfile(() => disconnect(platform));
+    await withProfile(platform, () => disconnect(platform));
     res.json({ ok: true, connections: listConnections() });
   }),
 );

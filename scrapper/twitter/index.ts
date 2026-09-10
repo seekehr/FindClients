@@ -306,11 +306,36 @@ const HOME_URL = 'https://x.com/home';
  */
 async function confirmSignedIn(page: Page): Promise<boolean> {
   await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await page.waitForTimeout(2000);
+
+  // X is a slow single-page app: domcontentloaded is an empty shell, and the
+  // navigation renders whenever it gets to it. Wait for it rather than for a
+  // fixed two seconds — a signed-out visitor is bounced to the login flow
+  // long before this gives up.
+  const app = page.locator(SIGNED_IN_MARKERS).first();
+  await app.waitFor({ state: 'attached', timeout: 15_000 }).catch(() => undefined);
+
   if (!(await isSignedIn(page))) return false;
-  // The account switcher only renders for a real session — belt and braces
-  // against X parking a signed-out visitor on a /home-shaped URL.
-  return (await page.locator('[data-testid="SideNav_AccountSwitcher_Button"]').count()) > 0;
+  if ((await app.count()) > 0) return true;
+  // The navigation depends on the window's width — a narrow one gets the
+  // mobile layout. On /home with a session cookie is signed in, whatever drew.
+  return hasAuthCookie(page);
+}
+
+/**
+ * Only rendered for a real session — belt and braces against X parking a
+ * signed-out visitor on a /home-shaped URL. Several, because which one draws
+ * depends on the window's width.
+ */
+const SIGNED_IN_MARKERS = [
+  '[data-testid="SideNav_AccountSwitcher_Button"]',
+  '[data-testid="AppTabBar_Profile_Link"]',
+  '[data-testid="SideNav_NewTweet_Button"]',
+].join(', ');
+
+/** X sets `auth_token` when a login succeeds, and only then. */
+async function hasAuthCookie(page: Page): Promise<boolean> {
+  const cookies = await page.context().cookies('https://x.com');
+  return cookies.some((cookie) => cookie.name === 'auth_token' && cookie.value !== '');
 }
 
 /**
@@ -362,7 +387,10 @@ export const twitterScraper: Scraper = {
       await page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       return await waitForSignIn(
         session,
-        () => isSignedIn(page),
+        page,
+        // The cookie is there the moment the login goes through, whatever page
+        // X decides to show next, so it catches a sign-in the URL alone misses.
+        async () => (await isSignedIn(page)) || (await hasAuthCookie(page)),
         () => confirmSignedIn(page),
         timeoutMs,
         log,

@@ -225,18 +225,25 @@ const CONFIRM_COOLDOWN_MS = 15_000;
  * moment, so a URL match can fire before the person has typed their password.
  * That saves a profile that is not really signed in, reports success, and the
  * next scrape quietly lands on a login page. Only `confirm` may end the wait.
+ *
+ * Closing the sign-in tab cancels, not just closing the browser. When we are
+ * attached to your own Chrome, that window is also running the Upwork watcher,
+ * and "close the window to cancel" would mean killing it.
  */
 export async function waitForSignIn(
   session: BrowserSession,
+  page: Page,
   looksSignedIn: () => Promise<boolean>,
   confirm: () => Promise<boolean>,
   timeoutMs: number,
   log: (msg: string) => void,
 ): Promise<boolean> {
   let closed = false;
-  session.context.once('close', () => {
+  const onClose = () => {
     closed = true;
-  });
+  };
+  session.context.once('close', onClose);
+  page.once('close', onClose);
 
   const deadline = Date.now() + timeoutMs;
   const minutes = Math.round(timeoutMs / 60_000);
@@ -246,8 +253,8 @@ export async function waitForSignIn(
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
-    if (closed) {
-      log('the browser window was closed before sign-in completed');
+    if (closed || page.isClosed()) {
+      log('the sign-in tab was closed before sign-in completed');
       return false;
     }
 

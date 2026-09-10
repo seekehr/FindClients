@@ -146,23 +146,15 @@ export default function OpportunitiesPage() {
           title="New Opportunities"
           description="Upwork jobs, spotted by a tab left open on your feed and passed to you after a short, random pause."
           actions={
-            <>
-              {unseen > 0 && (
-                <Button variant="ghost" onClick={markAllSeen}>
-                  <CheckCheck className="size-4" />
-                  Mark all read
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => control('check')}
-                loading={busy === 'check'}
-                disabled={alertsOff || !watcher?.running}
-              >
-                <RefreshCw className="size-4" />
-                Check now
-              </Button>
-            </>
+            <Button
+              variant="outline"
+              onClick={() => control('check')}
+              loading={busy === 'check'}
+              disabled={alertsOff || !watcher?.running}
+            >
+              <RefreshCw className="size-4" />
+              Check now
+            </Button>
           }
         />
 
@@ -349,6 +341,17 @@ export default function OpportunitiesPage() {
                 {unseen > 0 ? `${unseen} unread · ` : ''}
                 {counts.total}
               </span>
+              {unseen > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs text-muted-foreground"
+                  onClick={markAllSeen}
+                >
+                  <CheckCheck className="size-3.5" />
+                  Mark all read
+                </Button>
+              )}
             </div>
 
             {(counts.rejected > 0 || showRejected) && (

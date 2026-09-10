@@ -34,7 +34,7 @@ signOut()     → delete the directory
 
 There are no cookies anywhere in this design. `ScrapeContext` carries no credential, the server stores none, and nothing has to be re-pasted when a token rotates — a real browser refreshes its own session as it is used.
 
-**One process may hold a profile at a time.** Chromium locks the directory; `openProfile` turns that lock into a readable error, the server refuses to sign in during a scrape, and the Upwork watcher is suspended for the duration of a sign-in or session check and resumed afterwards.
+**One process may hold a profile at a time.** Chromium locks the directory; `openProfile` turns that lock into a readable error, the server refuses to sign in during a scrape, and the Upwork watcher is suspended for the duration of an Upwork sign-in or session check and resumed afterwards. Other platforms have their own profiles, so signing in to them leaves the watcher running. A sign-in is cancelled by closing its tab — the browser itself can stay open.
 
 No profile → the scraper logs it and returns `[]`.
 
