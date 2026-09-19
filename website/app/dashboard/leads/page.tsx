@@ -130,12 +130,20 @@ export default function LeadsPage() {
     }
   }
 
+  // Clearing keeps the leads you have acted on, so reload rather than blanking
+  // the list — bookmarked, contacted and won leads are still there.
   async function clearAllLeads() {
-    if (!confirm('Clear all leads? This cannot be undone.')) return
+    if (
+      !confirm(
+        'Clear the leads you have not acted on? Bookmarked, contacted and won ' +
+          'leads are kept. This cannot be undone.',
+      )
+    )
+      return
     setClearing(true)
     try {
       await leadsApi.clear()
-      setLeads([])
+      await load()
     } catch {
       setError('Could not clear leads.')
     } finally {

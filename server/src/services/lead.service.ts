@@ -279,10 +279,25 @@ export function saveAiReviews(reviews: AiReviewToSave[]): void {
 }
 
 /**
- * Clear every lead except bookmarks.
+ * A lead you have acted on, rather than one the scrapers merely found.
  *
- * Their source hashes are remembered so the next scrape does not simply find
- * the same posts and put them all back.
+ * Bookmarking, replying, or closing a deal are all things *you* did; opening a
+ * lead ('viewed') or letting the AI file it away ('archived') are not.
+ */
+function isWorked(lead: Lead): boolean {
+  return lead.bookmarked || lead.status === 'contacted' || lead.status === 'won';
+}
+
+/**
+ * Clear the leads you have not acted on.
+ *
+ * Bookmarked, contacted and won leads stay. "Clear all" is for emptying the
+ * feed of posts you are done reading, not for erasing your own pipeline — and
+ * the dashboard's Contacted count and reply-to-win rate are computed from
+ * these same records, so dropping them would silently zero your history.
+ *
+ * The source hashes of the ones that do go are remembered, so the next scrape
+ * does not simply find the same posts and put them all back.
  */
 export function clearLeads(): number {
   const keep: Lead[] = [];
@@ -290,7 +305,7 @@ export function clearLeads(): number {
   const dismissed = new Map(dismissedStore.data.map((d) => [d.hash, d]));
 
   for (const lead of leadsStore.data) {
-    if (lead.bookmarked) keep.push(lead);
+    if (isWorked(lead)) keep.push(lead);
     else dismissed.set(lead.sourceHash, { hash: lead.sourceHash, at: now });
   }
 
