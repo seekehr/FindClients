@@ -38,6 +38,27 @@ function isUnseen(row: Opportunity): boolean {
   return !row.seen && !isRejected(row);
 }
 
+/** A job alert older than this is gone from the feed. */
+const OPPORTUNITY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Drop alerts for jobs posted more than a day ago.
+ *
+ * Aged by the job's posted time, not when it was alerted: a day-old Upwork job
+ * is past the point of being worth a first proposal whenever it reached you.
+ * Pruned on read, like the dismissal list, so there is no timer to keep alive.
+ * Like the Clear button, only the alert rows go — the leads stay.
+ */
+function pruneStaleOpportunities(): void {
+  const cutoff = Date.now() - OPPORTUNITY_TTL_MS;
+  const live = opportunitiesStore.data.filter((o) => {
+    const at = new Date(o.postedAt ?? o.alertedAt).getTime();
+    return !Number.isFinite(at) || at > cutoff;
+  });
+  // Assigning `.data` saves.
+  if (live.length !== opportunitiesStore.data.length) opportunitiesStore.data = live;
+}
+
 export interface ListOpportunitiesParams {
   /** Only the ones you have not looked at yet. */
   unseenOnly?: boolean;
@@ -47,6 +68,7 @@ export interface ListOpportunitiesParams {
 }
 
 export function listOpportunities(params: ListOpportunitiesParams = {}) {
+  pruneStaleOpportunities();
   const limit = Math.min(200, Math.max(1, params.limit ?? 50));
   const inbox = opportunitiesStore.data.filter((o) => !isRejected(o));
   const rejected = opportunitiesStore.data.filter(isRejected);
@@ -63,6 +85,7 @@ export function listOpportunities(params: ListOpportunitiesParams = {}) {
 }
 
 export function unseenOpportunityCount(): number {
+  pruneStaleOpportunities();
   return opportunitiesStore.data.filter(isUnseen).length;
 }
 
