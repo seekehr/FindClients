@@ -130,7 +130,32 @@ function activeDismissals(): Set<string> {
 export function isLeadKnown(platform: string, url: string | null | undefined, title: string): boolean {
   const hash = sourceHash(platform, url, title);
   if (leadsStore.data.some((lead) => lead.sourceHash === hash)) return true;
-  return activeDismissals().has(hash);
+  if (activeDismissals().has(hash)) return true;
+  const jobId = upworkJobId(platform, url);
+  return !!jobId && upworkJobIds().has(jobId);
+}
+
+/**
+ * An Upwork job's "~02…" id, taken from its URL.
+ *
+ * The same job can reach us under two URLs — the tile's slugged link, or a
+ * bare `/jobs/~02…` built from the page's data when its tile had not rendered
+ * — and the URL-based hash would call those two different leads. The id is the
+ * part both share.
+ */
+function upworkJobId(platform: string, url: string | null | undefined): string {
+  if (platform !== 'upwork' || !url) return '';
+  const m = url.match(/~0[0-9a-z]{6,}/i);
+  return m ? m[0].toLowerCase() : '';
+}
+
+function upworkJobIds(): Map<string, Lead> {
+  const ids = new Map<string, Lead>();
+  for (const lead of leadsStore.data) {
+    const id = upworkJobId(lead.platform, lead.url);
+    if (id) ids.set(id, lead);
+  }
+  return ids;
 }
 
 export interface InsertLeadsResult {
@@ -161,6 +186,7 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
   const now = new Date().toISOString();
   const byHash = new Map(leadsStore.data.map((lead) => [lead.sourceHash, lead]));
   const dismissed = activeDismissals();
+  const byJobId = upworkJobIds();
 
   const inserted: Lead[] = [];
   const all: Lead[] = [];
@@ -180,7 +206,8 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
       continue;
     }
 
-    const existing = byHash.get(hash);
+    const jobId = upworkJobId(r.platform, r.url);
+    const existing = byHash.get(hash) ?? (jobId ? byJobId.get(jobId) : undefined);
     if (existing) {
       all.push(existing);
       continue;
@@ -216,6 +243,7 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
 
     leadsStore.data.push(lead);
     byHash.set(hash, lead);
+    if (jobId) byJobId.set(jobId, lead);
     inserted.push(lead);
     all.push(lead);
   }

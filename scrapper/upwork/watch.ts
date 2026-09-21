@@ -227,7 +227,7 @@ class UpworkWatchTab implements WatchTab {
     }
     await sleep(AFTER_RELOAD_MS);
 
-    const jobs = await readFeed(page);
+    const jobs = await readFeed(page, this.opts.log);
     return { leads: jobs.map(jobToLead) };
   }
 

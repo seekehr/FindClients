@@ -38,6 +38,10 @@ export interface UpworkJob {
   clientRating: string;
   clientHireRate: string;
   skills: string[];
+  /** Upwork's job id ("~02…"), when known. What the feed readers merge on. */
+  id?: string;
+  /** Exact publish time from the page's own data, when it had one. */
+  postedAt?: string;
 }
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -172,7 +176,10 @@ export function jobToLead(job: UpworkJob): RawLead {
   const description =
     job.description + (clientBits.length ? `\n\nClient: ${clientBits.join(' · ')}` : '');
 
-  const posted = postedDate(job.posted);
+  // "Posted 55 minutes ago" is only accurate to the unit; the store's publish
+  // time is exact, so it wins whenever the feed reader found one.
+  const exact = job.postedAt ? new Date(job.postedAt) : null;
+  const posted = exact && Number.isFinite(exact.getTime()) ? exact : postedDate(job.posted);
 
   return {
     title: job.title,
@@ -321,7 +328,13 @@ export async function readJobDetail(
 
 /** Wait for the feed to hydrate, nudging the SPA a few times if needed. */
 export async function waitForFeed(page: Page, log: (m: string) => void): Promise<boolean> {
-  const selectors = ['section.air3-card-section', '[data-test="job-tile"]', '.job-tile-title'];
+  const selectors = [
+    'section[data-ev-opening_uid]',
+    '[data-test="job-tile-list"] section',
+    'section.air3-card-section',
+    '[data-test="job-tile"]',
+    '.job-tile-title',
+  ];
   for (let attempt = 0; attempt < 3; attempt += 1) {
     for (const sel of selectors) {
       try {
@@ -348,16 +361,349 @@ export async function waitForFeed(page: Page, log: (m: string) => void): Promise
   return false;
 }
 
-/** Read every job tile currently rendered on the feed. Never loads more. */
-export async function readFeed(page: Page): Promise<UpworkJob[]> {
-  const jobs: UpworkJob[] = [];
-  const seen = new Set<string>();
+// ── Reading the feed ──────────────────────────────────────────
+//
+// The feed is read three independent ways and the results merged by job id,
+// so a markup change or a half-rendered list costs at most one of them:
+//
+//  1. Page data. Upwork's Nuxt store holds the feed as structured JSON — every
+//     job the page loaded, with an exact publish time, whether or not its tile
+//     has been drawn yet.
+//  2. Tiles. The rendered cards, found by several selectors.
+//  3. Title links. Any `/jobs/…~0…` link on the page, for when neither of the
+//     above recognises the page any more.
+//
+// All three read what the page already has. None of them loads more.
+//
+// The in-page code is plain JavaScript strings rather than functions: tsx
+// compiles functions with a `__name` helper that does not exist in the page,
+// and Playwright would ship that reference across verbatim.
 
-  for (const section of await page.$$('section.air3-card-section')) {
-    const job = await parseJobTile(section);
-    if (!job.title || !job.url || seen.has(job.url)) continue;
-    seen.add(job.url);
-    jobs.push(job);
+/**
+ * A job's id: the "~02…" token in its URL, which the store calls `ciphertext`.
+ * Not interchangeable with the store's numeric `uid` — "~022102…" is uid
+ * 2102…, with a prefix that is not just "~0" — so everything merges on this.
+ */
+export function upworkJobId(value: string | null | undefined): string {
+  const m = value?.match(/~0[0-9a-z]{6,}/i);
+  return m ? m[0].toLowerCase() : '';
+}
+
+interface StoreJob {
+  id: string;
+  ciphertext: string;
+  title: string;
+  description: string;
+  type: number | null;
+  amount: number | null;
+  hourlyMin: number | null;
+  hourlyMax: number | null;
+  publishedOn: string;
+  proposalsTier: string;
+  skills: string[];
+  clientSpent: number | null;
+  paymentVerified: number | null;
+  clientCountry: string;
+  clientFeedback: number | null;
+  clientReviews: number | null;
+}
+
+interface TileJob extends Omit<UpworkJob, 'id' | 'postedAt'> {
+  id: string;
+}
+
+/**
+ * Strategy 1: the store. Picks the feed that matches the page being watched,
+ * then any store module holding job-shaped rows, so a saved search or a feed
+ * Upwork renames still reads.
+ */
+const READ_STORE_JS = `(() => {
+  const roots = [];
+  try { if (window.$nuxt && window.$nuxt.$store) roots.push(window.$nuxt.$store.state); } catch (e) {}
+  try { if (window.__NUXT__ && window.__NUXT__.state) roots.push(window.__NUXT__.state); } catch (e) {}
+  const path = location.pathname.toLowerCase();
+  const preferred =
+    path.includes('most-recent') ? 'feedMostRecent' :
+    path.includes('best-matches') ? 'feedBestMatch' :
+    path.includes('domestic') ? 'feedDomestic' :
+    path.includes('/search/') ? 'jobSearch' :
+    path.includes('/find-work') ? 'feedBestMatch' : '';
+  const isJobs = (v) => Array.isArray(v) && v.length > 0 && v[0] && typeof v[0] === 'object' &&
+    typeof v[0].title === 'string' && (v[0].ciphertext || v[0].uid || v[0].id);
+  const pick = (state) => {
+    if (!state) return null;
+    if (preferred && state[preferred] && isJobs(state[preferred].jobs)) return state[preferred].jobs;
+    let best = null;
+    for (const key of Object.keys(state)) {
+      const mod = state[key];
+      if (mod && typeof mod === 'object' && isJobs(mod.jobs) && (!best || mod.jobs.length > best.length)) best = mod.jobs;
+    }
+    return best;
+  };
+  let jobs = null, source = '';
+  for (const [i, root] of roots.entries()) { jobs = pick(root); if (jobs) { source = i === 0 && window.$nuxt ? 'store' : 'ssr'; break; } }
+  if (!jobs) return { source: '', jobs: [] };
+  const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+  return {
+    source,
+    jobs: jobs.map((j) => {
+      const c = j.client || {};
+      const hb = j.hourlyBudget || {};
+      return {
+        id: String(j.uid || j.id || ''),
+        ciphertext: String(j.ciphertext || ''),
+        title: String(j.title || ''),
+        description: String(j.description || ''),
+        type: num(j.type),
+        amount: num(j.amount && j.amount.amount),
+        hourlyMin: num(hb.min),
+        hourlyMax: num(hb.max),
+        publishedOn: String(j.publishedOn || j.createdOn || ''),
+        proposalsTier: String(j.proposalsTier || ''),
+        skills: (j.attrs || []).map((a) => String(a.prettyName || a.prefLabel || '')).filter(Boolean),
+        clientSpent: num(c.totalSpent),
+        paymentVerified: num(c.paymentVerificationStatus),
+        clientCountry: String((c.location && c.location.country) || ''),
+        clientFeedback: num(c.totalFeedback),
+        clientReviews: num(c.totalReviews),
+      };
+    }),
+  };
+})()`;
+
+/** Where job tiles might be, most specific first. */
+const TILE_SELECTORS = [
+  'section[data-ev-opening_uid]',
+  '[data-test="job-tile-list"] > section',
+  '[data-test="job-tile"]',
+  'article[data-test*="JobTile" i]',
+  'section.air3-card-section',
+];
+
+/** The title link inside a tile, or anywhere on the page. */
+const TITLE_LINK_SELECTORS = [
+  'a[data-ev-label="link"]',
+  '.job-tile-title a',
+  'h3 a[href*="/jobs/"]',
+  'h2 a[href*="/jobs/"]',
+  'a[href*="/jobs/"][href*="~0"]',
+];
+
+/** Strategy 2 (tiles) and 3 (bare links), in one pass over the page. */
+const READ_DOM_JS = `(() => {
+  const TILES = ${JSON.stringify(TILE_SELECTORS)};
+  const LINKS = ${JSON.stringify(TITLE_LINK_SELECTORS)};
+  const text = (root, sel) => { const el = root.querySelector(sel); return el ? el.innerText.trim() : ''; };
+  const isJobHref = (href) => !!href && href.includes('/jobs/') && /~0[0-9a-z]{6,}/i.test(href);
+  const titleLink = (root) => {
+    for (const sel of LINKS) for (const a of root.querySelectorAll(sel)) if (isJobHref(a.getAttribute('href'))) return a;
+    return null;
+  };
+  const abs = (href) => (href.startsWith('http') ? href : 'https://www.upwork.com' + href);
+  const idOf = (href) => {
+    const m = href.match(/~0[0-9a-z]{6,}/i);
+    return m ? m[0].toLowerCase() : '';
+  };
+  const rating = (tile) => {
+    for (const sr of tile.querySelectorAll('span.sr-only')) {
+      const m = sr.innerText.match(/Rating is\\s*([\\d.]+)/i);
+      if (m) return m[1];
+    }
+    const fg = tile.querySelector('div.air3-rating-foreground');
+    const w = fg && (fg.getAttribute('style') || '').match(/width:\\s*([\\d.]+)px/);
+    return w ? String(Math.round((parseFloat(w[1]) / 78) * 50) / 10) : '';
+  };
+
+  const tiles = new Set();
+  for (const sel of TILES) {
+    for (const el of document.querySelectorAll(sel)) {
+      // Only cards that are actually about a job; the sidebar reuses the class.
+      if (titleLink(el)) tiles.add(el);
+    }
+  }
+  // A tile matched by a loose selector can contain one matched by a tight one.
+  const roots = [...tiles].filter((t) => ![...tiles].some((o) => o !== t && o.contains(t)));
+
+  const fromTiles = roots.map((tile) => {
+    const a = titleLink(tile);
+    const href = a.getAttribute('href');
+    const skills = [...tile.querySelectorAll('[data-test="token"], [data-test="attr-item"]')]
+      .map((el) => el.innerText.trim()).filter(Boolean);
+    return {
+      id: idOf(href),
+      title: a.innerText.trim(),
+      url: abs(href),
+      description: text(tile, '[data-test="job-description-text"]'),
+      rate: text(tile, '[data-test="job-type"]'),
+      estimatedBudget: text(tile, '[data-test="budget"]'),
+      proposals: text(tile, '[data-test="proposals-tier"]'),
+      posted: text(tile, '[data-test="posted-on"]'),
+      clientMoneySpent: text(tile, '[data-test="formatted-amount"]'),
+      paymentVerified: text(tile, '[data-test="payment-verification-status"]'),
+      clientCountry: text(tile, '[data-test="client-country"]').replace(/\\s+/g, ' '),
+      clientRating: rating(tile),
+      clientHireRate: '',
+      skills: [...new Set(skills)].slice(0, 8),
+    };
+  });
+
+  const inTile = new Set(fromTiles.map((j) => j.id));
+  const fromLinks = [];
+  for (const a of document.querySelectorAll('a[href*="/jobs/"]')) {
+    const href = a.getAttribute('href');
+    const title = a.innerText.trim();
+    if (!isJobHref(href) || !title) continue;
+    const id = idOf(href);
+    if (!id || inTile.has(id)) continue;
+    inTile.add(id);
+    // Nearest "Posted …" above the link, if the page still labels it.
+    const box = a.closest('section, article, li') || a.parentElement;
+    fromLinks.push({ id, title, url: abs(href), posted: box ? text(box, '[data-test="posted-on"]') : '' });
+  }
+  return { tiles: fromTiles, links: fromLinks };
+})()`;
+
+/** How many tiles are drawn, and how many jobs the page's data says it has. */
+const COUNT_JS = `(() => {
+  let tiles = 0;
+  for (const sel of ${JSON.stringify(TILE_SELECTORS.slice(0, 2))}) tiles = Math.max(tiles, document.querySelectorAll(sel).length);
+  let data = 0;
+  try {
+    const s = window.$nuxt && window.$nuxt.$store && window.$nuxt.$store.state;
+    for (const k of Object.keys(s || {})) if (s[k] && Array.isArray(s[k].jobs)) data = Math.max(data, s[k].jobs.length);
+  } catch (e) {}
+  return { tiles, data };
+})()`;
+
+/** "$14.97" → "$15", "$640" → "$600+", "$20,480" → "$20K+" — the tile's own wording. */
+function formatSpent(amount: number): string {
+  if (amount >= 1_000_000) return `$${Math.floor(amount / 1_000_000)}M+`;
+  if (amount >= 1_000) return `$${Math.floor(amount / 1_000)}K+`;
+  if (amount >= 100) return `$${Math.floor(amount / 100) * 100}+`;
+  return `$${Math.round(amount)}`;
+}
+
+/** A store row in the same shape, and the same wording, a tile would give. */
+function storeJobToUpworkJob(s: StoreJob): UpworkJob {
+  const id = upworkJobId(s.ciphertext);
+  // Upwork: type 1 is fixed-price, 2 is hourly.
+  const hourly = s.type === 2;
+  const range =
+    s.hourlyMin || s.hourlyMax
+      ? `: $${s.hourlyMin ?? 0}${s.hourlyMax && s.hourlyMax !== s.hourlyMin ? `-$${s.hourlyMax}` : ''}`
+      : '';
+  return {
+    id,
+    title: s.title,
+    url: s.ciphertext ? `https://www.upwork.com/jobs/${s.ciphertext}` : '',
+    description: s.description,
+    rate: hourly ? `Hourly${range}` : s.type === 1 ? 'Fixed-price' : '',
+    estimatedBudget: !hourly && s.amount ? `$${s.amount}` : '',
+    proposals: s.proposalsTier,
+    posted: '',
+    postedAt: s.publishedOn || undefined,
+    clientMoneySpent: s.clientSpent !== null ? formatSpent(s.clientSpent) : '',
+    paymentVerified:
+      s.paymentVerified === null ? '' : s.paymentVerified === 1 ? 'Payment verified' : 'Payment unverified',
+    clientCountry: s.clientCountry,
+    clientRating: s.clientReviews && s.clientFeedback !== null ? s.clientFeedback.toFixed(1) : '',
+    clientHireRate: '',
+    skills: s.skills.slice(0, 8),
+  };
+}
+
+/** Prefer `a` where it has something to say, `b` otherwise. */
+function mergeJob(a: Partial<UpworkJob>, b: UpworkJob): UpworkJob {
+  const out = { ...b };
+  for (const [key, value] of Object.entries(a) as [keyof UpworkJob, unknown][]) {
+    const has = Array.isArray(value) ? value.length > 0 : typeof value === 'string' ? value !== '' : value != null;
+    if (has) (out as Record<string, unknown>)[key] = value;
+  }
+  return out;
+}
+
+const STABLE_POLL_MS = 500;
+const STABLE_MAX_MS = 12_000;
+
+/**
+ * Give the tiles a moment to draw.
+ *
+ * Upwork draws tiles lazily, roughly as they come into view, so in a short
+ * window only the first two or three ever exist. Reading tiles alone once cost
+ * a job this way: the watcher saw two of ten and reported "2 jobs on the feed"
+ * for hours. The page data is what covers that now; this only waits for the
+ * tile count to catch up with it, or to stop changing for a few seconds.
+ */
+async function waitForTilesToSettle(page: Page): Promise<void> {
+  const deadline = Date.now() + STABLE_MAX_MS;
+  let last = -1;
+  let steady = 0;
+  while (Date.now() < deadline) {
+    const { tiles, data } = (await page.evaluate(COUNT_JS).catch(() => ({ tiles: 0, data: 0 }))) as {
+      tiles: number;
+      data: number;
+    };
+    if (data > 0 && tiles >= data) return;
+    steady = tiles === last && tiles > 0 ? steady + 1 : 0;
+    last = tiles;
+    if (steady >= 6) return;
+    await sleep(STABLE_POLL_MS);
+  }
+}
+
+/**
+ * Read every job the feed has loaded. Never loads more.
+ *
+ * Merged by job id: the tile's URL and wording win (the app has always stored
+ * those, and the dedupe hash is built from the URL), the page data fills the
+ * gaps and supplies the exact publish time. A job only the page data knows
+ * about still comes through, with a plain `/jobs/~0…` URL.
+ */
+export async function readFeed(page: Page, log?: (m: string) => void): Promise<UpworkJob[]> {
+  await waitForTilesToSettle(page);
+
+  const store = (await page.evaluate(READ_STORE_JS).catch(() => null)) as
+    | { source: string; jobs: StoreJob[] }
+    | null;
+  const dom = (await page.evaluate(READ_DOM_JS).catch(() => null)) as
+    | { tiles: TileJob[]; links: { id: string; title: string; url: string; posted: string }[] }
+    | null;
+
+  const storeJobs = (store?.jobs ?? []).map(storeJobToUpworkJob).filter((j) => j.id && j.title);
+  const tileJobs = dom?.tiles ?? [];
+  const linkJobs = dom?.links ?? [];
+
+  // Page order, newest first: the store's when it has one, else the tiles'.
+  const order: string[] = [];
+  const byId = new Map<string, UpworkJob>();
+  const add = (id: string, job: Partial<UpworkJob>, base?: UpworkJob) => {
+    if (!id) return;
+    const current = byId.get(id);
+    if (!current) order.push(id);
+    const empty: UpworkJob = {
+      title: '', url: '', description: '', rate: '', estimatedBudget: '', proposals: '', posted: '',
+      clientMoneySpent: '', paymentVerified: '', clientCountry: '', clientRating: '', clientHireRate: '',
+      skills: [],
+    };
+    byId.set(id, mergeJob(job, current ?? base ?? empty));
+  };
+
+  for (const job of storeJobs) add(job.id as string, job);
+  for (const job of tileJobs) add(job.id, job);
+  for (const job of linkJobs) add(job.id, job);
+
+  const jobs = order
+    .map((id) => ({ ...byId.get(id)!, id }))
+    .filter((j) => j.title && j.url);
+
+  if (log) {
+    const counts =
+      `page data ${storeJobs.length}${store?.source ? ` (${store.source})` : ''}, ` +
+      `tiles ${tileJobs.length}, links ${linkJobs.length}`;
+    // Disagreement is the early warning that one reader has gone stale.
+    if (storeJobs.length !== tileJobs.length || linkJobs.length || !storeJobs.length) {
+      log(`feed read ${jobs.length} job(s) — ${counts}`);
+    }
   }
   return jobs;
 }
