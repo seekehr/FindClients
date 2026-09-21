@@ -124,6 +124,13 @@ interface WatcherRuntime {
   lastError: string | null;
   /** True until the first reload has established what was already on the feed. */
   seeding: boolean;
+  /**
+   * Jobs the seeding pass decided were already there. Remembered, not just
+   * skipped once: otherwise the very next reload finds them again, they are
+   * still unknown, and a restart's worth of old listings gets announced ten
+   * minutes late as "new".
+   */
+  baseline: Set<string>;
   /** Set while stop() is unwinding, so an in-flight poll does not reschedule. */
   stopping: boolean;
   /**
@@ -148,6 +155,7 @@ const runtime: WatcherRuntime = {
   alerts: 0,
   lastError: null,
   seeding: true,
+  baseline: new Set(),
   stopping: false,
   lock: Promise.resolve(),
 };
@@ -170,6 +178,17 @@ function withTab<T>(fn: () => Promise<T>): Promise<T> {
 
 // ── Status ────────────────────────────────────────────────
 
+/**
+ * The idle status line, worked out when asked rather than frozen at reload
+ * time — a count of jobs "spotted" that were released minutes ago is wrong.
+ */
+function watchingDetail(): string {
+  const held = runtime.queue.size;
+  return held > 0
+    ? `${held} new job${held === 1 ? '' : 's'} spotted — holding briefly before alerting.`
+    : `Watching the Upwork feed. ${runtime.jobsOnFeed} job(s) on it, nothing waiting.`;
+}
+
 export function watcherStatus(): WatcherStatus {
   const config = getConfig();
   const now = Date.now();
@@ -189,7 +208,7 @@ export function watcherStatus(): WatcherStatus {
     enabled: config.upworkWatchEnabled,
     running: runtime.timer !== null || runtime.state === 'checking',
     state: runtime.state,
-    detail: runtime.detail,
+    detail: runtime.state === 'watching' ? watchingDetail() : runtime.detail,
     feedUrl: config.upworkJobsUrl,
     startedAt: runtime.startedAt,
     lastCheckedAt: runtime.lastCheckedAt,
@@ -289,6 +308,7 @@ async function tick(): Promise<void> {
       // A fresh tab has never seen this feed, so its first read is a baseline
       // rather than a pile of "new" jobs from before we were watching.
       runtime.seeding = true;
+      runtime.baseline.clear();
     }
 
     setState('checking', 'Reloading the Upwork feed…');
@@ -317,12 +337,8 @@ async function tick(): Promise<void> {
       );
     }
 
-    setState(
-      'watching',
-      queuedNow > 0
-        ? `${queuedNow} new job${queuedNow === 1 ? '' : 's'} spotted — holding briefly before alerting.`
-        : `Watching the Upwork feed. ${result.leads.length} job(s) on it, nothing new.`,
-    );
+    if (queuedNow > 0) log(`${queuedNow} new job(s) spotted`);
+    setState('watching', watchingDetail());
     scheduleNormal();
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
@@ -369,6 +385,16 @@ async function handleProblem(problem: string, detail?: string): Promise<void> {
 // ── Spotting and holding ──────────────────────────────────
 
 /**
+ * What identifies a job across reloads: its "~02…" id when the URL has one.
+ * The same job can arrive with the tile's slugged URL on one reload and a bare
+ * `/jobs/~02…` one on the next, depending on which reader found it.
+ */
+function alertKey(lead: RawLead): string {
+  const id = lead.url?.match(/~0[0-9a-z]{6,}/i);
+  return id ? id[0].toLowerCase() : (lead.url ?? lead.title);
+}
+
+/**
  * Queue every job on the feed we have not seen before.
  *
  * On the very first read of a tab that is nearly all of them, and alerting on
@@ -388,8 +414,9 @@ function queueNew(leads: RawLead[]): number {
   for (const lead of leads) {
     if (!lead.title) continue;
 
-    const key = lead.url ?? lead.title;
+    const key = alertKey(lead);
     if (runtime.queue.has(key)) continue;
+    if (runtime.baseline.has(key)) continue;
     if (isLeadKnown(PLATFORM, lead.url, lead.title)) continue;
 
     // Nothing stale, ever. The feed reorders itself, and an hours-old job
@@ -405,7 +432,10 @@ function queueNew(leads: RawLead[]): number {
     const age = dated ? now - parsed : 0;
 
     if (age > maxAgeMs) continue;
-    if (runtime.seeding && (!dated || age > seedWindowMs)) continue;
+    if (runtime.seeding && (!dated || age > seedWindowMs)) {
+      runtime.baseline.add(key);
+      continue;
+    }
 
     const wait =
       alertDelayMs(config.upworkAlertDelayMinSeconds, config.upworkAlertDelayMaxSeconds) +
@@ -547,6 +577,7 @@ export function startWatcher(reason = 'startup'): WatcherStatus {
 
   runtime.stopping = false;
   runtime.seeding = true;
+  runtime.baseline.clear();
   runtime.startedAt = new Date().toISOString();
   runtime.checks = 0;
   runtime.alerts = 0;
