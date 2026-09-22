@@ -87,7 +87,7 @@ export function defaultConfig(): StoredConfig {
     twitterLimitPerKeyword: 15,
 
     upworkWatchEnabled: true,
-    upworkJobsUrl: 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
+    upworkJobsUrl: 'https://www.upwork.com/nx/s/find-work/most-recent?nav_dir=pop',
     upworkFetchDetails: true,
     upworkMaxAgeHours: 5,
     upworkReloadMinMinutes: UPWORK_RELOAD_FLOOR_MINUTES,
