@@ -59,7 +59,7 @@ const UNIT_SECONDS: Record<string, number> = {
 
 /** Parse "posted 2 hours ago" / "just now" / "yesterday" into an age in ms. */
 export function parsePostedAgeMs(text: string): number | null {
-  const t = text.trim().toLowerCase();
+  const t = text.trim().toLowerCase().replace(/^posted\s+/, '');
   if (t === 'just now' || t === 'moments ago') return 0;
   if (t === 'yesterday') return 86_400 * 1000;
   const m = t.match(/(\d+)\s+(\w+)\s+ago/);
@@ -547,11 +547,61 @@ const READ_DOM_JS = `(() => {
     };
   });
 
+  // The 2026 "ngm" feed: a tile is a clickable card that opens a side panel, so
+  // it has no job link at all. Its numeric opening uid is the ciphertext minus
+  // its "~02" prefix (uid 2102… is /jobs/~022102…).
+  const lines = (el) => (el ? el.innerText.split('\\n').map((s) => s.trim()).filter(Boolean) : []);
+  for (const tile of document.querySelectorAll('[data-test="job-tile"]')) {
+    if (titleLink(tile)) continue;
+    const uidEl = tile.querySelector('[data-ev-opening_uid]');
+    const uid = uidEl ? (uidEl.getAttribute('data-ev-opening_uid') || '').trim() : '';
+    const title = text(tile, '[data-test="job-title"]');
+    if (!/^\\d{6,}$/.test(uid) || !title) continue;
+    const titleEl = tile.querySelector('[data-test="job-title"]');
+    const meta = titleEl && titleEl.parentElement ? titleEl.parentElement.nextElementSibling : null;
+    const ratingEl = tile.querySelector('[data-test="rating-minimal"]');
+    const clientRow = tile.querySelector('.is-verified, .ngm-tag-inline');
+    const clientLines = lines(clientRow ? clientRow.closest('.flex-wrap') || clientRow.parentElement : null);
+    const paid = clientLines.find((l) => /^payment (un)?verified$/i.test(l)) || '';
+    const spent = clientLines.find((l) => /spent$/i.test(l)) || '';
+    const country = [...clientLines].reverse().find((l) =>
+      !/verified$/i.test(l) && !/spent$/i.test(l) && !/^[\\d.]+$/.test(l)) || '';
+    // Not always inside [data-test="job-tile-badges"]; the leaf that says it is.
+    const postedEl = [...tile.querySelectorAll('span, small, div')].find((e) =>
+      e.children.length === 0 && /^posted\\s/i.test(e.innerText.trim()));
+    const posted = postedEl ? postedEl.innerText.trim() : '';
+    const skills = [...tile.querySelectorAll('[data-test="attr-item"]')].map((el) => el.innerText.trim()).filter(Boolean);
+    const desc = tile.querySelector('p.line-clamp') || tile.querySelector('p');
+    fromTiles.push({
+      id: '~02' + uid,
+      title,
+      url: 'https://www.upwork.com/jobs/~02' + uid,
+      description: desc ? desc.innerText.trim() : '',
+      rate: meta ? (lines(meta)[0] || '') : '',
+      estimatedBudget: '',
+      proposals: text(tile, '[data-test="proposals-tier"]'),
+      posted,
+      clientMoneySpent: spent.replace(/\\s*spent$/i, ''),
+      paymentVerified: paid,
+      clientCountry: country,
+      clientRating: ratingEl ? ratingEl.innerText.trim() : '',
+      clientHireRate: '',
+      skills: [...new Set(skills)].slice(0, 8),
+    });
+  }
+
+  // Link text is a last resort for a title. A link's first line only, and never
+  // an icon's label — the job side panel carries an "Open job in a new window"
+  // link that once became a job's title.
+  const linkTitle = (a) => {
+    const first = (a.innerText || '').split('\\n').map((s) => s.trim()).find(Boolean) || '';
+    return /^open (this )?job in a new (window|tab)$/i.test(first) ? '' : first;
+  };
   const inTile = new Set(fromTiles.map((j) => j.id));
   const fromLinks = [];
   for (const a of document.querySelectorAll('a[href*="/jobs/"]')) {
     const href = a.getAttribute('href');
-    const title = a.innerText.trim();
+    const title = linkTitle(a);
     if (!isJobHref(href) || !title) continue;
     const id = idOf(href);
     if (!id || inTile.has(id)) continue;
@@ -566,7 +616,7 @@ const READ_DOM_JS = `(() => {
 /** How many tiles are drawn, and how many jobs the page's data says it has. */
 const COUNT_JS = `(() => {
   let tiles = 0;
-  for (const sel of ${JSON.stringify(TILE_SELECTORS.slice(0, 2))}) tiles = Math.max(tiles, document.querySelectorAll(sel).length);
+  for (const sel of ${JSON.stringify(TILE_SELECTORS)}) tiles = Math.max(tiles, document.querySelectorAll(sel).length);
   let data = 0;
   try {
     const s = window.$nuxt && window.$nuxt.$store && window.$nuxt.$store.state;
@@ -690,7 +740,9 @@ export async function readFeed(page: Page, log?: (m: string) => void): Promise<U
 
   for (const job of storeJobs) add(job.id as string, job);
   for (const job of tileJobs) add(job.id, job);
-  for (const job of linkJobs) add(job.id, job);
+  // Links only add jobs nothing else found; their text must never overwrite a
+  // real title.
+  for (const job of linkJobs) if (!byId.has(job.id)) add(job.id, job);
 
   const jobs = order
     .map((id) => ({ ...byId.get(id)!, id }))

@@ -228,6 +228,16 @@ class UpworkWatchTab implements WatchTab {
     await sleep(AFTER_RELOAD_MS);
 
     const jobs = await readFeed(page, this.opts.log);
+    // A rendered "most recent" feed is never empty. Reading nothing means the
+    // readers missed the markup, and reporting it as a quiet check would mean
+    // waiting out a full interval before looking again.
+    if (!jobs.length) {
+      return {
+        leads: [],
+        problem: 'no-feed',
+        detail: 'The feed loaded but no jobs could be read from it.',
+      };
+    }
     return { leads: jobs.map(jobToLead) };
   }
 
