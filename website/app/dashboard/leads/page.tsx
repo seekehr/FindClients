@@ -26,6 +26,7 @@ const FILTERS: { id: string | null; label: string }[] = [
   { id: 'upwork', label: 'Upwork' },
   { id: 'twitter', label: 'Twitter' },
   { id: 'discord', label: 'Discord' },
+  { id: 'blackhatworld', label: 'BlackHatWorld' },
   { id: REJECTED, label: 'Rejected' },
 ]
 

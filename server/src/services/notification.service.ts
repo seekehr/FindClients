@@ -76,9 +76,19 @@ export function matchesLeadFilters(lead: LeadDTO, config: AppConfig): boolean {
   return true;
 }
 
+/**
+ * Platforms whose source is already a choice you made — a sub forum you listed
+ * — so requiring one of your keywords would only hide posts from it. Your
+ * excluded keywords still apply.
+ */
+const SOURCE_IS_THE_FILTER = new Set<string>(['blackhatworld']);
+
 /** Does this lead pass the platform / keyword / budget filters? */
 function matchesConfig(lead: LeadDTO, config: AppConfig): boolean {
   if (config.platforms.length && !config.platforms.includes(lead.platform)) return false;
+  if (SOURCE_IS_THE_FILTER.has(lead.platform)) {
+    return matchesLeadFilters(lead, { ...config, keywords: [] });
+  }
   return matchesLeadFilters(lead, config);
 }
 

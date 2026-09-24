@@ -15,5 +15,11 @@
     "minViews": 0,
     "limitPerKeyword": 10,
     "maxPostAgeHours": 48
+  },
+  "blackhatworld": {
+    "forumUrls": [
+      "https://www.blackhatworld.com/forums/hire-a-freelancer.76/"
+    ],
+    "limitPerForum": 10
   }
 }

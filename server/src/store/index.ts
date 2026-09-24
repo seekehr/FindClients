@@ -67,7 +67,7 @@ export function defaultConfig(): StoredConfig {
     newLeadsNotification: true,
     discordWebhookUrl: '',
 
-    platforms: ['upwork', 'twitter'],
+    platforms: ['upwork', 'twitter', 'blackhatworld'],
     keywords: [
       'looking for a developer',
       'need a web designer',
@@ -86,8 +86,11 @@ export function defaultConfig(): StoredConfig {
     twitterMinViews: 0,
     twitterLimitPerKeyword: 15,
 
+    bhwForumUrls: ['https://www.blackhatworld.com/forums/hire-a-freelancer.76/'],
+    bhwLimitPerForum: 20,
+
     upworkWatchEnabled: true,
-    upworkJobsUrl: 'https://www.upwork.com/nx/s/find-work/most-recent?nav_dir=pop',
+    upworkJobsUrl: 'https://www.upwork.com/nx/find-work/most-recent',
     upworkFetchDetails: true,
     upworkMaxAgeHours: 5,
     upworkReloadMinMinutes: UPWORK_RELOAD_FLOOR_MINUTES,

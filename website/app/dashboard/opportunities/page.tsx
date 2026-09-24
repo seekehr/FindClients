@@ -276,6 +276,25 @@ export default function OpportunitiesPage() {
               </Alert>
             )}
 
+            {(watcher?.state === 'error' || watcher?.state === 'browser-down') && (
+              <Alert tone="danger" title="The watcher can't read your Upwork feed right now.">
+                <p>{watcher.lastError ?? watcher.detail}</p>
+                <p className="mt-1.5 text-muted-foreground">
+                  No jobs are being picked up until this clears. It retries on its own,
+                  or press Check now once you&apos;ve fixed it.
+                </p>
+              </Alert>
+            )}
+
+            {watcher?.warning && watcher.state !== 'error' && (
+              <Alert tone="warning" title="Heads up about your feed.">
+                {watcher.warning}{' '}
+                <Link href="/dashboard/config" className="font-medium text-primary hover:underline">
+                  Open Config
+                </Link>
+              </Alert>
+            )}
+
             {watcher?.state === 'blocked' && (
               <Alert tone="warning" title="Upwork is showing a bot check.">
                 Clear it in the Chrome window FindClients is attached to. The next

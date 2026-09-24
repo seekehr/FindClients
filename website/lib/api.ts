@@ -123,6 +123,10 @@ export interface UserConfig {
   twitterMinViews: number
   twitterLimitPerKeyword: number
 
+  /** BlackHatWorld sub forums to read. No account needed. */
+  bhwForumUrls: string[]
+  bhwLimitPerForum: number
+
   /** Upwork is watched for job alerts, never scraped. See `watchApi`. */
   upworkWatchEnabled: boolean
   upworkJobsUrl: string
@@ -271,6 +275,8 @@ export interface WatcherStatus {
   alerts: number
   queued: QueuedAlert[]
   lastError: string | null
+  /** The feed was read, but something about it needs your attention. */
+  warning: string | null
   /** [shortest, longest] gap between reloads, in minutes. */
   reloadMinutes: [number, number]
   /** [shortest, longest] hold before an alert reaches you, in seconds. */

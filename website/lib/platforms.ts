@@ -20,6 +20,7 @@ const PLATFORMS: Record<string, PlatformMeta> = {
   discord: { id: 'discord', label: 'Discord', mark: 'Dc', site: 'discord.com' },
   reddit: { id: 'reddit', label: 'Reddit', mark: 'Rd', site: 'reddit.com' },
   linkedin: { id: 'linkedin', label: 'LinkedIn', mark: 'in', site: 'linkedin.com' },
+  blackhatworld: { id: 'blackhatworld', label: 'BlackHatWorld', mark: 'BH', site: 'blackhatworld.com' },
 }
 
 /** Never throws on a platform the API knows about and this build does not. */
@@ -39,7 +40,7 @@ export function platformLabel(id: string): string {
 }
 
 /** The platforms FindClients can collect from today, one way or another. */
-export const SUPPORTED_PLATFORMS = new Set(['upwork', 'twitter'])
+export const SUPPORTED_PLATFORMS = new Set(['upwork', 'twitter', 'blackhatworld'])
 
 /**
  * Platforms that are watched rather than scraped.

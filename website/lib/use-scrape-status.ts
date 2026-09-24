@@ -124,6 +124,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   discord: 'Discord',
   reddit: 'Reddit',
   linkedin: 'LinkedIn',
+  blackhatworld: 'BlackHatWorld',
 }
 
 /** "Twitter / X" · "Upwork and Twitter / X" · "3 platforms" */

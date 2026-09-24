@@ -212,6 +212,59 @@ function ChipInput({
   )
 }
 
+/**
+ * A list of links, one per line. Not a ChipInput: that splits on commas and
+ * caps entries at 80 characters, and a forum link can be longer than that.
+ */
+function LinkListField({
+  label,
+  hint,
+  placeholder,
+  values,
+  onChange,
+}: {
+  label: string
+  hint?: string
+  placeholder: string
+  values: string[]
+  onChange: (values: string[]) => void
+}) {
+  const id = useId()
+  const parse = (text: string) =>
+    text
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  const [text, setText] = useState(values.join('\n'))
+
+  // Follow changes made elsewhere (Reset), without fighting the blank line
+  // someone is halfway through typing.
+  useEffect(() => {
+    if (parse(text).join('\n') !== values.join('\n')) setText(values.join('\n'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values])
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Textarea
+        id={id}
+        rows={Math.min(Math.max(values.length + 1, 3), 8)}
+        value={text}
+        placeholder={placeholder}
+        spellCheck={false}
+        onChange={(e) => {
+          setText(e.target.value)
+          onChange(parse(e.target.value))
+        }}
+      />
+      <Hint>
+        {hint ? `${hint} ` : ''}One per line. {values.length} of 20 used.
+      </Hint>
+    </div>
+  )
+}
+
 /** A labelled group inside a section, for per-platform knobs. */
 function SubGroup({
   title,
@@ -243,6 +296,8 @@ const FIELD_LABELS: Record<string, string> = {
   twitterMinLikes: 'Min likes',
   twitterMinViews: 'Min views',
   twitterLimitPerKeyword: 'Per keyword',
+  bhwForumUrls: 'BlackHatWorld sub forums',
+  bhwLimitPerForum: 'Per sub forum',
   upworkJobsUrl: 'Jobs feed URL',
   upworkReloadMinMinutes: 'Shortest gap',
   upworkReloadMaxMinutes: 'Longest gap',
@@ -493,7 +548,8 @@ export default function ConfigPage() {
               })}
             </div>
             <Hint>
-              A platform still needs a signed-in account on the Connections page.
+              A platform still needs a signed-in account on the Connections page
+              (BlackHatWorld excepted — it is read without one).
               Upwork is watched rather than scraped, so it is switched on and off
               under <strong>Upwork job alerts</strong> below.
             </Hint>
@@ -595,6 +651,29 @@ export default function ConfigPage() {
                 }
               />
             </div>
+          </SubGroup>
+
+          <SubGroup title="BlackHatWorld">
+            <LinkListField
+              label="Sub forums to watch"
+              hint="Every new thread in these becomes a lead and an alert — your keywords are not applied, excluded keywords are. No account needed."
+              placeholder="https://www.blackhatworld.com/forums/hire-a-freelancer.76/"
+              values={config.bhwForumUrls}
+              onChange={(bhwForumUrls) => patch({ bhwForumUrls })}
+            />
+            <NumberField
+              label="Per sub forum"
+              hint="Newest threads read from each, per cycle (1–100)."
+              value={config.bhwLimitPerForum}
+              min={1}
+              max={100}
+              onChange={(bhwLimitPerForum) => patch({ bhwLimitPerForum })}
+            />
+            <Hint>
+              BlackHatWorld is behind Cloudflare. The first run shows a
+              &ldquo;Just a moment…&rdquo; check in the browser — clear it once
+              and later runs go straight through.
+            </Hint>
           </SubGroup>
 
         </Section>

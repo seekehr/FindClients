@@ -52,9 +52,17 @@ export const isUpworkUrl = (url: string): boolean => {
   }
 };
 
+/**
+ * Normalised pathname. `/nx/s/find-work/...` is folded into `/nx/find-work/...`
+ * because Upwork redirects the former to the latter, and treating them as
+ * different pages left the watcher refusing to read the feed it landed on.
+ */
 const path = (url: string): string => {
   try {
-    return new URL(url).pathname.replace(/\/+$/, '').toLowerCase();
+    return new URL(url).pathname
+      .replace(/\/+$/, '')
+      .toLowerCase()
+      .replace(/^\/nx\/s\//, '/nx/');
   } catch {
     return '';
   }
@@ -70,6 +78,18 @@ const path = (url: string): string => {
  */
 export function onFeedPage(current: string, feedUrl: string): boolean {
   return isUpworkUrl(current) && path(current) === path(feedUrl);
+}
+
+/**
+ * Is this one of Upwork's jobs-feed pages, under any of the names it has used?
+ *
+ * Upwork keeps moving the feed — `/nx/s/find-work/most-recent`,
+ * `/nx/find-work/most-recent`, `/nx/find-work/` with a "Most Recent" tab — and
+ * each move used to stop the watcher dead. Any of them renders the same job
+ * tiles, so any of them is readable.
+ */
+export function isFeedFamily(url: string): boolean {
+  return isUpworkUrl(url) && path(url).startsWith('/nx/find-work');
 }
 
 /**
@@ -100,6 +120,20 @@ class UpworkWatchTab implements WatchTab {
 
   /** Tabs this class opened, and may therefore close again. */
   private readonly created = new Set<Page>();
+
+  /**
+   * Where Upwork actually sent the configured feed URL, once it has redirected
+   * it somewhere readable. Treated as the feed from then on, so later polls
+   * reload that page instead of re-navigating through the redirect every time.
+   */
+  private redirectedTo: string | null = null;
+
+  private isFeed(url: string): boolean {
+    return (
+      onFeedPage(url, this.opts.feedUrl) ||
+      (this.redirectedTo !== null && onFeedPage(url, this.redirectedTo))
+    );
+  }
 
   constructor(
     private readonly session: BrowserSession,
@@ -154,7 +188,7 @@ class UpworkWatchTab implements WatchTab {
     const { feedUrl, log } = this.opts;
     const current = page.url();
 
-    if (onFeedPage(current, feedUrl)) {
+    if (this.isFeed(current)) {
       // Genuinely a reload of the page in front of us — same tab, same URL,
       // same history. That is what this is meant to look like.
       const response = await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -205,24 +239,44 @@ class UpworkWatchTab implements WatchTab {
       if (looksSignedOut(page)) return { leads: [], problem: 'signed-out' };
     }
 
-    // Landed somewhere else entirely. Say so, with the URL — three rounds of
-    // "feed not visible yet — nudging" is a true statement that explains
-    // nothing, and this is the one message that would have.
-    if (!onFeedPage(page.url(), this.opts.feedUrl)) {
-      return {
-        leads: [],
-        problem: 'no-feed',
-        detail:
-          `Upwork sent that tab to ${path(page.url()) || page.url()} instead of your feed. ` +
-          'Open the feed you want to watch in that tab, or set its URL on the Config page.',
-      };
+    const landed = page.url();
+    const landedPath = path(landed) || landed;
+    let warning: string | undefined;
+
+    if (!this.isFeed(landed)) {
+      // Landed somewhere else entirely. Say so, with the URL — three rounds of
+      // "feed not visible yet — nudging" is a true statement that explains
+      // nothing, and this is the one message that would have.
+      if (!isFeedFamily(landed)) {
+        return {
+          leads: [],
+          problem: 'no-feed',
+          detail:
+            `Upwork sent that tab to ${landedPath} instead of your feed (${path(this.opts.feedUrl)}). ` +
+            'Open the feed you want to watch in that tab, or set its URL on the Config page.',
+        };
+      }
+      // Another name for the jobs feed. Read it rather than giving up, and
+      // remember it so the next poll is a plain reload.
+      if (this.redirectedTo === null || !onFeedPage(landed, this.redirectedTo)) {
+        this.opts.log(`Upwork redirected the feed to ${landedPath} — reading that page instead`);
+      }
+      this.redirectedTo = landed;
+    }
+
+    if (this.redirectedTo && onFeedPage(landed, this.redirectedTo)) {
+      warning =
+        `Upwork redirected your feed URL (${path(this.opts.feedUrl)}) to ${landedPath}; ` +
+        'reading that page instead. Update the URL on the Config page to make this go away.';
     }
 
     if (!(await waitForFeed(page, this.opts.log))) {
       return {
         leads: [],
         problem: 'no-feed',
-        detail: `The jobs feed did not render at ${path(page.url()) || page.url()}.`,
+        detail:
+          `The jobs feed did not render at ${landedPath}. ` +
+          'Upwork may have changed the page layout — check that tab in Chrome.',
       };
     }
     await sleep(AFTER_RELOAD_MS);
@@ -235,10 +289,12 @@ class UpworkWatchTab implements WatchTab {
       return {
         leads: [],
         problem: 'no-feed',
-        detail: 'The feed loaded but no jobs could be read from it.',
+        detail:
+          `The feed at ${landedPath} loaded but no jobs could be read from it. ` +
+          'Upwork may have changed its job-tile markup.',
       };
     }
-    return { leads: jobs.map(jobToLead) };
+    return { leads: jobs.map(jobToLead), warning };
   }
 
   /**

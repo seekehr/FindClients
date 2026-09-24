@@ -6,9 +6,9 @@
  * leads. Anything that used to be "per user" is simply "the" thing now.
  */
 
-export type Platform = 'upwork' | 'twitter' | 'discord' | 'reddit' | 'linkedin';
+export type Platform = 'upwork' | 'twitter' | 'discord' | 'reddit' | 'linkedin' | 'blackhatworld';
 
-export const PLATFORMS: Platform[] = ['upwork', 'twitter', 'discord', 'reddit', 'linkedin'];
+export const PLATFORMS: Platform[] = ['upwork', 'twitter', 'discord', 'reddit', 'linkedin', 'blackhatworld'];
 
 export type LeadStatus = 'new' | 'viewed' | 'contacted' | 'won' | 'archived';
 
@@ -145,6 +145,15 @@ export interface AppConfig {
   twitterMinLikes: number;
   twitterMinViews: number;
   twitterLimitPerKeyword: number;
+
+  /**
+   * BlackHatWorld. No account: each sub forum listed here is opened, and every
+   * thread started in it since the last cycle becomes a lead. The forum is the
+   * filter, so your keywords are not applied to these (exclusions still are).
+   */
+  bhwForumUrls: string[];
+  /** Newest threads read per sub forum, per cycle. */
+  bhwLimitPerForum: number;
 
   /**
    * Upwork job alerts.

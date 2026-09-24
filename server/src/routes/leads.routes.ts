@@ -16,7 +16,7 @@ export const leadsRouter = Router();
 const statusEnum = z.enum(['new', 'viewed', 'contacted', 'won', 'archived']);
 
 const listQuery = z.object({
-  platform: z.enum(['upwork', 'twitter', 'discord', 'reddit', 'linkedin']).optional(),
+  platform: z.enum(['upwork', 'twitter', 'discord', 'reddit', 'linkedin', 'blackhatworld']).optional(),
   q: z.string().max(200).optional(),
   status: statusEnum.optional(),
   bookmarked: z.coerce.boolean().optional(),

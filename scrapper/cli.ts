@@ -29,6 +29,8 @@ interface PlatformCliConfig {
   minViews?: number;
   limitPerKeyword?: number;
   maxPostAgeHours?: number;
+  forumUrls?: string[];
+  limitPerForum?: number;
 }
 
 interface CliConfig {
@@ -36,6 +38,7 @@ interface CliConfig {
   limit?: number;
   upwork?: PlatformCliConfig;
   twitter?: PlatformCliConfig;
+  blackhatworld?: PlatformCliConfig;
 }
 
 function loadConfig(filePath: string): CliConfig {
@@ -61,10 +64,11 @@ function loadConfig(filePath: string): CliConfig {
 function configFromCli(file: CliConfig): AppConfig {
   const tw = file.twitter ?? {};
   const uw = file.upwork ?? {};
+  const bhw = file.blackhatworld ?? {};
   return {
     newLeadsNotification: false,
     discordWebhookUrl: '',
-    platforms: ['upwork', 'twitter'],
+    platforms: ['upwork', 'twitter', 'blackhatworld'],
     keywords: tw.keywords?.length
       ? tw.keywords
       : ['looking for a developer', 'looking to hire'],
@@ -76,6 +80,10 @@ function configFromCli(file: CliConfig): AppConfig {
     twitterMinLikes: tw.minLikes ?? 0,
     twitterMinViews: tw.minViews ?? 0,
     twitterLimitPerKeyword: tw.limitPerKeyword ?? 15,
+    bhwForumUrls: bhw.forumUrls?.length
+      ? bhw.forumUrls
+      : ['https://www.blackhatworld.com/forums/hire-a-freelancer.76/'],
+    bhwLimitPerForum: bhw.limitPerForum ?? 20,
     upworkWatchEnabled: false,
     upworkJobsUrl:
       uw.jobsUrl ?? 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
@@ -116,7 +124,7 @@ async function runOne(platform: string, config: AppConfig, limit: number): Promi
     return;
   }
 
-  if (!hasProfile(platform)) {
+  if (scraper.requiresSignIn !== false && !hasProfile(platform)) {
     console.log(`skipped : not signed in. Run: npm run cli -- --sign-in ${platform}`);
     return;
   }
@@ -165,6 +173,7 @@ async function main() {
 
   process.env.UPWORK_HEADLESS = headless ? 'true' : 'false';
   process.env.X_HEADLESS = headless ? 'true' : 'false';
+  process.env.BHW_HEADLESS = headless ? 'true' : 'false';
 
   const config = configFromCli(cfg);
 

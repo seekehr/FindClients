@@ -79,6 +79,14 @@ export interface Scraper {
   mode: 'scrape' | 'watch';
 
   /**
+   * False for a platform read without an account (BlackHatWorld's public
+   * forums). The cycle then runs it without a connection on the Connections
+   * page. Absent means true — every platform before it needs a signed-in
+   * profile, and that stays the default.
+   */
+  requiresSignIn?: boolean;
+
+  /**
    * Return raw leads discovered on this run (may be empty).
    *
    * Optional, and absent on every `'watch'` scraper — deliberately, so that
@@ -135,6 +143,11 @@ export interface WatchResult {
   /** Set when the reload did not reach a readable feed. */
   problem?: WatchProblem;
   detail?: string;
+  /**
+   * The feed was read, but something about it deserves your attention — e.g.
+   * Upwork redirected the configured URL to a different feed page.
+   */
+  warning?: string;
 }
 
 /**

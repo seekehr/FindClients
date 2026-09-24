@@ -96,6 +96,8 @@ export interface WatcherStatus {
   /** Spotted, waiting out their human delay. */
   queued: QueuedAlertDTO[];
   lastError: string | null;
+  /** The feed was read, but something about it needs your attention. */
+  warning: string | null;
   /** The windows in force, so the UI can describe them without guessing. */
   reloadMinutes: [number, number];
   delaySeconds: [number, number];
@@ -105,6 +107,9 @@ const PLATFORM = 'upwork' as const;
 
 /** How long to wait before retrying after a recoverable failure. */
 const RETRY_MS = 3 * 60 * 1000;
+
+/** On the first read of a tab, jobs up to this old are still alerted on. */
+const SEED_WINDOW_MS = 30 * 60 * 1000;
 
 /** A signed-out session needs you, not a retry loop — check back rarely. */
 const SIGNED_OUT_RETRY_MS = 10 * 60 * 1000;
@@ -122,6 +127,7 @@ interface WatcherRuntime {
   checks: number;
   alerts: number;
   lastError: string | null;
+  warning: string | null;
   /** True until the first reload has established what was already on the feed. */
   seeding: boolean;
   /**
@@ -154,6 +160,7 @@ const runtime: WatcherRuntime = {
   checks: 0,
   alerts: 0,
   lastError: null,
+  warning: null,
   seeding: true,
   baseline: new Set(),
   stopping: false,
@@ -218,6 +225,7 @@ export function watcherStatus(): WatcherStatus {
     alerts: runtime.alerts,
     queued,
     lastError: runtime.lastError,
+    warning: runtime.warning,
     reloadMinutes: [config.upworkReloadMinMinutes, config.upworkReloadMaxMinutes],
     delaySeconds: [config.upworkAlertDelayMinSeconds, config.upworkAlertDelayMaxSeconds],
   };
@@ -323,6 +331,7 @@ async function tick(): Promise<void> {
     }
 
     runtime.lastError = null;
+    runtime.warning = result.warning ?? null;
     runtime.jobsOnFeed = result.leads.length;
     markUsed(PLATFORM);
 
@@ -375,10 +384,16 @@ async function handleProblem(problem: string, detail?: string): Promise<void> {
       scheduleNext(RETRY_MS);
       return;
 
-    default:
-      setState('error', detail ?? 'The Upwork feed did not load.');
-      runtime.lastError = detail ?? 'The feed did not load.';
+    default: {
+      const message = detail ?? 'The Upwork feed did not load.';
+      setState('error', message);
+      runtime.lastError = message;
+      // Nothing was read, so the count from an earlier look is no longer true.
+      runtime.jobsOnFeed = 0;
+      logger.warn(`[Upwork alerts] ${message}`);
+      markError(PLATFORM, message);
       scheduleNext(RETRY_MS);
+    }
   }
 }
 
@@ -399,15 +414,15 @@ function alertKey(lead: RawLead): string {
  *
  * On the very first read of a tab that is nearly all of them, and alerting on
  * the lot would mean a restart dumps a day of old listings on you. So the
- * seeding pass only lets through jobs young enough that they could plausibly
- * have appeared while we were connecting.
+ * seeding pass only lets through jobs from the last 30 minutes that are not
+ * already on file.
  *
  * @returns how many were queued.
  */
 function queueNew(leads: RawLead[]): number {
   const config = getConfig();
   const maxAgeMs = Math.max(1, config.upworkMaxAgeHours) * 60 * 60 * 1000;
-  const seedWindowMs = Math.max(2, config.upworkReloadMaxMinutes) * 60 * 1000;
+  const seedWindowMs = SEED_WINDOW_MS;
   const now = Date.now();
 
   let index = 0;

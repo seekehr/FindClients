@@ -63,6 +63,16 @@ Adding a `KEYWORDS` variable to `.env` would do nothing. That split is why.
 
 `found` = returned by the scraper. `inserted` = new to `leads.json`. **High found, zero inserted is de-duplication working, not breakage** — it means the feed had nothing new since last time, which is the normal steady state.
 
+## BlackHatWorld
+
+A scraper in the cycle above, like X, with two differences.
+
+**No account.** The forums are public, so BlackHatWorld is not on the Connections page and `requiresSignIn: false` lets the cycle run it without one. Tick it under **Platforms to scrape** and list the sub forums under **Platform tuning → BlackHatWorld** ([scrapper/blackhatworld/](scrapper/blackhatworld)).
+
+**The sub forum is the filter.** Each listed forum is opened sorted by start date (`?order=post_date&direction=desc`), sticky threads are skipped, and every thread on that first page started within `maxPostAgeHours` is returned, up to `bhwLimitPerForum` each and `leadsPerRun` in total. De-duplication by URL makes each thread one alert, once. Your keywords are *not* applied to these alerts, because they were written for X searches and would hide most threads; excluded keywords still are.
+
+**Cloudflare.** The first visit gets a "Just a moment..." Turnstile page. The scraper waits 20 seconds for it to clear by itself, then, if `CAPTCHA_OPEN_WINDOW` allows, brings the tab forward (your Chrome) or reopens visibly (a launched headless browser) and waits `CAPTCHA_TIMEOUT_MS` for you to click through. It never solves the check itself. The clearance cookie stays in the profile, so later runs go straight through until Cloudflare expires it. A launched browser is visible by default (`BHW_HEADLESS=false`), because a clearance earned in a visible window does not carry over to a headless one. To clear it before the first scheduled run: `npm run cli -- --sign-in blackhatworld` from `scrapper/`.
+
 ## The Upwork watcher
 
 Upwork used to be a scraper in the cycle above: open the feed, click "Load More" up to twenty times, open every job. That is the behaviour Upwork's terms forbid and its systems are built to catch, and it is what gets accounts suspended. It was removed rather than tuned down, and `upworkScraper` no longer has a `scrape()` method at all — `Scraper.scrape` is optional precisely so a watched platform can decline to have one.
@@ -89,11 +99,13 @@ startWatcher()                        server/src/watcher/index.ts
 
 **The delays are the feature.** [`watcher/random.ts`](server/src/watcher/random.ts) is deliberately not uniform: intervals average two draws so they cluster toward the middle, roughly one in seven is a long break, and every value carries a few seconds of untidiness so no two gaps are the same round number. A perfectly even histogram is its own signature.
 
-**The first read of a tab is a baseline.** Everything currently on the feed is recorded as known and not alerted on, except jobs young enough to have appeared while the tab was connecting. Without that, every restart would announce a day of old listings as brand new.
+**The first read of a tab is a baseline.** Everything currently on the feed is recorded as known and not alerted on, except jobs posted in the last 30 minutes that are not already in `leads.json` or `dismissed.json`. Without that, every restart would announce a day of old listings as brand new.
 
 **It works in the tab you already have open.** Every poll re-scans all the browser's tabs rather than trusting the one it used last time — you may have closed it, or opened your own. Preference goes to a tab already on the feed, then any other `/nx/find-work` page, then anything else on Upwork, because the tab it picks is the tab it is about to reload and an arbitrary Upwork tab might be a proposal you are halfway through writing. A tab it opened itself is closed on Pause; a tab of yours that it adopted never is.
 
 **A tab that wandered is navigated, not reloaded.** Upwork will bounce `/nx/find-work/most-recent` to `/nx/project-dashboard/?ref=fwh`, and reloading *that* forever is a watcher that never sees another job while reporting only `feed not visible yet — nudging`. The poll compares paths (not whole URLs — Upwork rewrites its own query string) and navigates back to your feed when they differ. If it still lands somewhere else, it says where, instead of nudging an unrelated page three times.
+
+**Upwork's feed has many names, and any of them is read.** `/nx/s/find-work/...` is treated as `/nx/find-work/...`, and if your configured feed redirects to any other `/nx/find-work*` page the watcher reads that page, remembers it (so later polls are reloads, not re-redirects), and shows a warning on the Opportunities page telling you to update the URL. Only a redirect *out* of the find-work family is an error. Every error is shown as a red banner on that page and recorded on the Upwork connection, with the path it landed on.
 
 **Pausing drops the queue.** Held jobs were never stored, so the next run simply finds them on the feed again. Flushing them on Pause would defeat the pacing.
 

@@ -24,14 +24,16 @@ import type { PlatformWatcher, Scraper } from '../server/src/scrapers/types';
 import { upworkScraper } from './upwork';
 import { upworkWatcher } from './upwork/watch';
 import { twitterScraper } from './twitter';
+import { blackhatworldScraper } from './blackhatworld';
 
 export const scrapers: Scraper[] = [
   upworkScraper,
   twitterScraper,
+  blackhatworldScraper,
 ];
 
 export const watchers: PlatformWatcher[] = [
   upworkWatcher,
 ];
 
-export { upworkScraper, upworkWatcher, twitterScraper };
+export { upworkScraper, upworkWatcher, twitterScraper, blackhatworldScraper };

@@ -149,7 +149,7 @@ export async function runScrapeCycle(): Promise<RunSummary> {
         summary.skipped.push(`${scraper.platform} (not enabled in your config)`);
         continue;
       }
-      if (!isConnected(scraper.platform)) {
+      if (scraper.requiresSignIn !== false && !isConnected(scraper.platform)) {
         summary.skipped.push(`${scraper.platform} (not signed in)`);
         continue;
       }

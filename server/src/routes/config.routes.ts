@@ -7,7 +7,7 @@ import { syncWatcherWithConfig } from '../watcher';
 
 export const configRouter = Router();
 
-const platform = z.enum(['upwork', 'twitter', 'discord', 'reddit', 'linkedin']);
+const platform = z.enum(['upwork', 'twitter', 'discord', 'reddit', 'linkedin', 'blackhatworld']);
 
 /**
  * Bounds are enforced here because nothing downstream will. There is no
@@ -32,6 +32,26 @@ const patchSchema = z
     twitterMinLikes: z.number().int().min(0).max(1_000_000),
     twitterMinViews: z.number().int().min(0).max(100_000_000),
     twitterLimitPerKeyword: z.number().int().min(1).max(100),
+
+    /**
+     * Sub forum pages only. A thread URL here would be read as a forum with no
+     * threads in it, and anything off the site would be opened in the scraper's
+     * browser — neither should get past a save.
+     */
+    bhwForumUrls: z
+      .array(
+        z
+          .string()
+          .trim()
+          .url()
+          .max(500)
+          .refine(
+            (u) => /^https:\/\/(www\.)?blackhatworld\.com\/forums\/[^/?#]+\.\d+\/?(\?.*)?$/i.test(u),
+            'Use a BlackHatWorld sub forum link, like https://www.blackhatworld.com/forums/hire-a-freelancer.76/',
+          ),
+      )
+      .max(20),
+    bhwLimitPerForum: z.number().int().min(1).max(100),
 
     upworkWatchEnabled: z.boolean(),
     upworkJobsUrl: z.string().url().max(500),
