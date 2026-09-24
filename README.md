@@ -1,6 +1,6 @@
 # FindClients | By Seekehr
 
-Self-hosted lead discovery for freelancers. It watches Upwork for new job postings and scrapes X/Twitter for people who are hiring, optionally screens the X finds with Google Gemini, and puts it all in a dashboard.
+Self-hosted lead discovery for freelancers. It watches Upwork for new job postings, scrapes X/Twitter for people who are hiring and BlackHatWorld sub forums for new threads, optionally screens the scraped finds with Google Gemini, and puts it all in a dashboard.
 
 **Upwork is watched, never scraped.** Paging through the Upwork feed pulling every listing breaks its terms of service and is the quickest way to lose the account. Instead FindClients keeps one tab open on the feed you already use, reloads that single page every 10–15 minutes (never more often than every 10), and tells you about a new job 2–3 minutes after it appears, randomly, per job. Those alerts land in **New Opportunities**. There is no setting that turns bulk Upwork collection on.
 
@@ -40,6 +40,8 @@ npm run chrome
 Sign in to Upwork and X in that window, then **leave it open**. That is the whole setup. Every scrape — and the Upwork watcher's permanent tab — attaches to this browser over CDP and reuses the session, so you sign in once and never again. The profile lives in `data/chrome-profile/` and survives restarts.
 
 You can also sign in from **Connections → Sign in**, which opens a login tab in that Chrome and notices on its own once you are in. Closing that tab cancels it; the rest of the browser stays open, and an X sign-in leaves the Upwork watcher running.
+
+BlackHatWorld needs no sign-in — its forums are public. The first scrape shows Cloudflare's "Just a moment..." check in that Chrome; click through it once and later runs go straight through.
 
 Then set your keywords in the app under **Config**.
 
@@ -105,7 +107,7 @@ Discord / Reddit / LinkedIn scrapers (the platforms are listed in the UI and mar
 
 ## Disclaimer
 
-Automating access to Upwork and X may violate their Terms of Service and can get the account you connect restricted or banned. Use accounts you own, at your own risk.
+Automating access to Upwork, X and BlackHatWorld may violate their Terms of Service and can get the account you connect restricted or banned. Use accounts you own, at your own risk.
 
 FindClients does not bulk-scrape Upwork, and the pacing defaults exist for a reason. Turning them down until the watcher behaves like a poller puts your account back in exactly the position this design avoids.
 

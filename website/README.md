@@ -29,7 +29,7 @@ The API base URL is `NEXT_PUBLIC_API_URL`, defaulting to `/api` (same origin, as
 | `/dashboard/bookmarks` | Saved leads |
 | `/dashboard/analytics` | Leads over time, by platform, and scrape history |
 | `/dashboard/connections` | Sign in to X and Upwork |
-| `/dashboard/config` | Keywords, scraping, Upwork watcher pacing, AI criteria and key, notifications |
+| `/dashboard/config` | Keywords, scraping, BlackHatWorld sub forums, Upwork watcher pacing, AI criteria and key, notifications |
 
 ## Layout
 

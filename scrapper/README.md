@@ -10,6 +10,7 @@ There are **two exported lists**, and which one a platform is in is a decision a
 | Path | What |
 | --- | --- |
 | `twitter/` | X live-search scraper — keywords, like/view thresholds, age window |
+| `blackhatworld/` | BlackHatWorld scraper — new threads in the sub forums you list, no account |
 | `upwork/` | Upwork connector — sign-in, session checks, feed parsing |
 | `upwork/watch.ts` | The Upwork tab: reload, read, occasionally click through to one job |
 | `lib/profile.ts` | Where sessions live: attaches to your Chrome over CDP, or launches a persistent profile per platform |
@@ -42,13 +43,15 @@ There are no cookies anywhere in this design. `ScrapeContext` carries no credent
 
 No profile → the scraper logs it and returns `[]`.
 
+BlackHatWorld is the exception: its forums are public, so it sets `requiresSignIn: false` and the cycle runs it without a connection. Its profile only keeps the Cloudflare clearance.
+
 ## The contract
 
 ```ts
 import type { Scraper, RawLead, ScrapeContext } from '../server/src/scrapers/types';
 
 export const myScraper: Scraper = {
-  platform: 'twitter',         // 'upwork' | 'twitter' | 'discord' | 'reddit' | 'linkedin'
+  platform: 'twitter',         // 'upwork' | 'twitter' | 'discord' | 'reddit' | 'linkedin' | 'blackhatworld'
   name: 'Twitter/X',
   mode: 'scrape',              // 'watch' platforms omit scrape() entirely
   async scrape(ctx: ScrapeContext): Promise<RawLead[]> { return []; },
@@ -95,7 +98,9 @@ poll() → challenge on screen → you solve it → jobs
 
 Set `CAPTCHA_OPEN_WINDOW=false` to skip challenges outright instead of waiting.
 
-Detection is keyword-based on URL + title (`just a moment`, `checking your browser`, `attention required`, `access denied`, `captcha`, `challenge`, `verify`, `robot`, `blocked`), plus Cloudflare's challenge markup and a 403/503 on the navigation itself, which is how Cloudflare's "Just a moment..." arrives. Solved means those signals are gone. **Wired into Upwork only** — Twitter has no challenge detection yet.
+Detection is keyword-based on URL + title (`just a moment`, `checking your browser`, `attention required`, `access denied`, `captcha`, `challenge`, `verify`, `robot`, `blocked`), plus Cloudflare's challenge markup and a 403/503 on the navigation itself, which is how Cloudflare's "Just a moment..." arrives. Solved means those signals are gone. **Wired into Upwork and BlackHatWorld** — Twitter has no challenge detection yet.
+
+BlackHatWorld gives Cloudflare 20 seconds to clear on its own first, then brings its tab to the front (or reopens a headless launch visibly) and waits the same `captchaTimeoutMs`. Nobody there in time and the run fails with a Cloudflare error rather than returning `[]`.
 
 ## CLI
 
@@ -107,11 +112,11 @@ Reads [`cli_config.json`](./cli_config.example.json) (copy from the example) for
 
 **It skips Upwork**, and deliberately: Upwork is watched, not scraped, and a terminal escape hatch would put back exactly what was removed. Run the app and open **New Opportunities** for job alerts. `upwork/__smoke.ts` performs one reload of the feed as a diagnostic.
 
-Sign in from the terminal with `npm run cli -- --sign-in upwork` (or `twitter`). It writes the same profile the app uses, so signing in either place works for both.
+Sign in from the terminal with `npm run cli -- --sign-in upwork` (or `twitter`; `blackhatworld` just clears its Cloudflare check once). It writes the same profile the app uses, so signing in either place works for both.
 
 ## Getting your config
 
-It arrives on the context — `ctx.config` — already read from `data/config.json` by the server; Twitter uses it for keywords and thresholds. A watcher gets its settings the same way, through `WatchTabOptions`: the feed URL and whether to click through for client details. The reload and hold windows never reach the scrapper workspace at all — the server keeps those, because they govern the whole system's footprint rather than one page's behaviour.
+It arrives on the context — `ctx.config` — already read from `data/config.json` by the server; Twitter uses it for keywords and thresholds, BlackHatWorld for its sub forum list. A watcher gets its settings the same way, through `WatchTabOptions`: the feed URL and whether to click through for client details. The reload and hold windows never reach the scrapper workspace at all — the server keeps those, because they govern the whole system's footprint rather than one page's behaviour.
 
 That used to be an authenticated HTTP call to the server's `/api/internal`, so a scraper could run on a different machine from the API. Nothing does, so it was a network round trip into the same process.
 
@@ -124,7 +129,8 @@ Runtime (machine-level) settings only. What to search for lives in `data/config.
 | Var | Default |
 | --- | --- |
 | `UPWORK_HEADLESS` / `X_HEADLESS` | `true` |
-| `UPWORK_USER_AGENT` / `X_USER_AGENT` | unset — the browser's own |
+| `BHW_HEADLESS` | `false` — Cloudflare stops a headless browser |
+| `UPWORK_USER_AGENT` / `X_USER_AGENT` / `BHW_USER_AGENT` | unset — the browser's own |
 | `UPWORK_REQUEST_DELAY_MS` | `1500` |
 | `UPWORK_DETAIL_TIMEOUT_MS` | `10000` |
 | `X_PROXY_LIST` | — (comma-separated, rotating) |
@@ -136,6 +142,7 @@ Runtime (machine-level) settings only. What to search for lives in `data/config.
 1. Implement `scrape()` in a new folder, with `mode: 'scrape'`.
 2. Add it to the `scrapers` array in [`index.ts`](./index.ts).
 3. If the platform is new, add it to the `platform` enum in `server/src/types.ts` so users can pick it on the Config page.
+4. If it needs no account, set `requiresSignIn: false`.
 
 If the platform's terms forbid automated collection, do not add a `scrape()` — implement a `PlatformWatcher`, export it in `watchers`, and give the `Scraper` `mode: 'watch'`.
 
