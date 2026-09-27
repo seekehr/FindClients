@@ -3,8 +3,9 @@
 > **Upwork is not scraped.** It is watched — one tab, reloaded every few
 > minutes, new jobs announced after a random pause. That is a different system
 > with a different file; see [The Upwork watcher](#the-upwork-watcher) at the
-> bottom. Everything above it describes the scrape cycle, which today means
-> X/Twitter.
+> bottom. LinkedIn job search is watched the same way. Everything above it
+> describes the scrape cycle, which today means X/Twitter, LinkedIn posts and
+> BlackHatWorld.
 
 ## When
 
@@ -73,7 +74,17 @@ A scraper in the cycle above, like X, with two differences.
 
 **Cloudflare.** The first visit gets a "Just a moment..." Turnstile page. The scraper waits 20 seconds for it to clear by itself, then, if `CAPTCHA_OPEN_WINDOW` allows, brings the tab forward (your Chrome) or reopens visibly (a launched headless browser) and waits `CAPTCHA_TIMEOUT_MS` for you to click through. It never solves the check itself. The clearance cookie stays in the profile, so later runs go straight through until Cloudflare expires it. A launched browser is visible by default (`BHW_HEADLESS=false`), because a clearance earned in a visible window does not carry over to a headless one. To clear it before the first scheduled run: `npm run cli -- --sign-in blackhatworld` from `scrapper/`.
 
+## LinkedIn
+
+Two halves, collected two ways ([scrapper/linkedin/](scrapper/linkedin)). Both need LinkedIn signed in on the Connections page.
+
+**Posts are scraped**, in the cycle above, like X. **Platform tuning → LinkedIn posts** picks where: *Your home feed* scrolls `linkedinFeedScrolls` screens of `/feed/` and keeps posts containing one of your keywords; *Post search* searches posts for each keyword, latest first (a phrase is quoted), up to `linkedinLimitPerKeyword` each. Nothing is selected by class name — LinkedIn's are hashed per deploy. Posts are found by `componentkey`, and a post's permalink and exact publish time are decoded from the id in its comment box's key.
+
+**Jobs are watched**, by the watcher below, never by the cycle. Paste a job search under **LinkedIn job alerts** in Config; the tab reloads its first page on the same pacing as Upwork (its own settings, same 10-minute floor), and "open the job before alerting" clicks the job in the list to read its description and applicant count rather than navigating to it. It only adopts a tab that is already on a job search. LinkedIn does not keep job search results in date order, so a narrow search ("Past 24 hours", a job title) that fits on one page is what makes this reliable.
+
 ## The Upwork watcher
+
+> The LinkedIn job watcher is this same loop — one per platform, each with its own tab, clock and settings — with [scrapper/linkedin/watch.ts](scrapper/linkedin/watch.ts) in place of the Upwork page code.
 
 Upwork used to be a scraper in the cycle above: open the feed, click "Load More" up to twenty times, open every job. That is the behaviour Upwork's terms forbid and its systems are built to catch, and it is what gets accounts suspended. It was removed rather than tuned down, and `upworkScraper` no longer has a `scrape()` method at all — `Scraper.scrape` is optional precisely so a watched platform can decline to have one.
 

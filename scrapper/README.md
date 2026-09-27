@@ -5,7 +5,7 @@ Platform collectors for FindClients. The server loads [`index.ts`](./index.ts) a
 There are **two exported lists**, and which one a platform is in is a decision about that platform's terms of service:
 
 - `scrapers` — everything the server can sign in to. Those with `mode: 'scrape'` are also run by the scheduled cycle.
-- `watchers` — long-lived tabs, for platforms that must not be scraped. Upwork is the only one: bulk collection breaks its terms and gets accounts banned, so it gets one tab left open on the feed instead. `upworkScraper` is still in `scrapers` for sign-in and session checks, but with `mode: 'watch'` and **no `scrape()` method at all**, so the cycle cannot collect from it even by accident.
+- `watchers` — long-lived tabs, for job feeds that must not be scraped. Upwork: bulk collection breaks its terms and gets accounts banned, so it gets one tab left open on the feed instead. `upworkScraper` is still in `scrapers` for sign-in and session checks, but with `mode: 'watch'` and **no `scrape()` method at all**, so the cycle cannot collect from it even by accident. LinkedIn is in both lists: `mode: 'scrape'` for its posts, and a watcher for its job search.
 
 | Path | What |
 | --- | --- |
@@ -13,6 +13,8 @@ There are **two exported lists**, and which one a platform is in is a decision a
 | `blackhatworld/` | BlackHatWorld scraper — new threads in the sub forums you list, no account |
 | `upwork/` | Upwork connector — sign-in, session checks, feed parsing |
 | `upwork/watch.ts` | The Upwork tab: reload, read, occasionally click through to one job |
+| `linkedin/` | LinkedIn posts scraper — home feed or post search by keyword — plus sign-in and session checks |
+| `linkedin/watch.ts` | The LinkedIn jobs tab: reload your job search, read the cards, click one to read it |
 | `lib/profile.ts` | Where sessions live: attaches to your Chrome over CDP, or launches a persistent profile per platform |
 | `lib/local.ts` | Reads `data/config.json` for the standalone tools |
 | `cli.ts` | Standalone runner and `--sign-in`, no app needed |
@@ -112,7 +114,7 @@ Reads [`cli_config.json`](./cli_config.example.json) (copy from the example) for
 
 **It skips Upwork**, and deliberately: Upwork is watched, not scraped, and a terminal escape hatch would put back exactly what was removed. Run the app and open **New Opportunities** for job alerts. `upwork/__smoke.ts` performs one reload of the feed as a diagnostic.
 
-Sign in from the terminal with `npm run cli -- --sign-in upwork` (or `twitter`; `blackhatworld` just clears its Cloudflare check once). It writes the same profile the app uses, so signing in either place works for both.
+Sign in from the terminal with `npm run cli -- --sign-in upwork` (or `twitter`, `linkedin`; `blackhatworld` just clears its Cloudflare check once). The CLI runs LinkedIn posts, never LinkedIn jobs. It writes the same profile the app uses, so signing in either place works for both.
 
 ## Getting your config
 
@@ -128,9 +130,9 @@ Runtime (machine-level) settings only. What to search for lives in `data/config.
 
 | Var | Default |
 | --- | --- |
-| `UPWORK_HEADLESS` / `X_HEADLESS` | `true` |
+| `UPWORK_HEADLESS` / `X_HEADLESS` / `LINKEDIN_HEADLESS` | `true` |
 | `BHW_HEADLESS` | `false` — Cloudflare stops a headless browser |
-| `UPWORK_USER_AGENT` / `X_USER_AGENT` / `BHW_USER_AGENT` | unset — the browser's own |
+| `UPWORK_USER_AGENT` / `X_USER_AGENT` / `BHW_USER_AGENT` / `LINKEDIN_USER_AGENT` | unset — the browser's own |
 | `UPWORK_REQUEST_DELAY_MS` | `1500` |
 | `UPWORK_DETAIL_TIMEOUT_MS` | `10000` |
 | `X_PROXY_LIST` | — (comma-separated, rotating) |

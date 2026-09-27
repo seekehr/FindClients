@@ -40,7 +40,7 @@ export function platformLabel(id: string): string {
 }
 
 /** The platforms FindClients can collect from today, one way or another. */
-export const SUPPORTED_PLATFORMS = new Set(['upwork', 'twitter', 'blackhatworld'])
+export const SUPPORTED_PLATFORMS = new Set(['upwork', 'twitter', 'blackhatworld', 'linkedin'])
 
 /**
  * Platforms that are watched rather than scraped.
@@ -53,4 +53,14 @@ export const WATCHED_PLATFORMS = new Set(['upwork'])
 
 export function isWatchedPlatform(id: string): boolean {
   return WATCHED_PLATFORMS.has(id)
+}
+
+/**
+ * Platforms with job alerts — a watcher tab on a jobs feed. A superset of the
+ * above: LinkedIn is scraped for posts *and* watched for jobs.
+ */
+export const JOB_ALERT_PLATFORMS = new Set(['upwork', 'linkedin'])
+
+export function hasJobAlerts(id: string): boolean {
+  return JOB_ALERT_PLATFORMS.has(id)
 }

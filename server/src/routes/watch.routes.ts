@@ -1,56 +1,71 @@
 import { Router } from 'express';
-import { asyncHandler } from '../utils/http';
+import { asyncHandler, badRequest } from '../utils/http';
 import { browserStatus } from '../services/browser.service';
-import { getConfig } from '../services/config.service';
-import { checkNow, startWatcher, stopWatcher, watcherStatus } from '../watcher';
+import {
+  checkNow,
+  isWatchedPlatform,
+  startWatcher,
+  stopWatcher,
+  watcherStatus,
+  watcherStatuses,
+} from '../watcher';
 
 /**
- * The Upwork job watcher, as the UI sees it.
+ * The job watchers — Upwork and LinkedIn — as the UI sees them.
  *
- * Note what is missing: there is no endpoint here that collects. `check-now`
- * reloads the one page the watcher already has open — the same thing pressing
+ * Note what is missing: there is no endpoint here that collects. `check`
+ * reloads the one page a watcher already has open — the same thing pressing
  * F5 does — and every job it finds still waits out its human delay before it
- * reaches you. Nothing in this router can be used to pull the Upwork feed in
- * bulk, which is the entire point of the watcher existing.
+ * reaches you. Nothing in this router can be used to pull a jobs feed in bulk,
+ * which is the entire point of the watchers existing.
  */
 export const watchRouter = Router();
+
+function platformParam(value: string) {
+  if (!isWatchedPlatform(value)) throw badRequest(`${value} has no job alerts`);
+  return value;
+}
 
 watchRouter.get(
   '/',
   asyncHandler(async (_req, res) => {
-    res.json({ watcher: watcherStatus(), browser: await browserStatus() });
+    res.json({ watchers: watcherStatuses(), browser: await browserStatus() });
   }),
 );
 
 watchRouter.post(
-  '/start',
-  asyncHandler(async (_req, res) => {
-    if (!getConfig().upworkWatchEnabled) {
+  '/:platform/start',
+  asyncHandler(async (req, res) => {
+    const platform = platformParam(req.params.platform);
+    const current = watcherStatus(platform);
+    if (!current.enabled) {
       res.status(409).json({
-        error: 'Upwork job alerts are switched off. Turn them on in Config first.',
+        error: `${current.name} are switched off. Turn them on in Config first.`,
       });
       return;
     }
-    res.json({ watcher: startWatcher('started from the app') });
+    res.json({ watcher: startWatcher(platform, 'started from the app') });
   }),
 );
 
 watchRouter.post(
-  '/stop',
-  asyncHandler(async (_req, res) => {
-    res.json({ watcher: await stopWatcher('paused from the app') });
+  '/:platform/stop',
+  asyncHandler(async (req, res) => {
+    const platform = platformParam(req.params.platform);
+    res.json({ watcher: await stopWatcher(platform, 'paused from the app') });
   }),
 );
 
 /** Reload the open tab now instead of waiting out the interval. */
 watchRouter.post(
-  '/check',
-  asyncHandler(async (_req, res) => {
-    const watcher = checkNow();
+  '/:platform/check',
+  asyncHandler(async (req, res) => {
+    const platform = platformParam(req.params.platform);
+    const watcher = checkNow(platform);
     if (!watcher) {
       res.status(409).json({
         error: 'The watcher is not running. Start it first.',
-        watcher: watcherStatus(),
+        watcher: watcherStatus(platform),
       });
       return;
     }

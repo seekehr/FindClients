@@ -104,7 +104,7 @@ const REVIEW_SCHEMA = {
   propertyOrdering: ['score', 'qualified', 'reason'],
 } as const;
 
-const SYSTEM_INSTRUCTIONS = `You screen freelance leads that were found by keyword-matching scrapers on Upwork, X/Twitter and Discord. The scrapers have no judgment, so most of what reaches you is noise: people advertising their own services, job-board reposts, unpaid "exposure" work, and unrelated chatter that merely contained a matching phrase.
+const SYSTEM_INSTRUCTIONS = `You screen freelance leads that were found by keyword-matching scrapers on X/Twitter, LinkedIn, BlackHatWorld and Discord. The scrapers have no judgment, so most of what reaches you is noise: people advertising their own services, job-board reposts, unpaid "exposure" work, and unrelated chatter that merely contained a matching phrase.
 
 You will be given one lead and the user's own criteria for what makes a lead worth their time. Score the lead against those criteria and nothing else — the criteria are the specification, not a suggestion. Where the criteria are silent, apply the plain reading of what the user says they want.
 

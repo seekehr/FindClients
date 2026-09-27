@@ -55,8 +55,8 @@ export function createNotification(input: {
 /**
  * Does this lead pass the keyword / budget filters?
  *
- * Scraped leads only. Upwork alerts skip filtering entirely: the watched feed
- * is already the user's own Upwork search.
+ * Scraped leads only. Job alerts (Upwork, LinkedIn jobs) skip filtering
+ * entirely: the watched feed is already the user's own job search.
  */
 export function matchesLeadFilters(lead: LeadDTO, config: AppConfig): boolean {
   const haystack = `${lead.title} ${lead.description} ${lead.tags.join(' ')}`.toLowerCase();
@@ -136,7 +136,7 @@ async function postDiscord(webhookUrl: string, leads: LeadDTO[]): Promise<void> 
 /**
  * Post one message to a Discord webhook.
  *
- * Exported so the Upwork watcher can announce a single job in its own words,
+ * Exported so the job watchers can announce a single job in its own words,
  * rather than being forced through the batched "N new leads" wording above,
  * which reads oddly when N is always one.
  */

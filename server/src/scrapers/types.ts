@@ -75,6 +75,11 @@ export interface Scraper {
    * automated collection and it enforces them: a session that walks the feed
    * pulling every job, page after page, is the exact pattern behind the banned
    * accounts. Watching one tab the way a person leaves it open is not.
+   *
+   * The mode only says whether the *cycle* runs a platform. A `'scrape'`
+   * platform may still have a watcher for another part of the site — LinkedIn
+   * is scraped for posts and watched for jobs, and the watcher is looked up by
+   * platform in `watchers`, whatever the mode here says.
    */
   mode: 'scrape' | 'watch';
 
@@ -123,14 +128,17 @@ export interface Scraper {
  */
 
 export interface WatchTabOptions {
-  /** The feed to sit on. Any Upwork search URL the user pasted. */
+  /** The feed to sit on. Any Upwork or LinkedIn job search URL the user pasted. */
   feedUrl: string;
   log: (msg: string) => void;
   /** Whether a person is around to clear a bot challenge in the window. */
   interactive: boolean;
   /** How long to leave that challenge on screen before giving up. */
   captchaTimeoutMs: number;
-  /** Also read each new job's own page for client rating and hire rate. */
+  /**
+   * Also read more about each new job before alerting — client rating and
+   * hire rate on Upwork, the description and applicant count on LinkedIn.
+   */
   fetchDetails: boolean;
 }
 
@@ -162,8 +170,10 @@ export interface WatchTab {
   poll(): Promise<WatchResult>;
 
   /**
-   * Open one job's own page and read what the feed tile could not show —
-   * client rating, hire rate — then come back to the feed.
+   * Open one job and read what the feed tile could not show — client rating
+   * and hire rate on Upwork, the full description and applicant count on
+   * LinkedIn — then come back to the feed. A `description` key in the result
+   * replaces the lead's description; everything else is merged as metadata.
    *
    * Called a couple of minutes after the job was spotted, never during a
    * reload, and only for jobs that are about to be alerted on. That is the one

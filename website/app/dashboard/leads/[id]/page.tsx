@@ -170,7 +170,7 @@ export default function LeadDetailPage({
                       {lead.platform === 'upwork' && (
                         <ProposalsBadge value={lead.metadata?.proposals} />
                       )}
-                      <AiVerdictBadge ai={lead.ai} platform={lead.platform} />
+                      <AiVerdictBadge ai={lead.ai} platform={lead.platform} metadata={lead.metadata} />
                     </div>
                     <h1 className="mt-2 font-display text-2xl leading-8 font-semibold tracking-[-0.02em]">
                       {lead.title}
@@ -203,12 +203,14 @@ export default function LeadDetailPage({
 
                 <div className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-surface-raised p-4 sm:grid-cols-3">
                   <Fact label="Budget" value={lead.budget || '—'} />
-                  {/* Upwork jobs have no timeline; their proposal count matters more. */}
+                  {/* Jobs have no timeline; how crowded they are matters more. */}
                   {lead.platform === 'upwork' ? (
                     <Fact
                       label="Proposals"
                       value={proposalsTier(lead.metadata?.proposals) || '—'}
                     />
+                  ) : lead.metadata?.kind === 'job' ? (
+                    <Fact label="Applicants" value={String(lead.metadata?.applicants || '—')} />
                   ) : (
                     <Fact label="Timeline" value={lead.timeline || '—'} />
                   )}

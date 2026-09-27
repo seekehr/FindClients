@@ -127,6 +127,11 @@ export interface UserConfig {
   bhwForumUrls: string[]
   bhwLimitPerForum: number
 
+  /** LinkedIn posts: scroll your home feed, or search posts per keyword. */
+  linkedinPostSource: 'feed' | 'search'
+  linkedinLimitPerKeyword: number
+  linkedinFeedScrolls: number
+
   /** Upwork is watched for job alerts, never scraped. See `watchApi`. */
   upworkWatchEnabled: boolean
   upworkJobsUrl: string
@@ -136,6 +141,16 @@ export interface UserConfig {
   upworkReloadMaxMinutes: number
   upworkAlertDelayMinSeconds: number
   upworkAlertDelayMaxSeconds: number
+
+  /** LinkedIn jobs are watched like Upwork's, never scraped. */
+  linkedinWatchEnabled: boolean
+  linkedinJobsUrl: string
+  linkedinFetchDetails: boolean
+  linkedinMaxAgeHours: number
+  linkedinReloadMinMinutes: number
+  linkedinReloadMaxMinutes: number
+  linkedinAlertDelayMinSeconds: number
+  linkedinAlertDelayMaxSeconds: number
 
   aiEnabled: boolean
   aiPrompt: string
@@ -205,7 +220,7 @@ export interface Notification {
 }
 
 /**
- * One Upwork job alert, as shown in the New Opportunities panel.
+ * One job alert (Upwork or LinkedIn), as shown in the New Opportunities panel.
  *
  * A snapshot, not a pointer: the panel stays readable after the lead behind it
  * has been archived or cleared. `leadId` links back when there still is one.
@@ -217,7 +232,10 @@ export interface Opportunity {
   title: string
   url: string | null
   budget: string | null
-  /** "4.9★ · 92% hire rate · $40k spent · United States", when known. */
+  /**
+   * "4.9★ · 92% hire rate · $40k spent · United States" on Upwork,
+   * "Acme · Lahore (Remote) · 23 applicants" on LinkedIn, when known.
+   */
   client: string
   /** Upwork's proposal tier, e.g. "Less than 5". Missing on older alerts. */
   proposals?: string
@@ -231,7 +249,7 @@ export interface Opportunity {
   alertedTime: string
   /** How long it was deliberately held back. */
   heldForSeconds: number
-  /** Null for new alerts: Upwork jobs are not AI-reviewed. Older alerts keep theirs. */
+  /** Null for new alerts: job alerts are not AI-reviewed. Older alerts keep theirs. */
   verdict: 'qualified' | 'rejected' | 'error' | null
   score: number | null
   seen: boolean
@@ -256,8 +274,11 @@ export interface QueuedAlert {
   dueInSeconds: number
 }
 
+/** The platforms with job alerts. */
+export type WatchedPlatform = 'upwork' | 'linkedin'
+
 export interface WatcherStatus {
-  platform: string
+  platform: WatchedPlatform
   name: string
   /** Job alerts are switched on in your config. */
   enabled: boolean
@@ -322,7 +343,7 @@ export const connectionsApi = {
       connections: Connection[]
       signIn: SignInState | null
       browser: BrowserStatus
-      watcher: WatcherStatus
+      watchers: WatcherStatus[]
     }>('/connections'),
   /**
    * Opens a real browser window on the machine running the server and returns
@@ -371,18 +392,21 @@ export const notificationsApi = {
 }
 
 /**
- * The Upwork job watcher.
+ * The job watchers, one per platform (Upwork, LinkedIn).
  *
  * There is no "collect" call here and there will not be one. `check()` reloads
- * the single tab the watcher already has open — the same thing pressing F5
+ * the single tab that watcher already has open — the same thing pressing F5
  * does — and everything it finds still waits out its random delay before it
  * reaches the panel.
  */
 export const watchApi = {
-  status: () => api<{ watcher: WatcherStatus; browser: BrowserStatus }>('/watch'),
-  start: () => api<{ watcher: WatcherStatus }>('/watch/start', { method: 'POST' }),
-  stop: () => api<{ watcher: WatcherStatus }>('/watch/stop', { method: 'POST' }),
-  check: () => api<{ watcher: WatcherStatus }>('/watch/check', { method: 'POST' }),
+  status: () => api<{ watchers: WatcherStatus[]; browser: BrowserStatus }>('/watch'),
+  start: (platform: WatchedPlatform) =>
+    api<{ watcher: WatcherStatus }>(`/watch/${platform}/start`, { method: 'POST' }),
+  stop: (platform: WatchedPlatform) =>
+    api<{ watcher: WatcherStatus }>(`/watch/${platform}/stop`, { method: 'POST' }),
+  check: (platform: WatchedPlatform) =>
+    api<{ watcher: WatcherStatus }>(`/watch/${platform}/check`, { method: 'POST' }),
 }
 
 export const opportunitiesApi = {

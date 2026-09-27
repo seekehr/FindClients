@@ -48,6 +48,28 @@ export const DEFAULT_AI_MODEL: AiModel = 'gemini-3.8-flash';
 export const UPWORK_RELOAD_FLOOR_MINUTES = 10;
 
 /**
+ * The same floor for the LinkedIn jobs tab. LinkedIn restricts accounts it
+ * catches automating just as readily as Upwork does, and the reasoning is the
+ * same: a page refreshed every few minutes all day is a poller, not a person.
+ */
+export const LINKEDIN_RELOAD_FLOOR_MINUTES = 10;
+
+/** Platforms with a job-alert watcher — a tab left open on a jobs feed. */
+export type WatchedPlatform = 'upwork' | 'linkedin';
+
+export const WATCHED_PLATFORMS: WatchedPlatform[] = ['upwork', 'linkedin'];
+
+/**
+ * How LinkedIn posts are found.
+ *
+ *  - `'feed'` — scroll your home feed and keep posts containing one of your
+ *    keywords. Only sees what LinkedIn chooses to show you.
+ *  - `'search'` — search posts for each keyword, latest first, the way the X
+ *    scraper does. Finds far more, and is one search page per keyword.
+ */
+export type LinkedInPostSource = 'feed' | 'search';
+
+/**
  * Platform-specific facts a scraper collected about a lead, beyond the fields
  * every platform shares. Free-form on purpose: an Upwork job has a client hire
  * rate, a tweet has view counts, and neither should force a field on the other.
@@ -156,6 +178,16 @@ export interface AppConfig {
   bhwLimitPerForum: number;
 
   /**
+   * LinkedIn posts — the scraped half of LinkedIn. Your keywords decide what
+   * counts; `linkedinPostSource` decides where they are looked for.
+   */
+  linkedinPostSource: LinkedInPostSource;
+  /** Posts collected per keyword, in search mode. */
+  linkedinLimitPerKeyword: number;
+  /** Screens of the home feed to scroll through, in feed mode. */
+  linkedinFeedScrolls: number;
+
+  /**
    * Upwork job alerts.
    *
    * Upwork is deliberately not scraped. It is *watched*: one tab is left open
@@ -174,6 +206,22 @@ export interface AppConfig {
   /** Hold a spotted job this long before it reaches you, so nothing is instant. */
   upworkAlertDelayMinSeconds: number;
   upworkAlertDelayMaxSeconds: number;
+
+  /**
+   * LinkedIn job alerts — the watched half of LinkedIn, and the same machinery
+   * as Upwork's: one tab on your saved job search, reloaded on a random
+   * interval, each new posting announced after a random pause. Job search
+   * results are never paged through.
+   */
+  linkedinWatchEnabled: boolean;
+  linkedinJobsUrl: string;
+  /** Click the job in the list to read its description and applicant count. */
+  linkedinFetchDetails: boolean;
+  linkedinMaxAgeHours: number;
+  linkedinReloadMinMinutes: number;
+  linkedinReloadMaxMinutes: number;
+  linkedinAlertDelayMinSeconds: number;
+  linkedinAlertDelayMaxSeconds: number;
 
   // AI qualification — your definition of a lead worth your time.
   aiEnabled: boolean;
@@ -233,7 +281,8 @@ export interface Opportunity {
   client: string;
   /**
    * Upwork's proposal tier ("Less than 5", "5 to 10", …) — how much competition
-   * there is. '' when unknown; missing on alerts stored before it was kept.
+   * there is. '' when unknown, and always '' for LinkedIn, whose applicant
+   * count goes in `client` instead. Missing on alerts stored before it was kept.
    */
   proposals?: string;
   tags: string[];

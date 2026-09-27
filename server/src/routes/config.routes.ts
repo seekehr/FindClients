@@ -2,8 +2,13 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/http';
 import { getConfig, resetConfig, updateConfig } from '../services/config.service';
-import { AI_MODELS, PLATFORMS, UPWORK_RELOAD_FLOOR_MINUTES } from '../types';
-import { syncWatcherWithConfig } from '../watcher';
+import {
+  AI_MODELS,
+  LINKEDIN_RELOAD_FLOOR_MINUTES,
+  PLATFORMS,
+  UPWORK_RELOAD_FLOOR_MINUTES,
+} from '../types';
+import { syncWatchersWithConfig } from '../watcher';
 
 export const configRouter = Router();
 
@@ -53,6 +58,11 @@ const patchSchema = z
       .max(20),
     bhwLimitPerForum: z.number().int().min(1).max(100),
 
+    linkedinPostSource: z.enum(['feed', 'search']),
+    linkedinLimitPerKeyword: z.number().int().min(1).max(50),
+    /** Each scroll is one more screen of feed loaded — bounded like everything else. */
+    linkedinFeedScrolls: z.number().int().min(1).max(30),
+
     upworkWatchEnabled: z.boolean(),
     upworkJobsUrl: z.string().url().max(500),
     upworkFetchDetails: z.boolean(),
@@ -71,6 +81,27 @@ const patchSchema = z
      */
     upworkAlertDelayMinSeconds: z.number().int().min(30).max(3600),
     upworkAlertDelayMaxSeconds: z.number().int().min(30).max(7200),
+
+    linkedinWatchEnabled: z.boolean(),
+    /**
+     * A LinkedIn job search. Anything else — a profile, the feed, another site
+     * — would be reloaded all day in the watcher's tab, so it cannot be saved.
+     */
+    linkedinJobsUrl: z
+      .string()
+      .trim()
+      .url()
+      .max(1000)
+      .refine(
+        (u) => /^https:\/\/(www\.)?linkedin\.com\/jobs\/(search-results|search|collections)\b/i.test(u),
+        'Use a LinkedIn job search link, like https://www.linkedin.com/jobs/search-results/?keywords=developer',
+      ),
+    linkedinFetchDetails: z.boolean(),
+    linkedinMaxAgeHours: z.number().int().min(1).max(720),
+    linkedinReloadMinMinutes: z.number().int().min(LINKEDIN_RELOAD_FLOOR_MINUTES).max(120),
+    linkedinReloadMaxMinutes: z.number().int().min(LINKEDIN_RELOAD_FLOOR_MINUTES).max(240),
+    linkedinAlertDelayMinSeconds: z.number().int().min(30).max(3600),
+    linkedinAlertDelayMaxSeconds: z.number().int().min(30).max(7200),
 
     aiEnabled: z.boolean(),
     // Long enough for real criteria with examples, short enough that it cannot
@@ -112,6 +143,20 @@ const patchSchema = z
       v.upworkAlertDelayMaxSeconds === undefined ||
       v.upworkAlertDelayMinSeconds <= v.upworkAlertDelayMaxSeconds,
     { message: 'The shortest alert delay must not be longer than the longest.', path: ['upworkAlertDelayMinSeconds'] },
+  )
+  .refine(
+    (v) =>
+      v.linkedinReloadMinMinutes === undefined ||
+      v.linkedinReloadMaxMinutes === undefined ||
+      v.linkedinReloadMinMinutes <= v.linkedinReloadMaxMinutes,
+    { message: 'The shortest reload gap must not be longer than the longest.', path: ['linkedinReloadMinMinutes'] },
+  )
+  .refine(
+    (v) =>
+      v.linkedinAlertDelayMinSeconds === undefined ||
+      v.linkedinAlertDelayMaxSeconds === undefined ||
+      v.linkedinAlertDelayMinSeconds <= v.linkedinAlertDelayMaxSeconds,
+    { message: 'The shortest alert delay must not be longer than the longest.', path: ['linkedinAlertDelayMinSeconds'] },
   );
 
 configRouter.get(
@@ -132,9 +177,9 @@ configRouter.put(
   '/',
   asyncHandler(async (req, res) => {
     const config = updateConfig(patchSchema.parse(req.body));
-    // Switching Upwork alerts on or off has to take effect now, not at the
-    // next restart — the toggle is the only control most people will use.
-    syncWatcherWithConfig();
+    // Switching job alerts on or off has to take effect now, not at the next
+    // restart — the toggle is the only control most people will use.
+    syncWatchersWithConfig();
     res.json({ config });
   }),
 );
@@ -143,7 +188,7 @@ configRouter.post(
   '/reset',
   asyncHandler(async (_req, res) => {
     const config = resetConfig();
-    syncWatcherWithConfig();
+    syncWatchersWithConfig();
     res.json({ config });
   }),
 );

@@ -1,6 +1,6 @@
 # server/
 
-The backend: REST API, JSON storage, scrape scheduler, the Upwork watcher, AI qualification — and, in production, the built website too, so the whole app is one process on one port.
+The backend: REST API, JSON storage, scrape scheduler, the Upwork and LinkedIn job watchers, AI qualification — and, in production, the built website too, so the whole app is one process on one port.
 
 ## Stack
 
@@ -32,7 +32,7 @@ Config comes from the root [`.env`](../.env.example). Set `SERVE_WEBSITE=false` 
 | `services/` | Business logic — leads, opportunities, config, connections, browser, AI, notifications, analytics |
 | `routes/` | HTTP surface, one router per resource, all under `/api` |
 | `scrapers/` | Loads `../scrapper`, runs the cycle, defines the `Scraper` contract |
-| `watcher/` | The Upwork job watcher — reload pacing, per-job hold, alerts |
+| `watcher/` | The job watchers, one loop per platform (Upwork, LinkedIn) — reload pacing, per-job hold, alerts |
 | `scheduler/` | Cron + jitter |
 | `utils/` | http errors, logging, text sanitizing, hashing, relative time |
 

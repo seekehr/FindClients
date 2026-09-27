@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { JsonFile, registerForFlush, flushAll } from './json-file';
 import {
   DEFAULT_AI_MODEL,
+  LINKEDIN_RELOAD_FLOOR_MINUTES,
   UPWORK_RELOAD_FLOOR_MINUTES,
   type AppConfig,
   type Lead,
@@ -67,7 +68,7 @@ export function defaultConfig(): StoredConfig {
     newLeadsNotification: true,
     discordWebhookUrl: '',
 
-    platforms: ['upwork', 'twitter', 'blackhatworld'],
+    platforms: ['upwork', 'twitter', 'blackhatworld', 'linkedin'],
     keywords: [
       'looking for a developer',
       'need a web designer',
@@ -89,6 +90,10 @@ export function defaultConfig(): StoredConfig {
     bhwForumUrls: ['https://www.blackhatworld.com/forums/hire-a-freelancer.76/'],
     bhwLimitPerForum: 20,
 
+    linkedinPostSource: 'feed',
+    linkedinLimitPerKeyword: 10,
+    linkedinFeedScrolls: 8,
+
     upworkWatchEnabled: true,
     upworkJobsUrl: 'https://www.upwork.com/nx/find-work/most-recent',
     upworkFetchDetails: true,
@@ -97,6 +102,18 @@ export function defaultConfig(): StoredConfig {
     upworkReloadMaxMinutes: 15,
     upworkAlertDelayMinSeconds: 120,
     upworkAlertDelayMaxSeconds: 180,
+
+    // Off until you have signed in to LinkedIn and pasted your own job search.
+    linkedinWatchEnabled: false,
+    // Past 24 hours, newest first. Any LinkedIn job search URL works here.
+    linkedinJobsUrl:
+      'https://www.linkedin.com/jobs/search-results/?keywords=software%20developer%2C%20remote&f_TPR=r86400',
+    linkedinFetchDetails: true,
+    linkedinMaxAgeHours: 24,
+    linkedinReloadMinMinutes: LINKEDIN_RELOAD_FLOOR_MINUTES,
+    linkedinReloadMaxMinutes: 15,
+    linkedinAlertDelayMinSeconds: 120,
+    linkedinAlertDelayMaxSeconds: 180,
 
     aiEnabled: false,
     aiPrompt:
@@ -139,6 +156,11 @@ configStore.data = { ...defaultConfig(), ...configStore.data };
     );
   }
   c.upworkReloadMaxMinutes = Math.max(c.upworkReloadMinMinutes, c.upworkReloadMaxMinutes);
+
+  if (c.linkedinReloadMinMinutes < LINKEDIN_RELOAD_FLOOR_MINUTES) {
+    c.linkedinReloadMinMinutes = LINKEDIN_RELOAD_FLOOR_MINUTES;
+  }
+  c.linkedinReloadMaxMinutes = Math.max(c.linkedinReloadMinMinutes, c.linkedinReloadMaxMinutes);
 }
 
 export const leadsStore = registerForFlush(new JsonFile<Lead[]>(file('leads.json'), () => []));
@@ -186,7 +208,7 @@ export const notificationsStore = registerForFlush(
 );
 
 /**
- * The New Opportunities feed: Upwork job alerts, newest first.
+ * The New Opportunities feed: Upwork and LinkedIn job alerts, newest first.
  *
  * Kept apart from `leadsStore` on purpose. A lead is a record you work — you
  * archive it, bookmark it, mark it won. An opportunity is an *event*: this job

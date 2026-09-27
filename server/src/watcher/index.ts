@@ -9,21 +9,26 @@ import { createNotification, postToDiscord } from '../services/notification.serv
 import { recordOpportunity } from '../services/opportunity.service';
 import { alertDelayMs, nextReloadDelayMs, staggerMs } from './random';
 import type { RawLead, WatchTab } from '../scrapers/types';
-import type { LeadMetadata } from '../types';
+import {
+  WATCHED_PLATFORMS,
+  type AppConfig,
+  type LeadMetadata,
+  type WatchedPlatform,
+} from '../types';
 
 /**
- * The Upwork job watcher.
+ * The job watchers — Upwork, and LinkedIn's job search.
  *
- * Upwork is the one platform FindClients does not scrape, and this file is what
- * it does instead.
+ * These are the platforms FindClients does not scrape for jobs, and this file
+ * is what it does instead.
  *
  * A scraper visits: it opens the feed, clicks "Load More" until it has
  * everything, opens every job in turn, and leaves. That is the behaviour
  * Upwork's terms forbid and its systems are built to spot — one session pulling
  * hundreds of listings on a fixed schedule is not a freelancer browsing, and
- * accounts that do it get banned.
+ * accounts that do it get banned. LinkedIn restricts accounts for the same.
  *
- * The watcher does not visit. It leaves one tab open on the feed you already
+ * A watcher does not visit. It leaves one tab open on the feed you already
  * use, reloads that single page every ten to fifteen minutes, and reads what came
  * back. It never pages, never asks for more than the first screen, and never
  * opens a job it was not already shown. When something new appears it waits two
@@ -31,8 +36,13 @@ import type { LeadMetadata } from '../types';
  * account that surfaces every listing four seconds after it goes up is the most
  * conspicuous one on the platform.
  *
+ * Each platform gets its own loop, its own tab and its own clock. They share
+ * nothing but the code: a LinkedIn sign-in pausing the LinkedIn tab must not
+ * cost you Upwork alerts, and two tabs reloading in lockstep would be a pattern
+ * of its own.
+ *
  * The delay is the feature, not an apology for one. Everything else in here
- * exists to keep the tab alive and honest about its own state.
+ * exists to keep the tabs alive and honest about their own state.
  */
 
 export type WatchState =
@@ -46,7 +56,7 @@ export type WatchState =
   | 'checking'
   /** A bot challenge is on screen and needs a person. */
   | 'blocked'
-  /** The Upwork session has expired. */
+  /** The session has expired. */
   | 'signed-out'
   /** The Chrome we attach to is not running. */
   | 'browser-down'
@@ -74,7 +84,7 @@ export interface QueuedAlertDTO {
 }
 
 export interface WatcherStatus {
-  platform: 'upwork';
+  platform: WatchedPlatform;
   name: string;
   /** Whether job alerts are switched on in your config. */
   enabled: boolean;
@@ -103,7 +113,41 @@ export interface WatcherStatus {
   delaySeconds: [number, number];
 }
 
-const PLATFORM = 'upwork' as const;
+/** One platform's knobs, read out of the config under its own names. */
+interface WatchSettings {
+  enabled: boolean;
+  feedUrl: string;
+  fetchDetails: boolean;
+  maxAgeHours: number;
+  reloadMinutes: [number, number];
+  delaySeconds: [number, number];
+}
+
+/** What a platform is called in logs, notifications and the UI. */
+const SITE: Record<WatchedPlatform, string> = { upwork: 'Upwork', linkedin: 'LinkedIn' };
+
+function settingsFor(platform: WatchedPlatform, c: AppConfig): WatchSettings {
+  if (platform === 'linkedin') {
+    return {
+      enabled: c.linkedinWatchEnabled,
+      feedUrl: c.linkedinJobsUrl,
+      fetchDetails: c.linkedinFetchDetails,
+      maxAgeHours: c.linkedinMaxAgeHours,
+      reloadMinutes: [c.linkedinReloadMinMinutes, c.linkedinReloadMaxMinutes],
+      delaySeconds: [c.linkedinAlertDelayMinSeconds, c.linkedinAlertDelayMaxSeconds],
+    };
+  }
+  return {
+    enabled: c.upworkWatchEnabled,
+    feedUrl: c.upworkJobsUrl,
+    fetchDetails: c.upworkFetchDetails,
+    maxAgeHours: c.upworkMaxAgeHours,
+    reloadMinutes: [c.upworkReloadMinMinutes, c.upworkReloadMaxMinutes],
+    delaySeconds: [c.upworkAlertDelayMinSeconds, c.upworkAlertDelayMaxSeconds],
+  };
+}
+
+const settings = (platform: WatchedPlatform) => settingsFor(platform, getConfig());
 
 /** How long to wait before retrying after a recoverable failure. */
 const RETRY_MS = 3 * 60 * 1000;
@@ -115,7 +159,10 @@ const SEED_WINDOW_MS = 30 * 60 * 1000;
 const SIGNED_OUT_RETRY_MS = 10 * 60 * 1000;
 
 interface WatcherRuntime {
+  platform: WatchedPlatform;
   tab: WatchTab | null;
+  /** The feed URL the open tab was pointed at, so a changed one reopens it. */
+  openedWith: string | null;
   timer: NodeJS.Timeout | null;
   queue: Map<string, QueuedAlert>;
   state: WatchState;
@@ -147,41 +194,60 @@ interface WatcherRuntime {
   lock: Promise<unknown>;
 }
 
-const runtime: WatcherRuntime = {
-  tab: null,
-  timer: null,
-  queue: new Map(),
-  state: 'off',
-  detail: 'Job alerts are off.',
-  startedAt: null,
-  lastCheckedAt: null,
-  nextCheckAt: null,
-  jobsOnFeed: 0,
-  checks: 0,
-  alerts: 0,
-  lastError: null,
-  warning: null,
-  seeding: true,
-  baseline: new Set(),
-  stopping: false,
-  lock: Promise.resolve(),
-};
+function newRuntime(platform: WatchedPlatform): WatcherRuntime {
+  return {
+    platform,
+    tab: null,
+    openedWith: null,
+    timer: null,
+    queue: new Map(),
+    state: 'off',
+    detail: 'Job alerts are off.',
+    startedAt: null,
+    lastCheckedAt: null,
+    nextCheckAt: null,
+    jobsOnFeed: 0,
+    checks: 0,
+    alerts: 0,
+    lastError: null,
+    warning: null,
+    seeding: true,
+    baseline: new Set(),
+    stopping: false,
+    lock: Promise.resolve(),
+  };
+}
 
-const log = (msg: string) => logger.info(`[Upwork alerts] ${msg}`);
+const runtimes = new Map<WatchedPlatform, WatcherRuntime>(
+  WATCHED_PLATFORMS.map((p) => [p, newRuntime(p)]),
+);
 
-function setState(state: WatchState, detail: string): void {
-  runtime.state = state;
-  runtime.detail = detail;
+export function isWatchedPlatform(platform: string): platform is WatchedPlatform {
+  return (WATCHED_PLATFORMS as readonly string[]).includes(platform);
+}
+
+function rt(platform: WatchedPlatform): WatcherRuntime {
+  return runtimes.get(platform)!;
+}
+
+const logFor = (platform: WatchedPlatform) => (msg: string) =>
+  logger.info(`[${SITE[platform]} alerts] ${msg}`);
+
+function setState(r: WatcherRuntime, state: WatchState, detail: string): void {
+  r.state = state;
+  r.detail = detail;
 }
 
 /** Run `fn` with exclusive use of the tab. */
-function withTab<T>(fn: () => Promise<T>): Promise<T> {
-  const next = runtime.lock.then(fn, fn);
+function withTab<T>(r: WatcherRuntime, fn: () => Promise<T>): Promise<T> {
+  const next = r.lock.then(fn, fn);
   // Keep the chain alive even when a link rejects, or one failed poll would
   // deadlock every later one.
-  runtime.lock = next.catch(() => undefined);
+  r.lock = next.catch(() => undefined);
   return next;
 }
+
+const isRunning = (r: WatcherRuntime) => r.timer !== null || r.state === 'checking';
 
 // ── Status ────────────────────────────────────────────────
 
@@ -189,18 +255,19 @@ function withTab<T>(fn: () => Promise<T>): Promise<T> {
  * The idle status line, worked out when asked rather than frozen at reload
  * time — a count of jobs "spotted" that were released minutes ago is wrong.
  */
-function watchingDetail(): string {
-  const held = runtime.queue.size;
+function watchingDetail(r: WatcherRuntime): string {
+  const held = r.queue.size;
   return held > 0
     ? `${held} new job${held === 1 ? '' : 's'} spotted — holding briefly before alerting.`
-    : `Watching the Upwork feed. ${runtime.jobsOnFeed} job(s) on it, nothing waiting.`;
+    : `Watching the ${SITE[r.platform]} feed. ${r.jobsOnFeed} job(s) on it, nothing waiting.`;
 }
 
-export function watcherStatus(): WatcherStatus {
-  const config = getConfig();
+export function watcherStatus(platform: WatchedPlatform): WatcherStatus {
+  const r = rt(platform);
+  const s = settings(platform);
   const now = Date.now();
 
-  const queued = [...runtime.queue.values()]
+  const queued = [...r.queue.values()]
     .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
     .map((item) => ({
       id: item.id,
@@ -210,134 +277,145 @@ export function watcherStatus(): WatcherStatus {
     }));
 
   return {
-    platform: PLATFORM,
-    name: 'Upwork job alerts',
-    enabled: config.upworkWatchEnabled,
-    running: runtime.timer !== null || runtime.state === 'checking',
-    state: runtime.state,
-    detail: runtime.state === 'watching' ? watchingDetail() : runtime.detail,
-    feedUrl: config.upworkJobsUrl,
-    startedAt: runtime.startedAt,
-    lastCheckedAt: runtime.lastCheckedAt,
-    nextCheckAt: runtime.nextCheckAt,
-    jobsOnFeed: runtime.jobsOnFeed,
-    checks: runtime.checks,
-    alerts: runtime.alerts,
+    platform,
+    name: `${SITE[platform]} job alerts`,
+    enabled: s.enabled,
+    running: isRunning(r),
+    state: r.state,
+    detail: r.state === 'watching' ? watchingDetail(r) : r.detail,
+    feedUrl: s.feedUrl,
+    startedAt: r.startedAt,
+    lastCheckedAt: r.lastCheckedAt,
+    nextCheckAt: r.nextCheckAt,
+    jobsOnFeed: r.jobsOnFeed,
+    checks: r.checks,
+    alerts: r.alerts,
     queued,
-    lastError: runtime.lastError,
-    warning: runtime.warning,
-    reloadMinutes: [config.upworkReloadMinMinutes, config.upworkReloadMaxMinutes],
-    delaySeconds: [config.upworkAlertDelayMinSeconds, config.upworkAlertDelayMaxSeconds],
+    lastError: r.lastError,
+    warning: r.warning,
+    reloadMinutes: s.reloadMinutes,
+    delaySeconds: s.delaySeconds,
   };
+}
+
+/** Every watcher, Upwork first. */
+export function watcherStatuses(): WatcherStatus[] {
+  return WATCHED_PLATFORMS.map(watcherStatus);
 }
 
 // ── Scheduling ────────────────────────────────────────────
 
-function clearTimer(): void {
-  if (runtime.timer) clearTimeout(runtime.timer);
-  runtime.timer = null;
-  runtime.nextCheckAt = null;
+function clearTimer(r: WatcherRuntime): void {
+  if (r.timer) clearTimeout(r.timer);
+  r.timer = null;
+  r.nextCheckAt = null;
 }
 
-function scheduleNext(delayMs: number): void {
-  if (runtime.stopping) return;
-  clearTimer();
-  runtime.nextCheckAt = new Date(Date.now() + delayMs).toISOString();
-  runtime.timer = setTimeout(() => {
-    runtime.timer = null;
-    void tick();
+function scheduleNext(r: WatcherRuntime, delayMs: number): void {
+  if (r.stopping) return;
+  clearTimer(r);
+  r.nextCheckAt = new Date(Date.now() + delayMs).toISOString();
+  r.timer = setTimeout(() => {
+    r.timer = null;
+    void tick(r);
   }, delayMs);
-  runtime.timer.unref?.();
+  r.timer.unref?.();
 }
 
-function scheduleNormal(): void {
-  const config = getConfig();
-  const delay = nextReloadDelayMs(config.upworkReloadMinMinutes, config.upworkReloadMaxMinutes);
-  scheduleNext(delay);
+function scheduleNormal(r: WatcherRuntime): void {
+  const [min, max] = settings(r.platform).reloadMinutes;
+  const delay = nextReloadDelayMs(min, max);
+  scheduleNext(r, delay);
   const mins = Math.floor(delay / 60_000);
   const secs = Math.round((delay % 60_000) / 1000);
-  log(`next look in ${mins}m ${secs}s`);
+  logFor(r.platform)(`next look in ${mins}m ${secs}s`);
 }
 
 // ── The loop ──────────────────────────────────────────────
 
-async function openTab(): Promise<WatchTab | null> {
-  const config = getConfig();
+async function openTab(r: WatcherRuntime): Promise<WatchTab | null> {
+  const site = SITE[r.platform];
+  const s = settings(r.platform);
 
-  const watcher = await loadWatcher(PLATFORM);
+  const watcher = await loadWatcher(r.platform);
   if (!watcher) {
-    setState('error', 'No Upwork watcher is installed in scrapper/.');
+    setState(r, 'error', `No ${site} watcher is installed in scrapper/.`);
     return null;
   }
 
   invalidateBrowserStatus();
   const browser = await browserStatus();
   if (!browser.reachable) {
-    setState('browser-down', `Chrome is not running at ${browser.url}. ${browser.hint}`);
+    setState(r, 'browser-down', `Chrome is not running at ${browser.url}. ${browser.hint}`);
     return null;
   }
 
-  if (!isConnected(PLATFORM)) {
-    setState('signed-out', 'Not signed in to Upwork — connect it on the Connections page.');
+  if (!isConnected(r.platform)) {
+    setState(r, 'signed-out', `Not signed in to ${site} — connect it on the Connections page.`);
     return null;
   }
 
-  setState('starting', 'Opening the Upwork tab…');
-  return watcher.open({
-    feedUrl: config.upworkJobsUrl,
-    log,
+  setState(r, 'starting', `Opening the ${site} tab…`);
+  const tab = await watcher.open({
+    feedUrl: s.feedUrl,
+    log: logFor(r.platform),
     interactive: env.captchaOpenWindow,
     captchaTimeoutMs: env.captchaTimeoutMs,
-    fetchDetails: config.upworkFetchDetails,
+    fetchDetails: s.fetchDetails,
   });
+  r.openedWith = s.feedUrl;
+  return tab;
 }
 
-async function closeTab(): Promise<void> {
-  const tab = runtime.tab;
-  runtime.tab = null;
+async function closeTab(r: WatcherRuntime): Promise<void> {
+  const tab = r.tab;
+  r.tab = null;
+  r.openedWith = null;
   if (tab) await tab.close().catch(() => undefined);
 }
 
 /** One pass: make sure the tab is there, reload it, queue whatever is new. */
-async function tick(): Promise<void> {
-  if (runtime.stopping) return;
+async function tick(r: WatcherRuntime): Promise<void> {
+  if (r.stopping) return;
+  const site = SITE[r.platform];
+  const log = logFor(r.platform);
 
   try {
-    if (!runtime.tab || !runtime.tab.isOpen()) {
+    if (!r.tab || !r.tab.isOpen()) {
       // A tab that closed under us — the user shut it, or Chrome restarted.
-      if (runtime.tab) log('the Upwork tab went away — opening a new one');
-      await closeTab();
-      runtime.tab = await openTab();
-      if (!runtime.tab) {
+      if (r.tab) log(`the ${site} tab went away — opening a new one`);
+      await closeTab(r);
+      r.tab = await openTab(r);
+      if (!r.tab) {
         // openTab has already explained itself through setState.
-        scheduleNext(runtime.state === 'signed-out' ? SIGNED_OUT_RETRY_MS : RETRY_MS);
+        scheduleNext(r, r.state === 'signed-out' ? SIGNED_OUT_RETRY_MS : RETRY_MS);
         return;
       }
       // A fresh tab has never seen this feed, so its first read is a baseline
       // rather than a pile of "new" jobs from before we were watching.
-      runtime.seeding = true;
-      runtime.baseline.clear();
+      r.seeding = true;
+      r.baseline.clear();
     }
 
-    setState('checking', 'Reloading the Upwork feed…');
-    const result = await withTab(() => runtime.tab!.poll());
+    setState(r, 'checking', `Reloading the ${site} feed…`);
+    const result = await withTab(r, () => r.tab!.poll());
 
-    runtime.checks += 1;
-    runtime.lastCheckedAt = new Date().toISOString();
+    r.checks += 1;
+    r.lastCheckedAt = new Date().toISOString();
 
     if (result.problem) {
-      await handleProblem(result.problem, result.detail);
+      await handleProblem(r, result.problem, result.detail);
       return;
     }
 
-    runtime.lastError = null;
-    runtime.warning = result.warning ?? null;
-    runtime.jobsOnFeed = result.leads.length;
-    markUsed(PLATFORM);
+    r.lastError = null;
+    r.warning = result.warning ?? null;
+    r.jobsOnFeed = result.leads.length;
+    markUsed(r.platform);
 
-    const queuedNow = queueNew(result.leads);
-    const seeded = runtime.seeding;
-    runtime.seeding = false;
+    const queuedNow = queueNew(r, result.leads);
+    const seeded = r.seeding;
+    r.seeding = false;
 
     if (seeded) {
       log(
@@ -347,52 +425,54 @@ async function tick(): Promise<void> {
     }
 
     if (queuedNow > 0) log(`${queuedNow} new job(s) spotted`);
-    setState('watching', watchingDetail());
-    scheduleNormal();
+    setState(r, 'watching', watchingDetail(r));
+    scheduleNormal(r);
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
-    runtime.lastError = message;
-    setState('error', message);
-    logger.error('[Upwork alerts] check failed', message);
-    markError(PLATFORM, message);
+    r.lastError = message;
+    setState(r, 'error', message);
+    logger.error(`[${site} alerts] check failed`, message);
+    markError(r.platform, message);
     // The tab is the usual casualty; drop it so the next tick reopens one.
-    await closeTab();
-    scheduleNext(RETRY_MS);
+    await closeTab(r);
+    scheduleNext(r, RETRY_MS);
   }
 }
 
-async function handleProblem(problem: string, detail?: string): Promise<void> {
+async function handleProblem(r: WatcherRuntime, problem: string, detail?: string): Promise<void> {
+  const site = SITE[r.platform];
   switch (problem) {
     case 'signed-out':
-      setState('signed-out', 'Your Upwork session has expired — sign in again on Connections.');
-      markError(PLATFORM, 'Session expired');
-      await closeTab();
-      scheduleNext(SIGNED_OUT_RETRY_MS);
+      setState(r, 'signed-out', `Your ${site} session has expired — sign in again on Connections.`);
+      markError(r.platform, 'Session expired');
+      await closeTab(r);
+      scheduleNext(r, SIGNED_OUT_RETRY_MS);
       return;
 
     case 'challenge':
       setState(
+        r,
         'blocked',
-        'Upwork is showing a bot check. Clear it in the Chrome window and watching resumes.',
+        `${site} is showing a bot check. Clear it in the Chrome window and watching resumes.`,
       );
-      scheduleNext(RETRY_MS);
+      scheduleNext(r, RETRY_MS);
       return;
 
     case 'closed':
-      setState('error', 'The Upwork tab was closed.');
-      await closeTab();
-      scheduleNext(RETRY_MS);
+      setState(r, 'error', `The ${site} tab was closed.`);
+      await closeTab(r);
+      scheduleNext(r, RETRY_MS);
       return;
 
     default: {
-      const message = detail ?? 'The Upwork feed did not load.';
-      setState('error', message);
-      runtime.lastError = message;
+      const message = detail ?? `The ${site} feed did not load.`;
+      setState(r, 'error', message);
+      r.lastError = message;
       // Nothing was read, so the count from an earlier look is no longer true.
-      runtime.jobsOnFeed = 0;
-      logger.warn(`[Upwork alerts] ${message}`);
-      markError(PLATFORM, message);
-      scheduleNext(RETRY_MS);
+      r.jobsOnFeed = 0;
+      logger.warn(`[${site} alerts] ${message}`);
+      markError(r.platform, message);
+      scheduleNext(r, RETRY_MS);
     }
   }
 }
@@ -400,13 +480,16 @@ async function handleProblem(problem: string, detail?: string): Promise<void> {
 // ── Spotting and holding ──────────────────────────────────
 
 /**
- * What identifies a job across reloads: its "~02…" id when the URL has one.
- * The same job can arrive with the tile's slugged URL on one reload and a bare
- * `/jobs/~02…` one on the next, depending on which reader found it.
+ * What identifies a job across reloads: the platform's own job id when the URL
+ * has one. The same Upwork job can arrive with the tile's slugged URL on one
+ * reload and a bare `/jobs/~02…` one on the next, depending on which reader
+ * found it; a LinkedIn job's URL picks up tracking parameters.
  */
-function alertKey(lead: RawLead): string {
-  const id = lead.url?.match(/~0[0-9a-z]{6,}/i);
-  return id ? id[0].toLowerCase() : (lead.url ?? lead.title);
+function alertKey(platform: WatchedPlatform, lead: RawLead): string {
+  const url = lead.url ?? '';
+  const id =
+    platform === 'linkedin' ? url.match(/\/jobs\/view\/(\d+)/)?.[1] : url.match(/~0[0-9a-z]{6,}/i)?.[0];
+  return id ? id.toLowerCase() : url || lead.title;
 }
 
 /**
@@ -419,20 +502,20 @@ function alertKey(lead: RawLead): string {
  *
  * @returns how many were queued.
  */
-function queueNew(leads: RawLead[]): number {
-  const config = getConfig();
-  const maxAgeMs = Math.max(1, config.upworkMaxAgeHours) * 60 * 60 * 1000;
-  const seedWindowMs = SEED_WINDOW_MS;
+function queueNew(r: WatcherRuntime, leads: RawLead[]): number {
+  const s = settings(r.platform);
+  const maxAgeMs = Math.max(1, s.maxAgeHours) * 60 * 60 * 1000;
   const now = Date.now();
+  const log = logFor(r.platform);
 
   let index = 0;
   for (const lead of leads) {
     if (!lead.title) continue;
 
-    const key = alertKey(lead);
-    if (runtime.queue.has(key)) continue;
-    if (runtime.baseline.has(key)) continue;
-    if (isLeadKnown(PLATFORM, lead.url, lead.title)) continue;
+    const key = alertKey(r.platform, lead);
+    if (r.queue.has(key)) continue;
+    if (r.baseline.has(key)) continue;
+    if (isLeadKnown(r.platform, lead.url, lead.title)) continue;
 
     // Nothing stale, ever. The feed reorders itself, and an hours-old job
     // drifting back onto the first screen is not news.
@@ -447,23 +530,21 @@ function queueNew(leads: RawLead[]): number {
     const age = dated ? now - parsed : 0;
 
     if (age > maxAgeMs) continue;
-    if (runtime.seeding && (!dated || age > seedWindowMs)) {
-      runtime.baseline.add(key);
+    if (r.seeding && (!dated || age > SEED_WINDOW_MS)) {
+      r.baseline.add(key);
       continue;
     }
 
-    const wait =
-      alertDelayMs(config.upworkAlertDelayMinSeconds, config.upworkAlertDelayMaxSeconds) +
-      staggerMs(index);
+    const wait = alertDelayMs(s.delaySeconds[0], s.delaySeconds[1]) + staggerMs(index);
 
     const timer = setTimeout(() => {
-      void release(key).catch((err) =>
-        logger.error('[Upwork alerts] could not release an alert', (err as Error).message),
+      void release(r, key).catch((err) =>
+        logger.error(`[${SITE[r.platform]} alerts] could not release an alert`, (err as Error).message),
       );
     }, wait);
     timer.unref?.();
 
-    runtime.queue.set(key, {
+    r.queue.set(key, {
       id: key,
       title: lead.title,
       url: lead.url ?? null,
@@ -485,14 +566,18 @@ function clientLine(metadata: LeadMetadata | undefined): string {
   if (!metadata) return '';
   const bits: string[] = [];
   const push = (value: unknown, format: (v: string) => string) => {
-    const text = typeof value === 'string' ? value.trim() : '';
+    const text = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
     if (text) bits.push(format(text));
   };
+  // Upwork's client, then LinkedIn's company. A lead only ever has one set.
   push(metadata.clientRating, (v) => `${v}★`);
   push(metadata.clientHireRate, (v) => v);
   push(metadata.clientSpent, (v) => `${v} spent`);
   push(metadata.paymentVerified, (v) => v);
   push(metadata.clientCountry, (v) => v);
+  push(metadata.company, (v) => v);
+  push(metadata.location, (v) => v);
+  push(metadata.applicants, (v) => v);
   return bits.join(' · ');
 }
 
@@ -504,26 +589,33 @@ function clientLine(metadata: LeadMetadata | undefined): string {
  * keeps the reload itself down to one page load.
  *
  * Every new job is announced. There is no AI review and no keyword or budget
- * filter here: the feed being watched is already the user's own Upwork search,
+ * filter here: the feed being watched is already the user's own job search,
  * tuned to them, so a second screen only loses jobs and spends Gemini quota.
  */
-async function release(key: string): Promise<void> {
-  const item = runtime.queue.get(key);
+async function release(r: WatcherRuntime, key: string): Promise<void> {
+  const item = r.queue.get(key);
   if (!item) return;
-  runtime.queue.delete(key);
+  r.queue.delete(key);
   clearTimeout(item.timer);
 
   const config = getConfig();
+  const site = SITE[r.platform];
+  const log = logFor(r.platform);
   const lead: RawLead = { ...item.lead };
   const short = item.title.slice(0, 60);
 
-  if (config.upworkFetchDetails && item.url) {
-    const extra = await withTab(async () => {
-      const tab = runtime.tab;
+  if (settings(r.platform).fetchDetails && item.url) {
+    const extra = await withTab(r, async () => {
+      const tab = r.tab;
       if (!tab?.isOpen() || !tab.inspect) return null;
       return tab.inspect(item.url as string).catch(() => null);
     }).catch(() => null);
-    if (extra) lead.metadata = { ...(lead.metadata ?? {}), ...extra };
+    if (extra) {
+      // A job's own page has the real description; the tile only a summary.
+      const { description, ...facts } = extra;
+      if (typeof description === 'string' && description.trim()) lead.description = description;
+      lead.metadata = { ...(lead.metadata ?? {}), ...facts };
+    }
   }
 
   const { inserted } = insertLeads([lead]);
@@ -535,14 +627,14 @@ async function release(key: string): Promise<void> {
   const job = inserted[0];
 
   const opportunity = recordOpportunity({
-    platform: PLATFORM,
+    platform: r.platform,
     lead: job,
     spottedAt: item.spottedAt,
     heldForSeconds: (Date.now() - new Date(item.spottedAt).getTime()) / 1000,
     client: clientLine(job.metadata),
   });
 
-  runtime.alerts += 1;
+  r.alerts += 1;
   log(`new opportunity: "${short}"`);
 
   if (!config.newLeadsNotification) return;
@@ -551,12 +643,13 @@ async function release(key: string): Promise<void> {
   const facts = [
     opportunity.budget,
     opportunity.proposals ? `${opportunity.proposals} proposals` : '',
+    typeof job.metadata.applicants === 'string' ? job.metadata.applicants : '',
   ].filter(Boolean);
   const factLine = facts.length ? `\n${facts.join(' · ')}` : '';
 
   createNotification({
     type: 'opportunity',
-    title: 'New Upwork opportunity',
+    title: `New ${site} opportunity`,
     message: `${opportunity.title}${factLine}`,
     leadId: job.id,
   });
@@ -565,7 +658,7 @@ async function release(key: string): Promise<void> {
     const link = opportunity.url ? `\n${opportunity.url}` : '';
     await postToDiscord(
       config.discordWebhookUrl,
-      `**New Upwork opportunity**\n${opportunity.title}${factLine}${link}`,
+      `**New ${site} opportunity**\n${opportunity.title}${factLine}${link}`,
     ).catch((err) => logger.warn('Discord webhook failed', (err as Error).message));
   }
 }
@@ -573,63 +666,74 @@ async function release(key: string): Promise<void> {
 // ── Lifecycle ─────────────────────────────────────────────
 
 /**
- * Start watching.
+ * Start watching one platform.
  *
  * The first look is not immediate. A tab that reloads the instant the server
  * boots, every single time the server boots, is a pattern of its own — and it
  * is also the moment the machine is busiest.
  */
-export function startWatcher(reason = 'startup'): WatcherStatus {
-  const config = getConfig();
+export function startWatcher(platform: WatchedPlatform, reason = 'startup'): WatcherStatus {
+  const r = rt(platform);
+  const site = SITE[platform];
 
-  if (!config.upworkWatchEnabled) {
-    setState('off', 'Upwork job alerts are switched off in your config.');
-    return watcherStatus();
+  if (!settings(platform).enabled) {
+    setState(r, 'off', `${site} job alerts are switched off in your config.`);
+    return watcherStatus(platform);
   }
-  if (runtime.timer || runtime.state === 'checking' || runtime.state === 'starting') {
-    return watcherStatus();
+  if (r.timer || r.state === 'checking' || r.state === 'starting') {
+    return watcherStatus(platform);
   }
 
-  runtime.stopping = false;
-  runtime.seeding = true;
-  runtime.baseline.clear();
-  runtime.startedAt = new Date().toISOString();
-  runtime.checks = 0;
-  runtime.alerts = 0;
-  runtime.lastError = null;
+  r.stopping = false;
+  r.seeding = true;
+  r.baseline.clear();
+  r.startedAt = new Date().toISOString();
+  r.checks = 0;
+  r.alerts = 0;
+  r.lastError = null;
 
   const first = 5_000 + Math.random() * 25_000;
-  setState('starting', 'Opening the Upwork tab…');
-  scheduleNext(first);
-  log(`watching started (${reason}) — first look in ${Math.round(first / 1000)}s`);
+  setState(r, 'starting', `Opening the ${site} tab…`);
+  scheduleNext(r, first);
+  logFor(platform)(`watching started (${reason}) — first look in ${Math.round(first / 1000)}s`);
 
-  return watcherStatus();
+  return watcherStatus(platform);
+}
+
+/** Start every watcher switched on in your config. */
+export function startWatchers(reason = 'startup'): void {
+  for (const platform of WATCHED_PLATFORMS) startWatcher(platform, reason);
 }
 
 /**
- * Stop watching and let go of the tab.
+ * Stop watching one platform and let go of its tab.
  *
  * Queued alerts are dropped rather than flushed. They were never stored, so the
  * next run simply finds them on the feed again — and releasing a backlog the
  * instant you press Pause would defeat the pacing this module exists to impose.
  */
-export async function stopWatcher(reason = 'stopped'): Promise<WatcherStatus> {
-  runtime.stopping = true;
-  clearTimer();
+export async function stopWatcher(platform: WatchedPlatform, reason = 'stopped'): Promise<WatcherStatus> {
+  const r = rt(platform);
+  r.stopping = true;
+  clearTimer(r);
 
-  for (const item of runtime.queue.values()) clearTimeout(item.timer);
-  const dropped = runtime.queue.size;
-  runtime.queue.clear();
+  for (const item of r.queue.values()) clearTimeout(item.timer);
+  const dropped = r.queue.size;
+  r.queue.clear();
 
-  await closeTab();
+  await closeTab(r);
 
-  setState('off', `Job alerts are paused (${reason}).`);
-  runtime.startedAt = null;
-  runtime.nextCheckAt = null;
-  runtime.stopping = false;
+  setState(r, 'off', `Job alerts are paused (${reason}).`);
+  r.startedAt = null;
+  r.nextCheckAt = null;
+  r.stopping = false;
 
-  log(`stopped (${reason})` + (dropped ? ` — ${dropped} queued alert(s) dropped` : ''));
-  return watcherStatus();
+  logFor(platform)(`stopped (${reason})` + (dropped ? ` — ${dropped} queued alert(s) dropped` : ''));
+  return watcherStatus(platform);
+}
+
+export async function stopWatchers(reason = 'stopped'): Promise<void> {
+  await Promise.all(WATCHED_PLATFORMS.map((p) => stopWatcher(p, reason)));
 }
 
 /**
@@ -638,40 +742,58 @@ export async function stopWatcher(reason = 'stopped'): Promise<WatcherStatus> {
  * Safe to put behind a button: it is one reload of a page that is already open,
  * and the per-job delays still apply to whatever it finds.
  */
-export function checkNow(): WatcherStatus | null {
+export function checkNow(platform: WatchedPlatform): WatcherStatus | null {
+  const r = rt(platform);
   // Paused is a decision, not a gap. Restarting the watcher because someone
   // pressed "Check now" would override it silently; the caller says so instead.
-  if (!getConfig().upworkWatchEnabled) return null;
-  if (runtime.timer === null && runtime.state !== 'checking') return null;
+  if (!settings(platform).enabled) return null;
+  if (r.timer === null && r.state !== 'checking') return null;
 
-  scheduleNext(250);
-  return watcherStatus();
+  scheduleNext(r, 250);
+  return watcherStatus(platform);
 }
 
 /**
- * Hand the browser profile back, so a sign-in or session check can have it.
+ * Hand a platform's browser profile back, so a sign-in, session check or
+ * scrape can have it.
  *
  * Only one process may hold a Chromium profile open, so a watcher sitting on
- * the Upwork tab makes "Sign in again" fail with a lock error. Callers are
- * expected to `resumeWatcher()` once they are done.
+ * the tab makes "Sign in again" fail with a lock error. Callers are expected to
+ * `resumeWatcher()` once they are done.
  */
-export async function suspendWatcher(): Promise<boolean> {
-  const wasRunning = runtime.timer !== null || runtime.tab !== null;
+export async function suspendWatcher(platform: string): Promise<boolean> {
+  if (!isWatchedPlatform(platform)) return false;
+  const r = rt(platform);
+  const wasRunning = r.timer !== null || r.tab !== null;
   if (!wasRunning) return false;
-  await stopWatcher('paused for sign-in');
+  await stopWatcher(platform, 'paused for sign-in');
   return true;
 }
 
-export function resumeWatcher(reason = 'resumed'): void {
-  if (!getConfig().upworkWatchEnabled) return;
-  startWatcher(reason);
+export function resumeWatcher(platform: string, reason = 'resumed'): void {
+  if (!isWatchedPlatform(platform) || !settings(platform).enabled) return;
+  startWatcher(platform, reason);
 }
 
-/** Apply a config change: start, stop, or leave alone as the new settings say. */
-export function syncWatcherWithConfig(): void {
-  const enabled = getConfig().upworkWatchEnabled;
-  const running = runtime.timer !== null || runtime.tab !== null;
+/**
+ * Apply a config change: start, stop, or leave alone as the new settings say.
+ *
+ * A changed feed URL counts as a change too. The tab was opened on the old
+ * one, and it would otherwise keep reloading your previous search until the
+ * next restart.
+ */
+export function syncWatchersWithConfig(): void {
+  for (const platform of WATCHED_PLATFORMS) {
+    const r = rt(platform);
+    const s = settings(platform);
+    const running = r.timer !== null || r.tab !== null;
 
-  if (enabled && !running) startWatcher('enabled in config');
-  else if (!enabled && running) void stopWatcher('switched off in config');
+    if (s.enabled && !running) startWatcher(platform, 'enabled in config');
+    else if (!s.enabled && running) void stopWatcher(platform, 'switched off in config');
+    else if (s.enabled && r.openedWith && r.openedWith !== s.feedUrl) {
+      void stopWatcher(platform, 'feed URL changed').then(() =>
+        startWatcher(platform, 'feed URL changed'),
+      );
+    }
+  }
 }

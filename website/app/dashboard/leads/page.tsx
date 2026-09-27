@@ -25,6 +25,7 @@ const FILTERS: { id: string | null; label: string }[] = [
   { id: null, label: 'All' },
   { id: 'upwork', label: 'Upwork' },
   { id: 'twitter', label: 'Twitter' },
+  { id: 'linkedin', label: 'LinkedIn' },
   { id: 'discord', label: 'Discord' },
   { id: 'blackhatworld', label: 'BlackHatWorld' },
   { id: REJECTED, label: 'Rejected' },
@@ -317,7 +318,7 @@ export default function LeadsPage() {
               <EmptyState
                 icon={Inbox}
                 title="No leads yet"
-                description="Your accounts are connected. Run a scrape to search X, and new Upwork jobs land here as the watcher spots them."
+                description="Your accounts are connected. Run a scrape to search X and LinkedIn, and new Upwork and LinkedIn jobs land here as the watchers spot them."
                 action={
                   <Button onClick={runScrape} loading={scraping}>
                     <RefreshCw className="size-4" />

@@ -7,6 +7,7 @@ import { ProposalsBadge } from '@/components/proposals-badge'
 import { Badge } from '@/components/ui/badge'
 import { PlatformMark } from '@/components/ui/platform-mark'
 import type { Opportunity } from '@/lib/api'
+import { platformLabel } from '@/lib/platforms'
 import { duration } from '@/lib/use-watch-status'
 import { cn } from '@/lib/utils'
 
@@ -116,7 +117,7 @@ export default function OpportunityRow({
                 rel="noopener noreferrer"
                 className="ml-auto inline-flex items-center gap-1 rounded-sm text-[0.8125rem] font-medium text-primary hover:underline"
               >
-                Open on Upwork
+                Open on {platformLabel(opportunity.platform)}
                 <ExternalLink className="size-3" />
               </a>
             )}

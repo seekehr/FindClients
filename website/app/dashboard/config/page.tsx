@@ -304,6 +304,15 @@ const FIELD_LABELS: Record<string, string> = {
   upworkAlertDelayMinSeconds: 'Shortest hold',
   upworkAlertDelayMaxSeconds: 'Longest hold',
   upworkMaxAgeHours: 'Max job age',
+  linkedinPostSource: 'Where to look',
+  linkedinLimitPerKeyword: 'Per keyword',
+  linkedinFeedScrolls: 'Screens to scroll',
+  linkedinJobsUrl: 'LinkedIn job search URL',
+  linkedinReloadMinMinutes: 'Shortest gap (LinkedIn)',
+  linkedinReloadMaxMinutes: 'Longest gap (LinkedIn)',
+  linkedinAlertDelayMinSeconds: 'Shortest hold (LinkedIn)',
+  linkedinAlertDelayMaxSeconds: 'Longest hold (LinkedIn)',
+  linkedinMaxAgeHours: 'Max job age (LinkedIn)',
   aiPrompt: 'What counts as a qualified lead',
   aiModel: 'Model',
   aiMinScore: 'Minimum score',
@@ -473,7 +482,7 @@ export default function ConfigPage() {
       <PageShell width="narrow" className="space-y-6 pb-6">
         <PageHeader
           title="Config"
-          description="What counts as a lead, how the Upwork watcher paces itself, and who hears about a match. Saved to data/config.json and applied immediately."
+          description="What counts as a lead, how the Upwork and LinkedIn job watchers pace themselves, and who hears about a match. Saved to data/config.json and applied immediately."
         />
 
         {error && <Alert tone="danger" title={error} />}
@@ -551,7 +560,9 @@ export default function ConfigPage() {
               A platform still needs a signed-in account on the Connections page
               (BlackHatWorld excepted — it is read without one).
               Upwork is watched rather than scraped, so it is switched on and off
-              under <strong>Upwork job alerts</strong> below.
+              under <strong>Upwork job alerts</strong> below. LinkedIn here means
+              its posts; its jobs have their own section, <strong>LinkedIn job
+              alerts</strong>.
             </Hint>
           </div>
 
@@ -587,9 +598,10 @@ export default function ConfigPage() {
           title="Scraping"
           description="How hard the scrapers work on each cycle. Upwork is not one of them — it has its own section below."
         >
-          <Alert tone="info" title="These settings do not touch Upwork.">
-            Upwork is watched for job alerts rather than scraped, so nothing here
-            applies to it. See <strong>Upwork job alerts</strong> below.
+          <Alert tone="info" title="These settings do not touch Upwork or LinkedIn jobs.">
+            Job feeds are watched for alerts rather than scraped, so nothing here
+            applies to them. See <strong>Upwork job alerts</strong> and{' '}
+            <strong>LinkedIn job alerts</strong> below.
           </Alert>
 
           <SwitchRow
@@ -674,6 +686,59 @@ export default function ConfigPage() {
               &ldquo;Just a moment…&rdquo; check in the browser — clear it once
               and later runs go straight through.
             </Hint>
+          </SubGroup>
+
+          <SubGroup title="LinkedIn posts">
+            <Field
+              label="Where to look"
+              hint={
+                config.linkedinPostSource === 'feed'
+                  ? 'Scrolls your home feed and keeps posts containing one of your keywords. Only sees what LinkedIn chooses to show you.'
+                  : 'Searches posts for each keyword, latest first — the way X is searched. Finds far more; one search per keyword per cycle.'
+              }
+              htmlFor="linkedin-post-source"
+            >
+              <Select
+                id="linkedin-post-source"
+                value={config.linkedinPostSource}
+                onChange={(value) =>
+                  patch({ linkedinPostSource: value as UserConfig['linkedinPostSource'] })
+                }
+                options={[
+                  {
+                    value: 'feed',
+                    label: 'Your home feed',
+                    description: 'Posts in your feed that mention a keyword.',
+                  },
+                  {
+                    value: 'search',
+                    label: 'Post search',
+                    description: 'Every recent post LinkedIn finds for each keyword.',
+                  },
+                ]}
+              />
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {config.linkedinPostSource === 'feed' ? (
+                <NumberField
+                  label="Screens to scroll"
+                  hint="How far down your feed to read, per cycle (1–30)."
+                  value={config.linkedinFeedScrolls}
+                  min={1}
+                  max={30}
+                  onChange={(linkedinFeedScrolls) => patch({ linkedinFeedScrolls })}
+                />
+              ) : (
+                <NumberField
+                  label="Per keyword"
+                  hint="Posts collected per search term (1–50)."
+                  value={config.linkedinLimitPerKeyword}
+                  min={1}
+                  max={50}
+                  onChange={(linkedinLimitPerKeyword) => patch({ linkedinLimitPerKeyword })}
+                />
+              )}
+            </div>
           </SubGroup>
 
         </Section>
@@ -794,6 +859,113 @@ export default function ConfigPage() {
                   hint="Adds client rating and hire rate, by clicking through to that one job the way you would."
                   checked={config.upworkFetchDetails}
                   onChange={(upworkFetchDetails) => patch({ upworkFetchDetails })}
+                />
+              </div>
+            </div>
+          </SubGroup>
+        </Section>
+
+        <Section
+          icon={Radio}
+          title="LinkedIn job alerts"
+          description="A tab left open on your LinkedIn job search, reloaded now and then, telling you about new jobs after a short pause."
+        >
+          <Alert
+            tone="warning"
+            icon={<ShieldAlert className="size-4" />}
+            title="LinkedIn job search is watched, never scraped."
+          >
+            <p>
+              Crawling job listings page after page is what LinkedIn restricts
+              accounts for. FindClients reloads the first page of the search
+              below on the schedule below, and to read more about a new job it
+              clicks it in the list &mdash; the same click you would make.
+            </p>
+          </Alert>
+
+          <SwitchRow
+            label="LinkedIn job alerts"
+            hint="Needs LinkedIn signed in on the Connections page. Off closes the tab; LinkedIn posts and your other platforms are unaffected."
+            checked={config.linkedinWatchEnabled}
+            onChange={(linkedinWatchEnabled) => patch({ linkedinWatchEnabled })}
+          />
+
+          <Field
+            label="Job search URL"
+            hint="Run a search on linkedin.com/jobs, set its filters (Past 24 hours, Remote, Contract…), and paste the address here. Only the first page is ever read, so keep it narrow — results are not in date order."
+            htmlFor="linkedin-jobs-url"
+          >
+            <Input
+              id="linkedin-jobs-url"
+              type="url"
+              value={config.linkedinJobsUrl}
+              onChange={(e) => patch({ linkedinJobsUrl: e.target.value })}
+              className="font-mono text-xs"
+            />
+          </Field>
+
+          <SubGroup title="How often the tab reloads">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                label="Shortest gap (minutes)"
+                value={config.linkedinReloadMinMinutes}
+                min={10}
+                max={120}
+                onChange={(linkedinReloadMinMinutes) => patch({ linkedinReloadMinMinutes })}
+              />
+              <NumberField
+                label="Longest gap (minutes)"
+                value={config.linkedinReloadMaxMinutes}
+                min={10}
+                max={240}
+                onChange={(linkedinReloadMaxMinutes) => patch({ linkedinReloadMaxMinutes })}
+              />
+            </div>
+            <Hint>
+              Drawn fresh before every reload, with the same ten-minute floor as
+              Upwork and for the same reason.
+            </Hint>
+          </SubGroup>
+
+          <SubGroup title="How long a job is held before you hear about it">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                label="Shortest hold (seconds)"
+                value={config.linkedinAlertDelayMinSeconds}
+                min={30}
+                max={3600}
+                onChange={(linkedinAlertDelayMinSeconds) =>
+                  patch({ linkedinAlertDelayMinSeconds })
+                }
+              />
+              <NumberField
+                label="Longest hold (seconds)"
+                value={config.linkedinAlertDelayMaxSeconds}
+                min={30}
+                max={7200}
+                onChange={(linkedinAlertDelayMaxSeconds) =>
+                  patch({ linkedinAlertDelayMaxSeconds })
+                }
+              />
+            </div>
+          </SubGroup>
+
+          <SubGroup title="What counts as new">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField
+                label="Max job age (hours)"
+                hint="Older jobs showing up in the search are ignored."
+                value={config.linkedinMaxAgeHours}
+                min={1}
+                max={720}
+                onChange={(linkedinMaxAgeHours) => patch({ linkedinMaxAgeHours })}
+              />
+              <div className="sm:pt-1">
+                <SwitchRow
+                  label="Open the job before alerting"
+                  hint="Clicks the job in the list to read its full description and applicant count."
+                  checked={config.linkedinFetchDetails}
+                  onChange={(linkedinFetchDetails) => patch({ linkedinFetchDetails })}
                 />
               </div>
             </div>
@@ -1000,7 +1172,7 @@ export default function ConfigPage() {
           />
           <Field
             label="Discord webhook"
-            hint="Optional. New Upwork jobs and matching leads get posted to this channel — the way to get them on your phone."
+            hint="Optional. New Upwork and LinkedIn jobs and matching leads get posted to this channel — the way to get them on your phone."
             htmlFor="discord-webhook"
           >
             <Input

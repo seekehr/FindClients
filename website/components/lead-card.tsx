@@ -30,11 +30,27 @@ interface LeadCardProps {
 }
 
 /**
+ * A job alert rather than a scraped post: every Upwork lead, and LinkedIn
+ * leads from the job watcher (LinkedIn posts are scraped like tweets).
+ */
+export function isJobAlert(platform: string, metadata?: LeadMetadata): boolean {
+  return platform === 'upwork' || metadata?.kind === 'job'
+}
+
+/**
  * Every lead says where it stands with the AI, so an untagged lead can never be
- * mistaken for one that passed. Upwork is the exception: its alerts are not
+ * mistaken for one that passed. Job alerts are the exception: they are not
  * reviewed by design, so "not reviewed" would sit on every one of them.
  */
-export function AiVerdictBadge({ ai, platform }: { ai?: LeadAiReview; platform: string }) {
+export function AiVerdictBadge({
+  ai,
+  platform,
+  metadata,
+}: {
+  ai?: LeadAiReview
+  platform: string
+  metadata?: LeadMetadata
+}) {
   const score = ai?.score !== null && ai?.score !== undefined ? ` ${ai.score}` : ''
   switch (ai?.verdict) {
     case 'qualified':
@@ -44,7 +60,7 @@ export function AiVerdictBadge({ ai, platform }: { ai?: LeadAiReview; platform: 
     case 'error':
       return <Badge tone="warning">AI check failed</Badge>
     default:
-      return platform === 'upwork' ? null : <Badge tone="warning">Not AI reviewed</Badge>
+      return isJobAlert(platform, metadata) ? null : <Badge tone="warning">Not AI reviewed</Badge>
   }
 }
 
@@ -122,7 +138,7 @@ export default function LeadCard({
           {description}
         </p>
 
-        {(facts.length > 0 || tags.length > 0 || ai?.verdict || platform !== 'upwork' || proposals) && (
+        {(facts.length > 0 || tags.length > 0 || ai?.verdict || !isJobAlert(platform, metadata) || proposals) && (
           <div className="mt-4 flex flex-wrap items-center gap-1.5">
             {/* First: how crowded the job already is. */}
             <ProposalsBadge value={proposals} />
@@ -132,7 +148,7 @@ export default function LeadCard({
                 <span className="text-graphite-200 tabular">{fact.value}</span>
               </Badge>
             ))}
-            <AiVerdictBadge ai={ai} platform={platform} />
+            <AiVerdictBadge ai={ai} platform={platform} metadata={metadata} />
             {tags.slice(0, 2).map((tag) => (
               <Badge key={tag} tone="neutral">
                 {tag}

@@ -25,7 +25,12 @@ import {
   type Opportunity,
 } from '@/lib/api'
 import { platformLabel } from '@/lib/platforms'
-import { countdown, describeWatchState, useWatchStatus } from '@/lib/use-watch-status'
+import {
+  countdown,
+  describeWatchState,
+  isWatchLive,
+  useWatchStatus,
+} from '@/lib/use-watch-status'
 import { cn } from '@/lib/utils'
 
 interface Overview {
@@ -88,7 +93,7 @@ export default function DashboardPage() {
     }
   }, [])
 
-  // Refreshes the moment the watcher releases an alert, so the Overview is
+  // Refreshes the moment a watcher releases an alert, so the Overview is
   // never quietly older than the sidebar badge sitting next to it.
   const watch = useWatchStatus(loadOpportunities)
 
@@ -121,10 +126,11 @@ export default function DashboardPage() {
     void loadOpportunities()
   }, [loadOpportunities])
 
-  const watchState = describeWatchState(watch.watcher)
-  const watchLive =
-    watch.watcher?.enabled &&
-    (watch.watcher.state === 'watching' || watch.watcher.state === 'checking')
+  // Switched-on watchers get a row each; with none on, Upwork's shows why.
+  const shownWatchers = watch.watchers.some((w) => w.enabled)
+    ? watch.watchers.filter((w) => w.enabled)
+    : watch.watchers.slice(0, 1)
+  const watchLive = watch.watchers.some(isWatchLive)
 
   const stats = overview
     ? [
@@ -208,8 +214,8 @@ export default function DashboardPage() {
                   title="No job alerts yet"
                   description={
                     watchLive
-                      ? 'A tab is open on your Upwork feed. New jobs land here a couple of minutes after they are posted.'
-                      : 'Start the Upwork watcher and new jobs will land here as they are posted.'
+                      ? 'A tab is open on your job feed. New jobs land here a couple of minutes after they are posted.'
+                      : 'Start a job watcher and new Upwork or LinkedIn jobs will land here as they are posted.'
                   }
                   action={
                     watchLive ? undefined : (
@@ -229,42 +235,59 @@ export default function DashboardPage() {
               )}
             </Card>
 
-            {/* The watcher is slow and quiet on purpose, so its state gets a
+            {/* The watchers are slow and quiet on purpose, so their state gets a
                 permanent home rather than surfacing only when something breaks. */}
             <Card>
               <CardHeader>
-                <CardTitle>Upwork watcher</CardTitle>
-                <Badge tone={watchState.tone} dot>
-                  {watchState.label}
-                </Badge>
+                <CardTitle>Job watchers</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-[0.8125rem] leading-5 text-muted-foreground">
-                  {watch.watcher?.detail ?? 'Checking...'}
-                </p>
+                {shownWatchers.length === 0 && (
+                  <p className="text-[0.8125rem] leading-5 text-muted-foreground">Checking...</p>
+                )}
 
-                <dl className="space-y-2 text-[0.8125rem]">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-muted-foreground">Next look</dt>
-                    <dd className="font-medium tabular">
-                      {watchLive ? countdown(watch.watcher?.nextCheckAt ?? null) || 'soon' : '-'}
-                    </dd>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-muted-foreground">Held back now</dt>
-                    <dd className="font-medium tabular">{watch.watcher?.queued.length ?? 0}</dd>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-muted-foreground">Alerts this session</dt>
-                    <dd className="font-medium tabular">{watch.watcher?.alerts ?? 0}</dd>
-                  </div>
-                </dl>
+                {shownWatchers.map((watcher) => {
+                  const state = describeWatchState(watcher)
+                  const live = isWatchLive(watcher)
+                  return (
+                    <div
+                      key={watcher.platform}
+                      className="space-y-2.5 border-t border-border pt-4 first:border-0 first:pt-0"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium">{platformLabel(watcher.platform)}</p>
+                        <Badge tone={state.tone} dot>
+                          {state.label}
+                        </Badge>
+                      </div>
+                      <p className="text-[0.8125rem] leading-5 text-muted-foreground">
+                        {watcher.detail}
+                      </p>
+                      <dl className="space-y-2 text-[0.8125rem]">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <dt className="text-muted-foreground">Next look</dt>
+                          <dd className="font-medium tabular">
+                            {live ? countdown(watcher.nextCheckAt) || 'soon' : '-'}
+                          </dd>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-3">
+                          <dt className="text-muted-foreground">Held back now</dt>
+                          <dd className="font-medium tabular">{watcher.queued.length}</dd>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-3">
+                          <dt className="text-muted-foreground">Alerts this session</dt>
+                          <dd className="font-medium tabular">{watcher.alerts}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  )
+                })}
 
                 <div className="flex items-start gap-2 rounded-md border border-border bg-surface-raised px-3 py-2.5">
                   <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
                   <p className="text-xs leading-5 text-muted-foreground">
-                    Upwork is watched for job alerts, never scraped &mdash; bulk scraping it
-                    risks your account.
+                    Upwork and LinkedIn jobs are watched for alerts, never scraped &mdash; bulk
+                    scraping them risks your account.
                   </p>
                 </div>
 

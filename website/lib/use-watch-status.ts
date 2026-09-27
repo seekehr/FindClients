@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { opportunitiesApi, watchApi, type WatcherStatus } from './api'
+import { opportunitiesApi, watchApi, type WatchedPlatform, type WatcherStatus } from './api'
 
 /**
- * What the Upwork watcher is doing, shared by every component that asks.
+ * What the job watchers (Upwork, LinkedIn) are doing, shared by every
+ * component that asks.
  *
  * One poller for the whole page, like `use-scrape-status`: the header shows a
  * "watching" pill and an unread count on every screen, and the Opportunities
@@ -20,7 +21,8 @@ import { opportunitiesApi, watchApi, type WatcherStatus } from './api'
 const POLL_MS = 5_000
 
 export interface WatchSnapshot {
-  watcher: WatcherStatus | null
+  /** One per watched platform, Upwork first. Empty until the first poll. */
+  watchers: WatcherStatus[]
   /** Alerts you have not looked at yet. Drives the sidebar badge. */
   unseen: number
   /** Total alerts on file, so an empty state can tell "none yet" from "all read". */
@@ -29,7 +31,7 @@ export interface WatchSnapshot {
   loaded: boolean
 }
 
-const EMPTY: WatchSnapshot = { watcher: null, unseen: 0, total: 0, loaded: false }
+const EMPTY: WatchSnapshot = { watchers: [], unseen: 0, total: 0, loaded: false }
 
 let current: WatchSnapshot = EMPTY
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -51,7 +53,7 @@ async function tick() {
       opportunitiesApi.list({ limit: 1 }),
     ])
     publish({
-      watcher: status.watcher,
+      watchers: status.watchers,
       unseen: opportunities.unseen,
       total: opportunities.total,
       loaded: true,
@@ -132,7 +134,21 @@ export function useWatchStatus(onAlert?: () => void): WatchSnapshot {
   return snapshot
 }
 
-/* ── Describing the watcher in words ─────────────────────────────────────── */
+/* ── Describing the watchers in words ────────────────────────────────────── */
+
+export function watcherFor(
+  watchers: WatcherStatus[],
+  platform: WatchedPlatform,
+): WatcherStatus | null {
+  return watchers.find((w) => w.platform === platform) ?? null
+}
+
+/** Switched on, and actually on the feed right now. */
+export function isWatchLive(watcher: WatcherStatus | null): boolean {
+  return Boolean(
+    watcher?.enabled && (watcher.state === 'watching' || watcher.state === 'checking'),
+  )
+}
 
 export interface WatchTone {
   /** Badge / dot colour. */

@@ -9,15 +9,19 @@
  *    `mode: 'scrape'` are also run by the scheduled cycle, which opens a feed,
  *    takes what matches, and closes again.
  *
- *  - `watchers` — long-lived tabs, for platforms that must not be scraped.
- *    Upwork is the only one today: it forbids automated collection and enforces
- *    it, so instead of a cycle it gets one tab left open on the feed, reloaded
- *    every few minutes, with new jobs announced after a human-sized pause. See
- *    ./upwork/watch.ts and ../server/src/watcher/.
+ *  - `watchers` — long-lived tabs, for job feeds that must not be scraped.
+ *    Upwork forbids automated collection and enforces it, so instead of a
+ *    cycle it gets one tab left open on the feed, reloaded every few minutes,
+ *    with new jobs announced after a human-sized pause. LinkedIn's job search
+ *    gets the same treatment. See ./upwork/watch.ts, ./linkedin/watch.ts and
+ *    ../server/src/watcher/.
  *
  * A platform in `watchers` still appears in `scrapers` — it needs sign-in and
  * session checking like any other — but with `mode: 'watch'` and no `scrape`
  * method at all, so the cycle cannot collect from it even by accident.
+ *
+ * LinkedIn is in both lists: `mode: 'scrape'` for its posts, which the cycle
+ * collects like tweets, and a watcher for its jobs, which it never does.
  */
 import type { PlatformWatcher, Scraper } from '../server/src/scrapers/types';
 
@@ -25,15 +29,26 @@ import { upworkScraper } from './upwork';
 import { upworkWatcher } from './upwork/watch';
 import { twitterScraper } from './twitter';
 import { blackhatworldScraper } from './blackhatworld';
+import { linkedinScraper } from './linkedin';
+import { linkedinWatcher } from './linkedin/watch';
 
 export const scrapers: Scraper[] = [
   upworkScraper,
   twitterScraper,
   blackhatworldScraper,
+  linkedinScraper,
 ];
 
 export const watchers: PlatformWatcher[] = [
   upworkWatcher,
+  linkedinWatcher,
 ];
 
-export { upworkScraper, upworkWatcher, twitterScraper, blackhatworldScraper };
+export {
+  upworkScraper,
+  upworkWatcher,
+  twitterScraper,
+  blackhatworldScraper,
+  linkedinScraper,
+  linkedinWatcher,
+};

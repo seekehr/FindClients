@@ -23,13 +23,13 @@ The API base URL is `NEXT_PUBLIC_API_URL`, defaulting to `/api` (same origin, as
 | --- | --- |
 | `/` | Redirects to `/dashboard` |
 | `/dashboard` | Overview — stats, latest job alerts, watcher state, latest leads |
-| `/dashboard/opportunities` | New Opportunities — Upwork job alerts, the watcher's status and queue |
+| `/dashboard/opportunities` | New Opportunities — Upwork and LinkedIn job alerts, each watcher's status and queue |
 | `/dashboard/leads` | Leads — search, platform filters, and a red **Rejected** filter for leads the AI turned down |
 | `/dashboard/leads/[id]` | One lead, its AI review and its pipeline status |
 | `/dashboard/bookmarks` | Saved leads |
 | `/dashboard/analytics` | Leads over time, by platform, and scrape history |
-| `/dashboard/connections` | Sign in to X and Upwork |
-| `/dashboard/config` | Keywords, scraping, BlackHatWorld sub forums, Upwork watcher pacing, AI criteria and key, notifications |
+| `/dashboard/connections` | Sign in to X, LinkedIn and Upwork |
+| `/dashboard/config` | Keywords, scraping, BlackHatWorld sub forums, LinkedIn posts, Upwork and LinkedIn job alerts, AI criteria and key, notifications |
 
 ## Layout
 
@@ -39,6 +39,6 @@ The API base URL is `NEXT_PUBLIC_API_URL`, defaulting to `/api` (same origin, as
 | `components/` | `lead-card`, `opportunity-row`, `proposals-badge`, the dashboard shell |
 | `components/ui/` | Badges, buttons, cards, fields and other primitives |
 | `lib/api.ts` | Typed client for every API call, and the shapes it returns |
-| `lib/use-scrape-status.ts`, `lib/use-watch-status.ts` | One shared poller each for scrape state and the Upwork watcher, so every component reads the same snapshot |
+| `lib/use-scrape-status.ts`, `lib/use-watch-status.ts` | One shared poller each for scrape state and the job watchers, so every component reads the same snapshot |
 | `lib/desktop-notifications.ts` | Pops new notifications up on the desktop while a dashboard tab is open; switched on per browser in Config |
 | `lib/platforms.ts` | Platform labels and marks |

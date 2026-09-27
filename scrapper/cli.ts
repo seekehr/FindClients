@@ -31,6 +31,8 @@ interface PlatformCliConfig {
   maxPostAgeHours?: number;
   forumUrls?: string[];
   limitPerForum?: number;
+  postSource?: 'feed' | 'search';
+  feedScrolls?: number;
 }
 
 interface CliConfig {
@@ -39,6 +41,7 @@ interface CliConfig {
   upwork?: PlatformCliConfig;
   twitter?: PlatformCliConfig;
   blackhatworld?: PlatformCliConfig;
+  linkedin?: PlatformCliConfig;
 }
 
 function loadConfig(filePath: string): CliConfig {
@@ -65,10 +68,12 @@ function configFromCli(file: CliConfig): AppConfig {
   const tw = file.twitter ?? {};
   const uw = file.upwork ?? {};
   const bhw = file.blackhatworld ?? {};
+  const li = file.linkedin ?? {};
   return {
     newLeadsNotification: false,
     discordWebhookUrl: '',
-    platforms: ['upwork', 'twitter', 'blackhatworld'],
+    platforms: ['upwork', 'twitter', 'blackhatworld', 'linkedin'],
+    // One keyword list, as in the app. The LinkedIn block may bring its own.
     keywords: tw.keywords?.length
       ? tw.keywords
       : ['looking for a developer', 'looking to hire'],
@@ -84,6 +89,9 @@ function configFromCli(file: CliConfig): AppConfig {
       ? bhw.forumUrls
       : ['https://www.blackhatworld.com/forums/hire-a-freelancer.76/'],
     bhwLimitPerForum: bhw.limitPerForum ?? 20,
+    linkedinPostSource: li.postSource ?? 'feed',
+    linkedinLimitPerKeyword: li.limitPerKeyword ?? 10,
+    linkedinFeedScrolls: li.feedScrolls ?? 8,
     upworkWatchEnabled: false,
     upworkJobsUrl:
       uw.jobsUrl ?? 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',
@@ -93,6 +101,15 @@ function configFromCli(file: CliConfig): AppConfig {
     upworkReloadMaxMinutes: 15,
     upworkAlertDelayMinSeconds: 120,
     upworkAlertDelayMaxSeconds: 180,
+    // Job alerts are the app's, not the CLI's: they need the server's pacing.
+    linkedinWatchEnabled: false,
+    linkedinJobsUrl: 'https://www.linkedin.com/jobs/search-results/?keywords=developer&f_TPR=r86400',
+    linkedinFetchDetails: false,
+    linkedinMaxAgeHours: 24,
+    linkedinReloadMinMinutes: 10,
+    linkedinReloadMaxMinutes: 15,
+    linkedinAlertDelayMinSeconds: 120,
+    linkedinAlertDelayMaxSeconds: 180,
     // The CLI never qualifies: it prints what the scrapers found. Reviewing
     // would need your Gemini key, which lives in data/config.json.
     aiEnabled: false,
@@ -106,7 +123,7 @@ function configFromCli(file: CliConfig): AppConfig {
   };
 }
 
-async function runOne(platform: string, config: AppConfig, limit: number): Promise<void> {
+async function runOne(platform: string, file: CliConfig, config: AppConfig, limit: number): Promise<void> {
   const scraper = scrapers.find((s) => s.platform === platform);
   if (!scraper) {
     console.error(`Unknown platform "${platform}".`);
@@ -132,9 +149,17 @@ async function runOne(platform: string, config: AppConfig, limit: number): Promi
   console.log(`limit   : ${limit}`);
   console.log('');
 
+  // LinkedIn's own keywords and age limit, when cli_config.json gives them.
+  const li = platform === 'linkedin' ? file.linkedin : undefined;
+  const runConfig: AppConfig = {
+    ...config,
+    ...(li?.keywords?.length ? { keywords: li.keywords } : {}),
+    ...(li?.maxPostAgeHours ? { maxPostAgeHours: li.maxPostAgeHours } : {}),
+  };
+
   const started = Date.now();
   const leads = await scraper.scrape!({
-    config,
+    config: runConfig,
     limit,
     log: (m) => console.log('  ', m),
     // Always allowed to open a window here: you ran this from a terminal, so
@@ -174,6 +199,7 @@ async function main() {
   process.env.UPWORK_HEADLESS = headless ? 'true' : 'false';
   process.env.X_HEADLESS = headless ? 'true' : 'false';
   process.env.BHW_HEADLESS = headless ? 'true' : 'false';
+  process.env.LINKEDIN_HEADLESS = headless ? 'true' : 'false';
 
   const config = configFromCli(cfg);
 
@@ -182,7 +208,7 @@ async function main() {
   console.log('');
 
   for (const scraper of scrapers) {
-    await runOne(scraper.platform, config, limit);
+    await runOne(scraper.platform, cfg, config, limit);
     console.log('');
   }
 }

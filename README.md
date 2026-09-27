@@ -1,8 +1,8 @@
 # FindClients | By Seekehr
 
-Self-hosted lead discovery for freelancers. It watches Upwork for new job postings, scrapes X/Twitter for people who are hiring and BlackHatWorld sub forums for new threads, optionally screens the scraped finds with Google Gemini, and puts it all in a dashboard.
+Self-hosted lead discovery for freelancers. It watches Upwork and LinkedIn job search for new job postings, scrapes X/Twitter and LinkedIn posts for people who are hiring and BlackHatWorld sub forums for new threads, optionally screens the scraped finds with Google Gemini, and puts it all in a dashboard.
 
-**Upwork is watched, never scraped.** Paging through the Upwork feed pulling every listing breaks its terms of service and is the quickest way to lose the account. Instead FindClients keeps one tab open on the feed you already use, reloads that single page every 10–15 minutes (never more often than every 10), and tells you about a new job 2–3 minutes after it appears, randomly, per job. Those alerts land in **New Opportunities**. There is no setting that turns bulk Upwork collection on.
+**Upwork is watched, never scraped.** Paging through the Upwork feed pulling every listing breaks its terms of service and is the quickest way to lose the account. Instead FindClients keeps one tab open on the feed you already use, reloads that single page every 10–15 minutes (never more often than every 10), and tells you about a new job 2–3 minutes after it appears, randomly, per job. Those alerts land in **New Opportunities**. There is no setting that turns bulk Upwork collection on. LinkedIn job search gets the same treatment — one tab on the search you paste in Config, same pacing — while LinkedIn *posts* are scraped by keyword like X.
 
 It runs **entirely on your own machine**. There is no account, no server to deploy and no database to install — one command starts it, and everything it knows lives in a folder you can delete.
 
@@ -37,7 +37,7 @@ Start Chrome with debugging on, in its own persistent profile:
 npm run chrome
 ```
 
-Sign in to Upwork and X in that window, then **leave it open**. That is the whole setup. Every scrape — and the Upwork watcher's permanent tab — attaches to this browser over CDP and reuses the session, so you sign in once and never again. The profile lives in `data/chrome-profile/` and survives restarts.
+Sign in to Upwork, X and LinkedIn in that window, then **leave it open**. That is the whole setup. Every scrape — and the Upwork watcher's permanent tab — attaches to this browser over CDP and reuses the session, so you sign in once and never again. The profile lives in `data/chrome-profile/` and survives restarts.
 
 You can also sign in from **Connections → Sign in**, which opens a login tab in that Chrome and notices on its own once you are in. Closing that tab cancels it; the rest of the browser stays open, and an X sign-in leaves the Upwork watcher running.
 
@@ -82,7 +82,7 @@ Everything is JSON files in `data/`:
 | `config.json` | Your settings, and your Gemini API key |
 | `leads.json` | Every lead, with its status, bookmark and AI verdict |
 | `dismissed.json` | Source hashes of leads you cleared, so they stay cleared for 30 days |
-| `opportunities.json` | The New Opportunities feed — Upwork job alerts (last 300) |
+| `opportunities.json` | The New Opportunities feed — Upwork and LinkedIn job alerts (last 300) |
 | `connections.json` | Which platforms are signed in, and how the last run went |
 | `chrome-profile/` | The Chrome profile `npm run chrome` uses — your live sessions |
 | `browser/` | Per-platform profiles, used only when not attaching over CDP |
@@ -103,11 +103,11 @@ Turning these up is the fastest way to get the account you are scraping with res
 
 ## Not implemented
 
-Discord / Reddit / LinkedIn scrapers (the platforms are listed in the UI and marked "no scraper yet").
+Discord / Reddit scrapers (the platforms are listed in the UI and marked "no scraper yet").
 
 ## Disclaimer
 
-Automating access to Upwork, X and BlackHatWorld may violate their Terms of Service and can get the account you connect restricted or banned. Use accounts you own, at your own risk.
+Automating access to Upwork, X, LinkedIn and BlackHatWorld may violate their Terms of Service and can get the account you connect restricted or banned. Use accounts you own, at your own risk.
 
 FindClients does not bulk-scrape Upwork, and the pacing defaults exist for a reason. Turning them down until the watcher behaves like a poller puts your account back in exactly the position this design avoids.
 

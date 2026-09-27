@@ -123,7 +123,7 @@ function activeDismissals(): Set<string> {
  * Have we seen this post before — as a stored lead, or as one you cleared?
  *
  * The watcher asks this before it queues an alert. Without it, every restart
- * would re-announce whatever is currently on the Upwork feed as brand new,
+ * would re-announce whatever is currently on a jobs feed as brand new,
  * which is precisely the noise the whole delay-and-dedupe machinery exists to
  * avoid.
  */
@@ -131,28 +131,37 @@ export function isLeadKnown(platform: string, url: string | null | undefined, ti
   const hash = sourceHash(platform, url, title);
   if (leadsStore.data.some((lead) => lead.sourceHash === hash)) return true;
   if (activeDismissals().has(hash)) return true;
-  const jobId = upworkJobId(platform, url);
-  return !!jobId && upworkJobIds().has(jobId);
+  const jobId = stableId(platform, url);
+  return !!jobId && stableIds().has(jobId);
 }
 
 /**
- * An Upwork job's "~02…" id, taken from its URL.
+ * The platform's own id for a post, taken from its URL.
  *
- * The same job can reach us under two URLs — the tile's slugged link, or a
- * bare `/jobs/~02…` built from the page's data when its tile had not rendered
- * — and the URL-based hash would call those two different leads. The id is the
- * part both share.
+ * The same Upwork job can reach us under two URLs — the tile's slugged link,
+ * or a bare `/jobs/~02…` built from the page's data when its tile had not
+ * rendered — and the URL-based hash would call those two different leads. The
+ * id is the part both share. LinkedIn is the same story with tracking
+ * parameters: `/jobs/view/123/?trackingId=…` and `/jobs/view/123/` are one job,
+ * and `urn:li:activity:…` / `urn:li:ugcPost:…` one post.
  */
-function upworkJobId(platform: string, url: string | null | undefined): string {
-  if (platform !== 'upwork' || !url) return '';
-  const m = url.match(/~0[0-9a-z]{6,}/i);
-  return m ? m[0].toLowerCase() : '';
+function stableId(platform: string, url: string | null | undefined): string {
+  if (!url) return '';
+  if (platform === 'upwork') {
+    const m = url.match(/~0[0-9a-z]{6,}/i);
+    return m ? m[0].toLowerCase() : '';
+  }
+  if (platform === 'linkedin') {
+    const m = url.match(/\/jobs\/view\/(\d+)/) ?? url.match(/urn:li:(?:activity|ugcPost|share):(\d+)/);
+    return m ? `linkedin:${m[1]}` : '';
+  }
+  return '';
 }
 
-function upworkJobIds(): Map<string, Lead> {
+function stableIds(): Map<string, Lead> {
   const ids = new Map<string, Lead>();
   for (const lead of leadsStore.data) {
-    const id = upworkJobId(lead.platform, lead.url);
+    const id = stableId(lead.platform, lead.url);
     if (id) ids.set(id, lead);
   }
   return ids;
@@ -186,7 +195,7 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
   const now = new Date().toISOString();
   const byHash = new Map(leadsStore.data.map((lead) => [lead.sourceHash, lead]));
   const dismissed = activeDismissals();
-  const byJobId = upworkJobIds();
+  const byJobId = stableIds();
 
   const inserted: Lead[] = [];
   const all: Lead[] = [];
@@ -206,7 +215,7 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
       continue;
     }
 
-    const jobId = upworkJobId(r.platform, r.url);
+    const jobId = stableId(r.platform, r.url);
     const existing = byHash.get(hash) ?? (jobId ? byJobId.get(jobId) : undefined);
     if (existing) {
       all.push(existing);

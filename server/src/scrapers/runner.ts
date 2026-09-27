@@ -11,6 +11,7 @@ import { finishRun, startRun } from '../services/analytics.service';
 import { getAiApiKey, getConfig } from '../services/config.service';
 import { isConnected, markError, markUsed } from '../services/connection.service';
 import { loadBulkScrapers } from './loader';
+import { resumeWatcher, suspendWatcher } from '../watcher';
 import { env } from '../config/env';
 import type { AppConfig, LeadDTO } from '../types';
 import type { Scraper } from './types';
@@ -28,6 +29,9 @@ import type { Scraper } from './types';
  * collection is what gets Upwork accounts banned, so it is handled by the
  * long-lived watcher in ../watcher/ instead, one open tab at a time. See
  * `Scraper.mode` in ./types.ts.
+ *
+ * LinkedIn is in here for its *posts* only. Its jobs are watched the same way
+ * Upwork's are, by the watcher, never by this cycle.
  */
 
 /**
@@ -77,6 +81,23 @@ export interface RunSummary {
   skipped: string[];
 }
 
+/**
+ * Borrow a platform's browser profile from its job watcher for one scrape.
+ *
+ * Only when FindClients launches its own browsers: a launched profile can be
+ * open in one process at a time, and LinkedIn's posts and LinkedIn's job tab
+ * share one. Attached to your own Chrome there is nothing to borrow — the
+ * scrape opens its own tab beside the watcher's — so the job alerts carry on.
+ */
+async function withWatcherPaused<T>(platform: string, fn: () => Promise<T>): Promise<T> {
+  const paused = env.chromeCdpUrl ? false : await suspendWatcher(platform);
+  try {
+    return await fn();
+  } finally {
+    if (paused) resumeWatcher(platform, 'scrape finished');
+  }
+}
+
 async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: number; inserted: LeadDTO[] }> {
   const run = startRun(scraper.platform);
   const log = (msg: string) => logger.info(`[${scraper.name}] ${msg}`);
@@ -85,13 +106,15 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
   try {
     let raw;
     try {
-      raw = await scraper.scrape!({
-        config,
-        limit: config.leadsPerRun,
-        log,
-        interactive: env.captchaOpenWindow,
-        captchaTimeoutMs: env.captchaTimeoutMs,
-      });
+      raw = await withWatcherPaused(scraper.platform, () =>
+        scraper.scrape!({
+          config,
+          limit: config.leadsPerRun,
+          log,
+          interactive: env.captchaOpenWindow,
+          captchaTimeoutMs: env.captchaTimeoutMs,
+        }),
+      );
     } catch (err) {
       markError(scraper.platform, (err as Error).message);
       throw err;
@@ -141,6 +164,7 @@ export async function runScrapeCycle(): Promise<RunSummary> {
 
     // Bulk scrapers only. Watch-mode platforms — Upwork — are owned by the
     // watcher and must never be pulled through a cycle; see `loadBulkScrapers`.
+    // LinkedIn is here for its posts; its jobs stay with the watcher.
     const scrapers = await loadBulkScrapers();
     const allNew: LeadDTO[] = [];
 

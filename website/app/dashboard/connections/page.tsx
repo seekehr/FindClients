@@ -19,7 +19,7 @@ import {
   type SignInState,
   type WatcherStatus,
 } from '@/lib/api'
-import { isWatchedPlatform, platformMeta } from '@/lib/platforms'
+import { hasJobAlerts, isWatchedPlatform, platformMeta } from '@/lib/platforms'
 import {
   describePlatforms,
   refreshScrapeStatus,
@@ -27,7 +27,7 @@ import {
 } from '@/lib/use-scrape-status'
 
 /** The platforms this build can sign in to. */
-const PLATFORM_IDS = ['twitter', 'upwork']
+const PLATFORM_IDS = ['twitter', 'linkedin', 'upwork']
 
 /** How often to check on a sign-in window while it is open. */
 const SIGN_IN_POLL_MS = 2_000
@@ -35,7 +35,7 @@ const SIGN_IN_POLL_MS = 2_000
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Connection[]>([])
   const [signIn, setSignIn] = useState<SignInState | null>(null)
-  const [watcher, setWatcher] = useState<WatcherStatus | null>(null)
+  const [watchers, setWatchers] = useState<WatcherStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [scraping, setScraping] = useState(false)
@@ -43,10 +43,10 @@ export default function ConnectionsPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const { connections, signIn, watcher } = await connectionsApi.list()
+      const { connections, signIn, watchers } = await connectionsApi.list()
       setConnections(connections)
       setSignIn(signIn)
-      setWatcher(watcher)
+      setWatchers(watchers)
     } catch {
       /* the empty state covers it */
     } finally {
@@ -75,6 +75,7 @@ export default function ConnectionsPage() {
   }, [waiting])
 
   const byPlatform = (id: string) => connections.find((c) => c.platform === id)
+  const watcherOf = (id: string) => watchers.find((w) => w.platform === id)
 
   // Read from the shared status poller, not from `connectionsApi.list()`. That
   // call only runs on mount and while a sign-in is open, so the buttons would
@@ -193,15 +194,15 @@ export default function ConnectionsPage() {
         <Alert
           tone="warning"
           icon={<ShieldAlert className="size-4" />}
-          title="Upwork is used for job alerts only — it is never scraped."
+          title="Job feeds are used for alerts only — they are never scraped."
         >
           <p>
-            Signing in to Upwork here lets FindClients keep one tab open on your
-            jobs feed and tell you when something new is posted. It does not, and
-            will not, page through the feed collecting listings: that breaks
-            Upwork&rsquo;s terms and is the fastest way to get an account
-            suspended. The &ldquo;Scrape now&rdquo; button above does not touch
-            Upwork.
+            Signing in to Upwork or LinkedIn here lets FindClients keep one tab
+            open on your job feed and tell you when something new is posted. It
+            does not, and will not, page through a feed collecting listings: that
+            breaks their terms and is the fastest way to get an account
+            restricted. The &ldquo;Scrape now&rdquo; button above does not touch
+            Upwork at all, and on LinkedIn it reads posts, never job search.
           </p>
           <p className="mt-1.5">
             <Link
@@ -264,10 +265,10 @@ export default function ConnectionsPage() {
                           </Badge>
                         )}
                         {!connected && <Badge tone="outline">Not connected</Badge>}
-                        {isWatchedPlatform(id) && (
+                        {hasJobAlerts(id) && (
                           <Badge tone="gold">
                             <Radio className="size-3" aria-hidden />
-                            Job alerts only
+                            {isWatchedPlatform(id) ? 'Job alerts only' : 'Posts + job alerts'}
                           </Badge>
                         )}
                       </div>
@@ -282,12 +283,14 @@ export default function ConnectionsPage() {
                               : ' · not used yet')
                           : isWatchedPlatform(id)
                             ? `Keep a tab open on ${meta.site} and get told when a new job is posted.`
-                            : `Watch ${meta.site} for posts matching your keywords.`}
+                            : hasJobAlerts(id)
+                              ? `Find ${meta.site} posts matching your keywords, and get told when a job matching your saved search is posted.`
+                              : `Watch ${meta.site} for posts matching your keywords.`}
                       </p>
 
-                      {connected && isWatchedPlatform(id) && watcher && (
+                      {connected && hasJobAlerts(id) && watcherOf(id)?.enabled && (
                         <p className="mt-1 text-[0.8125rem] leading-5 text-muted-foreground">
-                          {watcher.detail}
+                          {watcherOf(id)!.detail}
                         </p>
                       )}
 
@@ -342,8 +345,8 @@ export default function ConnectionsPage() {
         <p className="text-xs leading-5 text-muted-foreground">
           Automating access to these platforms may breach their terms of service
           and can put your account at risk. Only connect accounts you own, and
-          leave the Upwork pacing on its defaults unless you know what you are
-          trading away.
+          leave the Upwork and LinkedIn pacing on its defaults unless you know
+          what you are trading away.
         </p>
       </PageShell>
     </DashboardLayout>

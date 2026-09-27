@@ -19,7 +19,7 @@ import type { Scraper, SessionStatus } from '../scrapers/types';
  */
 
 /** Platforms you can sign in to. */
-export const CONNECTABLE_PLATFORMS = ['twitter', 'upwork'] as const;
+export const CONNECTABLE_PLATFORMS = ['twitter', 'upwork', 'linkedin'] as const;
 export type ConnectablePlatform = (typeof CONNECTABLE_PLATFORMS)[number];
 
 export function isConnectablePlatform(p: string): p is ConnectablePlatform {
@@ -112,8 +112,8 @@ export function startSignIn(
   platform: ConnectablePlatform,
   /**
    * Called once the window has closed, however it ended. The caller uses this
-   * to give the browser profile back to whoever it took it from — the Upwork
-   * watcher, in practice — because signing in takes as long as a person takes
+   * to give the browser profile back to whoever it took it from — that
+   * platform's job watcher, in practice — because signing in takes as long as a person takes
    * and nothing else can hold that profile in the meantime.
    */
   onSettled?: () => void,

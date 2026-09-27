@@ -23,7 +23,8 @@ import { Wordmark } from '@/components/brand'
 import { notificationsApi, type Notification } from '@/lib/api'
 import { useDesktopNotifications } from '@/lib/desktop-notifications'
 import { describePlatforms, useScrapeStatus } from '@/lib/use-scrape-status'
-import { describeWatchState, useWatchStatus } from '@/lib/use-watch-status'
+import { platformLabel } from '@/lib/platforms'
+import { isWatchLive, useWatchStatus } from '@/lib/use-watch-status'
 import { cn } from '@/lib/utils'
 
 interface DashboardLayoutProps {
@@ -99,8 +100,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   // notifications on the finished edge means new-lead alerts land immediately.
   const scrape = useScrapeStatus(loadNotifications)
 
-  // The Upwork watcher runs on its own clock, so the sidebar badge and the
-  // header pill are the only places most people will ever see it working.
+  // The job watchers run on their own clock, so the sidebar badge and the
+  // header pill are the only places most people will ever see them working.
   const watch = useWatchStatus(loadNotifications)
 
   useEffect(() => {
@@ -132,10 +133,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const browserDown = scrape.browser && !scrape.browser.reachable
 
-  const watchState = describeWatchState(watch.watcher)
-  const watchLive =
-    watch.watcher?.enabled &&
-    (watch.watcher.state === 'watching' || watch.watcher.state === 'checking')
+  const liveWatchers = watch.watchers.filter(isWatchLive)
+  const watchLive = liveWatchers.length > 0
+  const watchChecking = liveWatchers.some((w) => w.state === 'checking')
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -253,13 +253,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           {watchLive && (
             <span
               className="inline-flex h-8 items-center gap-2 rounded-md border border-success/25 bg-success/10 px-2.5 text-[0.8125rem] font-medium text-success"
-              title={watch.watcher?.detail}
+              title={liveWatchers.map((w) => w.detail).join('\n')}
             >
-              <Radio
-                className={cn('size-3.5', watch.watcher?.state === 'checking' && 'animate-pulse')}
-                aria-hidden
-              />
-              <span className="hidden sm:inline">{watchState.label} Upwork</span>
+              <Radio className={cn('size-3.5', watchChecking && 'animate-pulse')} aria-hidden />
+              <span className="hidden sm:inline">
+                {watchChecking ? 'Checking' : 'Watching'}{' '}
+                {liveWatchers.map((w) => platformLabel(w.platform)).join(' · ')}
+              </span>
             </span>
           )}
 

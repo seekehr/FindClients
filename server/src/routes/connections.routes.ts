@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { asyncHandler, badRequest } from '../utils/http';
 import { isScraping } from '../scrapers/runner';
 import { browserStatus, invalidateBrowserStatus } from '../services/browser.service';
-import { resumeWatcher, suspendWatcher, watcherStatus } from '../watcher';
+import { resumeWatcher, suspendWatcher, watcherStatuses } from '../watcher';
 import {
   CONNECTABLE_PLATFORMS,
   checkConnection,
@@ -21,19 +21,20 @@ function platformParam(value: string) {
 }
 
 /**
- * Pause the watcher only when it would actually collide: it holds the Upwork
- * profile, and nothing else. X lives in its own profile — or, attached to your
- * Chrome, in its own tab — so signing in to X must not cost you Upwork alerts.
+ * Pause a watcher only when it would actually collide: each one holds its own
+ * platform's profile, and nothing else. X lives in its own profile — or,
+ * attached to your Chrome, in its own tab — so signing in to X must not cost
+ * you Upwork alerts, and signing in to LinkedIn must not cost you either.
  */
 function suspendWatcherFor(platform: string): Promise<boolean> {
-  return platform === 'upwork' ? suspendWatcher() : Promise.resolve(false);
+  return suspendWatcher(platform);
 }
 
 /**
- * Take the browser profile off the Upwork watcher for the duration of `fn`.
+ * Take the browser profile off that platform's watcher for the duration of `fn`.
  *
- * Only one process may hold a Chromium profile open. The watcher sits on the
- * Upwork tab indefinitely, so signing in or checking a session while it is
+ * Only one process may hold a Chromium profile open. A watcher sits on its
+ * tab indefinitely, so signing in or checking a session while it is
  * running fails with a lock error that reads like a bug. Pausing it first is
  * the difference between "sign in again" working and it never working while
  * alerts are on.
@@ -47,7 +48,7 @@ async function withProfile<T>(platform: string, fn: () => Promise<T>): Promise<T
   try {
     return await fn();
   } finally {
-    if (paused) resumeWatcher('browser profile handed back');
+    if (paused) resumeWatcher(platform, 'browser profile handed back');
   }
 }
 
@@ -59,8 +60,9 @@ connectionsRouter.get(
       connections: listConnections(),
       signIn: getSignInState(),
       browser: await browserStatus(),
-      // So the Connections page can say why Upwork behaves differently from X.
-      watcher: watcherStatus(),
+      // So the Connections page can say why Upwork and LinkedIn behave
+      // differently from X.
+      watchers: watcherStatuses(),
     });
   }),
 );
@@ -89,10 +91,10 @@ connectionsRouter.post(
     const paused = await suspendWatcherFor(platform);
     try {
       startSignIn(platform, () => {
-        if (paused) resumeWatcher('sign-in finished');
+        if (paused) resumeWatcher(platform, 'sign-in finished');
       });
     } catch (err) {
-      if (paused) resumeWatcher('sign-in could not start');
+      if (paused) resumeWatcher(platform, 'sign-in could not start');
       throw err;
     }
 
