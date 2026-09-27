@@ -1,5 +1,7 @@
-import type { Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 import type { RawLead, Scraper, ScrapeContext } from '../../server/src/scrapers/types';
+import { devNote, devTrace, noTrace, within, type Trace } from '../lib/debug';
+import { allOf, attributeOf, innerTextOf, lines } from '../lib/dom';
 import {
   deleteProfile,
   hasProfile,
@@ -174,33 +176,9 @@ export function decodePostKey(key: string): { kind: LinkedInPost['kind']; id: st
 export const postUrl = (post: Pick<LinkedInPost, 'kind' | 'id'>): string =>
   `${ORIGIN}/feed/update/urn:li:${post.kind}:${post.id}/`;
 
-/**
- * Every post currently drawn, feed or search results — they share one card.
- *
- * Plain JavaScript in a string, like the Upwork readers: tsx compiles functions
- * with a `__name` helper that does not exist in the page.
- */
-const READ_POSTS_JS = `(() => {
-  const keys = new Map();
-  for (const el of document.querySelectorAll('[componentkey*="-replaceableCommentTools"]')) {
-    const m = (el.getAttribute('componentkey') || '').match(/^([A-Za-z0-9+/_=-]+?)-replaceableCommentTools(.+?)FeedType_/);
-    if (m) keys.set(m[2], m[1]);
-  }
-  const firstLine = (el) => (el ? (el.innerText || '').split('\\n').map((s) => s.trim()).find(Boolean) || '' : '');
-  const out = [];
-  for (const card of document.querySelectorAll('[role="listitem"][componentkey^="update-card-focus"]')) {
-    const ck = card.getAttribute('componentkey') || '';
-    const hash = ck.replace(/^update-card-focus/, '').replace(/FeedType_.*$/, '');
-    const textEl = card.querySelector('[data-testid="expandable-text-box"]');
-    let author = '', authorUrl = '';
-    for (const a of card.querySelectorAll('a[href*="/in/"], a[href*="/company/"]')) {
-      const name = firstLine(a);
-      if (name) { author = name; authorUrl = a.href.split('?')[0]; break; }
-    }
-    out.push({ key: keys.get(hash) || '', text: textEl ? textEl.innerText.trim() : '', author, authorUrl });
-  }
-  return out;
-})()`;
+const POST_CARD = '[role="listitem"][componentkey^="update-card-focus"]';
+const COMMENT_BOX = '[componentkey*="-replaceableCommentTools"]';
+const AUTHOR_LINK = 'a[href*="/in/"], a[href*="/company/"]';
 
 interface DrawnPost {
   key: string;
@@ -209,9 +187,60 @@ interface DrawnPost {
   authorUrl: string;
 }
 
+/**
+ * Comment-box keys by the hash they share with their post's card. The key is
+ * `<base64 post key>-replaceableCommentTools<hash>FeedType_…`; see
+ * `decodePostKey` for what the base64 part holds.
+ */
+async function commentBoxKeys(page: Page, trace: Trace): Promise<Map<string, string>> {
+  const keys = new Map<string, string>();
+  for (const box of await allOf(page.locator(COMMENT_BOX), 'comment boxes', trace)) {
+    const ck = (await attributeOf(box, 'componentkey', 'comment box key', trace)) ?? '';
+    const m = ck.match(/^([A-Za-z0-9+/_=-]+?)-replaceableCommentTools(.+?)FeedType_/);
+    if (m) keys.set(m[2], m[1]);
+  }
+  return keys;
+}
+
+/** `update-card-focus<hash>FeedType_…` → `<hash>`. */
+async function cardHash(card: Locator, trace: Trace): Promise<string> {
+  const ck = (await attributeOf(card, 'componentkey', 'componentkey', trace)) ?? '';
+  return ck.replace(/^update-card-focus/, '').replace(/FeedType_.*$/, '');
+}
+
+/** The first author or company link with a name on it, as an absolute URL without its query. */
+async function postAuthor(page: Page, card: Locator, trace: Trace): Promise<{ author: string; authorUrl: string }> {
+  for (const a of await allOf(card.locator(AUTHOR_LINK), 'author links', trace)) {
+    const name = lines(await innerTextOf(a, 'author name', trace))[0] ?? '';
+    if (!name) continue;
+    const href = (await attributeOf(a, 'href', 'author href', trace)) ?? '';
+    let authorUrl = '';
+    try {
+      authorUrl = new URL(href, page.url()).href.split('?')[0];
+    } catch (err) {
+      trace('author url', err);
+    }
+    return { author: name, authorUrl };
+  }
+  return { author: '', authorUrl: '' };
+}
+
+/** Every post currently drawn, feed or search results — they share one card. */
+async function readDrawnPosts(page: Page, trace: Trace): Promise<DrawnPost[]> {
+  const keys = await commentBoxKeys(page, trace);
+  const out: DrawnPost[] = [];
+  for (const [i, card] of (await allOf(page.locator(POST_CARD), 'post cards', trace)).entries()) {
+    const t = within(trace, `post #${i}`);
+    const hash = await cardHash(card, t);
+    const text = (await innerTextOf(card.locator('[data-testid="expandable-text-box"]'), 'text', t)).trim();
+    out.push({ key: keys.get(hash) || '', text, ...(await postAuthor(page, card, t)) });
+  }
+  return out;
+}
+
 /** Read the posts on screen. Posts with no readable id have no link, so they are skipped. */
-async function readPosts(page: Page): Promise<LinkedInPost[]> {
-  const drawn = ((await page.evaluate(READ_POSTS_JS).catch(() => [])) ?? []) as DrawnPost[];
+async function readPosts(page: Page, trace: Trace = noTrace): Promise<LinkedInPost[]> {
+  const drawn = await readDrawnPosts(page, trace);
   const posts: LinkedInPost[] = [];
   for (const d of drawn) {
     if (!d.text) continue;
@@ -295,9 +324,13 @@ interface PostScrapeOptions {
 async function collectPosts(page: Page, opts: PostScrapeOptions): Promise<LinkedInPost[]> {
   const found: LinkedInPost[] = [];
   const seen = new Set<string>();
+  const trace = devTrace(opts.log, 'LinkedIn posts');
+  const note = devNote(opts.log, 'LinkedIn posts');
 
   for (let scroll = 0; scroll <= opts.maxScrolls && found.length < opts.limit; scroll += 1) {
-    for (const post of await readPosts(page)) {
+    const posts = await readPosts(page, within(trace, `collectPosts › screen ${scroll}`));
+    if (!posts.length) note(`collectPosts › screen ${scroll}: no readable posts on ${page.url()}`);
+    for (const post of posts) {
       if (seen.has(post.id)) continue;
       seen.add(post.id);
       if (opts.cutoff && new Date(post.postedAt) < opts.cutoff) continue;
@@ -306,7 +339,9 @@ async function collectPosts(page: Page, opts: PostScrapeOptions): Promise<Linked
       if (found.length >= opts.limit) break;
     }
     if (found.length >= opts.limit || scroll === opts.maxScrolls) break;
-    await page.evaluate('window.scrollBy(0, window.innerHeight * 1.6)').catch(() => undefined);
+    await page
+      .evaluate('window.scrollBy(0, window.innerHeight * 1.6)')
+      .catch((err) => trace(`collectPosts › scroll ${scroll}`, err));
     await humanDelay(1.8, 3.8);
   }
   return found;
@@ -334,7 +369,8 @@ async function openPostsPage(page: Page, url: string, ctx: ScrapeContext): Promi
   try {
     await page.waitForSelector('[role="listitem"][componentkey^="update-card-focus"]', { timeout: 20_000 });
     return true;
-  } catch {
+  } catch (err) {
+    devTrace(ctx.log, 'LinkedIn posts')(`openPostsPage › waiting for posts at ${page.url()}`, err);
     ctx.log(`no posts rendered at ${new URL(page.url()).pathname} — LinkedIn may have changed its layout`);
     return false;
   }

@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Locator, Page } from 'playwright';
 import type {
   LeadMetadata,
   PlatformWatcher,
@@ -7,6 +7,18 @@ import type {
   WatchTab,
   WatchTabOptions,
 } from '../../server/src/scrapers/types';
+import { devNote, devTrace, noTrace, within, type Trace } from '../lib/debug';
+import {
+  allOf,
+  allTextContentsOf,
+  attributeOf,
+  clean,
+  countOf,
+  firstOf,
+  innerTextOf,
+  lines,
+  textContentOf,
+} from '../lib/dom';
 import { openProfile, type BrowserSession } from '../lib/profile';
 import { loadLinkedInRuntimeConfig } from './config';
 import {
@@ -119,7 +131,7 @@ export interface LinkedInJob {
 }
 
 /**
- * Every job card drawn on the page, read two ways and merged by job id:
+ * Every job card drawn on the page is read two ways and merged by job id:
  *
  *  1. The 2026 search page. Cards are `componentkey="job-card-component-ref-<id>"`
  *     with hashed classes, so they are read by structure: the title is in the
@@ -128,69 +140,172 @@ export interface LinkedInJob {
  *
  * Plus, when neither recognised a single card, any bare `/jobs/view/<id>` link.
  */
-const READ_JOBS_JS = `(() => {
-  const jobs = [];
-  const seen = new Set();
-  const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-  const firstLine = (el) => (el ? (el.innerText || '').split('\\n').map(clean).find(Boolean) || '' : '');
-  const add = (job) => { if (!job.id || !job.title || seen.has(job.id)) return; seen.add(job.id); jobs.push(job); };
-  const isPay = (t) => /[$€£₹]|\\/(hr|yr|mo)\\b|per (hour|year|month)/i.test(t);
-  const isPosted = (t) => /^(re)?posted\\b|\\bago$|^just now$/i.test(t);
+const NEW_CARD = '[componentkey^="job-card-component-ref-"]';
+const OLD_CARD = '[data-occludable-job-id], [data-job-id]';
+const JOB_LINK = 'a[href*="/jobs/view/"]';
 
-  for (const card of document.querySelectorAll('[componentkey^="job-card-component-ref-"]')) {
-    const id = ((card.getAttribute('componentkey') || '').match(/(\\d{6,})$/) || [])[1];
-    // A <p> reads as its first <span> when it has one: the page puts the
-    // visible text and a screen-reader copy side by side in the same line.
-    const texts = [...card.querySelectorAll('p')]
-      .filter((p) => !p.closest('button'))
-      .map((p) => { const s = p.querySelector(':scope > span'); return clean(s ? s.textContent : p.textContent); })
-      .filter((t) => t && !/^[·•|]$/.test(t));
-    const dismiss = card.querySelector('button[aria-label^="Dismiss "]');
-    const fromButton = dismiss ? ((dismiss.getAttribute('aria-label') || '').match(/^Dismiss (.+) job$/) || [])[1] : '';
-    const title = clean(fromButton) || texts[0] || '';
-    const at = Math.max(0, texts.indexOf(title));
-    const rest = texts.slice(at + 3);
-    add({
-      id,
-      title,
-      company: texts[at + 1] || '',
-      location: texts[at + 2] || '',
-      posted: rest.find(isPosted) || '',
-      salary: rest.find(isPay) || '',
-      easyApply: rest.some((t) => /easy apply/i.test(t)),
-      promoted: rest.some((t) => /^promoted/i.test(t)),
-    });
-  }
+/**
+ * A new-layout card's lines, in order. A <p> reads as its first <span> when it
+ * has one — the page puts the visible text and a screen-reader copy side by
+ * side in the same line — and lines inside a button (Dismiss, Save) are not
+ * the card's.
+ */
+const NEW_CARD_LINES = 'p:not(button p):not(:has(> span)), p:not(button p) > span:first-of-type';
 
-  for (const card of document.querySelectorAll('[data-occludable-job-id], [data-job-id]')) {
-    const id = card.getAttribute('data-occludable-job-id') || card.getAttribute('data-job-id') || '';
-    const link = card.querySelector('a[href*="/jobs/view/"]');
-    const time = card.querySelector('time');
-    const meta = [...card.querySelectorAll('li')].map((li) => clean(li.textContent));
-    add({
-      id,
-      title: firstLine(link),
-      company: firstLine(card.querySelector('.artdeco-entity-lockup__subtitle')),
-      location: firstLine(card.querySelector('.artdeco-entity-lockup__caption')),
-      posted: time ? (time.getAttribute('datetime') || clean(time.textContent)) : '',
-      salary: meta.find(isPay) || '',
-      easyApply: /easy apply/i.test(card.textContent || ''),
-      promoted: /\\bpromoted\\b/i.test(card.textContent || ''),
-    });
+const isPay = (t: string) => /[$€£₹]|\/(hr|yr|mo)\b|per (hour|year|month)/i.test(t);
+const isPosted = (t: string) => /^(re)?posted\b|\bago$|^just now$/i.test(t);
+const isSeparator = (t: string) => /^[·•|]$/.test(t);
+
+/** The first non-empty line of an element's drawn text, whitespace collapsed. */
+async function firstLineOf(loc: Locator, where: string, trace: Trace): Promise<string> {
+  return lines(await innerTextOf(loc, where, trace)).map(clean).find(Boolean) ?? '';
+}
+
+/** Collects jobs in page order, keeping the first card read for each job id. */
+class JobList {
+  private readonly seen = new Set<string>();
+  readonly jobs: LinkedInJob[] = [];
+
+  add(job: LinkedInJob): void {
+    if (!job.id || !job.title || this.seen.has(job.id)) return;
+    this.seen.add(job.id);
+    this.jobs.push(job);
   }
+}
+
+/**
+ * Title, company, location and the rest out of a new-layout card's lines. The
+ * Dismiss button's label is the reliable title; the lines after it are company
+ * then location, and everything past those is badges and footer.
+ */
+function jobFromCardLines(id: string, dismissTitle: string, texts: string[]): LinkedInJob {
+  const title = clean(dismissTitle) || texts[0] || '';
+  const at = Math.max(0, texts.indexOf(title));
+  const rest = texts.slice(at + 3);
+  return {
+    id,
+    title,
+    company: texts[at + 1] || '',
+    location: texts[at + 2] || '',
+    posted: rest.find(isPosted) || '',
+    salary: rest.find(isPay) || '',
+    easyApply: rest.some((t) => /easy apply/i.test(t)),
+    promoted: rest.some((t) => /^promoted/i.test(t)),
+  };
+}
+
+/** The job id at the end of a new-layout card's `componentkey`. */
+async function newCardId(card: Locator, trace: Trace): Promise<string> {
+  const key = (await attributeOf(card, 'componentkey', 'componentkey', trace)) ?? '';
+  return key.match(/(\d{6,})$/)?.[1] ?? '';
+}
+
+/** "Dismiss Senior Developer job" → "Senior Developer". */
+async function dismissTitle(card: Locator, trace: Trace): Promise<string> {
+  const label = await attributeOf(
+    card.locator('button[aria-label^="Dismiss "]'),
+    'aria-label',
+    'dismiss button',
+    trace,
+  );
+  return label?.match(/^Dismiss (.+) job$/)?.[1] ?? '';
+}
+
+async function newCardLines(card: Locator, trace: Trace): Promise<string[]> {
+  const texts = await allTextContentsOf(card.locator(NEW_CARD_LINES), 'lines', trace);
+  return texts.map(clean).filter((t) => t && !isSeparator(t));
+}
+
+async function readNewCard(card: Locator, trace: Trace): Promise<LinkedInJob> {
+  const id = await newCardId(card, trace);
+  const t = within(trace, `card ${id || '?'}`);
+  return jobFromCardLines(id, await dismissTitle(card, t), await newCardLines(card, t));
+}
+
+async function oldCardId(card: Locator, trace: Trace): Promise<string> {
+  return (
+    (await attributeOf(card, 'data-occludable-job-id', 'data-occludable-job-id', trace)) ||
+    (await attributeOf(card, 'data-job-id', 'data-job-id', trace)) ||
+    ''
+  );
+}
+
+/** The card's `<time>`: its machine-readable date when it has one, else its words. */
+async function oldCardPosted(card: Locator, trace: Trace): Promise<string> {
+  const time = await firstOf(card.locator('time'), 'time', trace);
+  if (!time) return '';
+  return (await attributeOf(time, 'datetime', 'time@datetime', trace)) || clean(await textContentOf(time, 'time', trace));
+}
+
+async function readOldCard(card: Locator, trace: Trace): Promise<LinkedInJob> {
+  const id = await oldCardId(card, trace);
+  const t = within(trace, `card ${id || '?'}`);
+  const meta = (await allTextContentsOf(card.locator('li'), 'meta', t)).map(clean);
+  const whole = await textContentOf(card, 'card text', t);
+  return {
+    id,
+    title: await firstLineOf(card.locator(JOB_LINK), 'title link', t),
+    company: await firstLineOf(card.locator('.artdeco-entity-lockup__subtitle'), 'company', t),
+    location: await firstLineOf(card.locator('.artdeco-entity-lockup__caption'), 'location', t),
+    posted: await oldCardPosted(card, t),
+    salary: meta.find(isPay) || '',
+    easyApply: /easy apply/i.test(whole),
+    promoted: /\bpromoted\b/i.test(whole),
+  };
+}
+
+/** A bare `/jobs/view/<id>` link, as a job with only a title. */
+async function readJobLink(link: Locator, trace: Trace): Promise<LinkedInJob> {
+  const href = (await attributeOf(link, 'href', 'href', trace)) ?? '';
+  const id = href.match(/\/jobs\/view\/(\d+)/)?.[1] ?? '';
+  return {
+    id,
+    title: await firstLineOf(link, `link ${id || '?'}`, trace),
+    company: '',
+    location: '',
+    posted: '',
+    salary: '',
+    easyApply: false,
+    promoted: false,
+  };
+}
+
+/** Read every card on the page, under both layouts, merged by job id. */
+export async function readJobs(
+  page: Page,
+  trace: Trace = noTrace,
+  note: (m: string) => void = () => undefined,
+): Promise<LinkedInJob[]> {
+  const list = new JobList();
+
+  const newCards = await allOf(page.locator(NEW_CARD), 'new-layout cards', trace);
+  for (const [i, card] of newCards.entries()) {
+    list.add(await readNewCard(card, within(trace, `new layout #${i}`)));
+  }
+  const fromNew = list.jobs.length;
+
+  const oldCards = await allOf(page.locator(OLD_CARD), 'old-layout cards', trace);
+  for (const [i, card] of oldCards.entries()) {
+    list.add(await readOldCard(card, within(trace, `old layout #${i}`)));
+  }
+  note(
+    `read ${fromNew} job(s) from ${newCards.length} new-layout card(s), ` +
+      `${list.jobs.length - fromNew} more from ${oldCards.length} old-layout card(s)`,
+  );
 
   // Only when no card was recognised at all: the details pane links to
   // "similar jobs" that are not part of your search.
-  if (jobs.length) return jobs;
-  for (const a of document.querySelectorAll('a[href*="/jobs/view/"]')) {
-    const id = ((a.getAttribute('href') || '').match(/\\/jobs\\/view\\/(\\d+)/) || [])[1];
-    add({ id, title: firstLine(a), company: '', location: '', posted: '', salary: '', easyApply: false, promoted: false });
-  }
-  return jobs;
-})()`;
+  if (list.jobs.length) return list.jobs;
+  const links = await allOf(page.locator(JOB_LINK), 'job links', trace);
+  for (const link of links) list.add(await readJobLink(link, within(trace, 'fallback')));
+  note(`no cards recognised — ${list.jobs.length} job(s) from ${links.length} bare job link(s)`);
+  return list.jobs;
+}
 
 /** How many job cards are drawn, under either layout. */
-const COUNT_JS = `document.querySelectorAll('[componentkey^="job-card-component-ref-"], [data-occludable-job-id]').length`;
+function countCards(page: Page, trace: Trace): Promise<number> {
+  return countOf(page.locator('[componentkey^="job-card-component-ref-"], [data-occludable-job-id]'), 'count cards', trace);
+}
 
 const UNIT_MS: Record<string, number> = {
   second: 1_000,
@@ -248,32 +363,67 @@ export function jobToLead(job: LinkedInJob): RawLead {
   };
 }
 
+// ── Reading the job open beside the list ──────────────────────
+
+interface JobDetail {
+  /** The pane is showing this job. */
+  ready: boolean;
+  description: string;
+  applicants: string;
+}
+
+const stripAboutHeading = (text: string) => text.replace(/^\s*About the job\s*/i, '').trim();
+
+/** The 2026 page's "About the job" section for this job, by key and then by id. */
+async function aboutTheJob(page: Page, id: string, trace: Trace): Promise<Locator | null> {
+  return (
+    (await firstOf(page.locator(`[componentkey="JobDetails_AboutTheJob_${id}"]`), 'about (componentkey)', trace)) ??
+    (await firstOf(page.locator(`[id="JobDetails_AboutTheJob_${id}"]`), 'about (id)', trace))
+  );
+}
+
+/** The description inside it: the expandable text box when there is one. */
+async function aboutText(about: Locator, trace: Trace): Promise<string> {
+  const box = await firstOf(about.locator('[data-testid="expandable-text-box"]'), 'text box', trace);
+  return stripAboutHeading(await innerTextOf(box ?? about, 'description', trace));
+}
+
+/**
+ * The older page: one details pane, showing whichever job is selected — so it
+ * only counts when the URL says the selected job is this one.
+ */
+async function oldPaneText(page: Page, id: string, trace: Trace): Promise<string> {
+  let selected: string | null = null;
+  try {
+    selected = new URL(page.url()).searchParams.get('currentJobId');
+  } catch (err) {
+    trace('page url', err);
+  }
+  if (selected !== id) return '';
+  return stripAboutHeading(await innerTextOf(page.locator('.jobs-description__content, #job-details'), 'old pane', trace));
+}
+
+/** "Over 100 applicants" / "37 applicants", from the block around the job's title link. */
+async function applicantsLine(page: Page, id: string, trace: Trace): Promise<string> {
+  const link = await firstOf(page.locator(`a[href*="/jobs/view/${id}"]`), 'title link', trace);
+  if (!link) return '';
+  const top =
+    (await firstOf(link.locator('xpath=ancestor::*[@data-component-type="LazyColumn"][1]'), 'lazy column', trace)) ??
+    (await firstOf(link.locator('xpath=../../..'), 'title block', trace));
+  const text = top ? await innerTextOf(top, 'title block', trace) : '';
+  return text.match(/(over\s+)?\d[\d,]*\+?\s+applicants?/i)?.[0].replace(/\s+/g, ' ') ?? '';
+}
+
 /**
  * The job currently open in the pane beside the list: its description, and
  * the applicant count from the line under its title.
  */
-const READ_DETAIL_JS = (id: string) => `(() => {
-  const id = ${JSON.stringify(id)};
-  const about = document.querySelector('[componentkey="JobDetails_AboutTheJob_' + id + '"]')
-    || document.getElementById('JobDetails_AboutTheJob_' + id);
-  let description = '';
-  if (about) {
-    const box = about.querySelector('[data-testid="expandable-text-box"]');
-    description = (box || about).innerText.replace(/^\\s*About the job\\s*/i, '').trim();
-  } else {
-    // The older page: one details pane, whichever job is selected.
-    const old = document.querySelector('.jobs-description__content, #job-details');
-    const selected = new URLSearchParams(location.search).get('currentJobId');
-    if (old && selected === id) description = old.innerText.replace(/^\\s*About the job\\s*/i, '').trim();
-  }
-  let applicants = '';
-  const link = document.querySelector('a[href*="/jobs/view/' + id + '"]');
-  const top = link && (link.closest('[data-component-type="LazyColumn"]') || link.parentElement?.parentElement?.parentElement);
-  const text = (top && top.innerText) || '';
-  const m = text.match(/(over\\s+)?\\d[\\d,]*\\+?\\s+applicants?/i);
-  if (m) applicants = m[0].replace(/\\s+/g, ' ');
+async function readDetail(page: Page, id: string, trace: Trace): Promise<JobDetail> {
+  const about = await aboutTheJob(page, id, trace);
+  const description = about ? await aboutText(about, trace) : await oldPaneText(page, id, trace);
+  const applicants = await applicantsLine(page, id, trace);
   return { ready: !!about || !!description, description, applicants };
-})()`;
+}
 
 // ── The tab ───────────────────────────────────────────────────
 
@@ -286,10 +436,17 @@ class LinkedInJobsTab implements WatchTab {
   /** Tabs this class opened, and may therefore close again. */
   private readonly created = new Set<Page>();
 
+  /** Where a swallowed error happened, logged in --dev mode only. */
+  private readonly trace: Trace;
+  private readonly note: (m: string) => void;
+
   constructor(
     private readonly session: BrowserSession,
     private readonly opts: WatchTabOptions,
-  ) {}
+  ) {
+    this.trace = devTrace(opts.log, 'LinkedIn jobs');
+    this.note = devNote(opts.log, 'LinkedIn jobs');
+  }
 
   isOpen(): boolean {
     if (this.closed) return false;
@@ -343,7 +500,7 @@ class LinkedInJobsTab implements WatchTab {
     let last = -1;
     let steady = 0;
     while (Date.now() < deadline) {
-      const count = Number(await page.evaluate(COUNT_JS).catch(() => 0));
+      const count = await countCards(page, within(this.trace, 'waitForCards'));
       steady = count === last && count > 0 ? steady + 1 : 0;
       last = count;
       if (steady >= 4) return count;
@@ -361,6 +518,7 @@ class LinkedInJobsTab implements WatchTab {
       page = await this.resolveTab();
       await this.goToFeed(page);
     } catch (err) {
+      this.trace('poll › opening the job search', err);
       if (!this.isOpen()) return { leads: [], problem: 'closed' };
       return { leads: [], problem: 'no-feed', detail: (err as Error).message };
     }
@@ -382,6 +540,7 @@ class LinkedInJobsTab implements WatchTab {
 
     const landed = page.url();
     if (!isJobSearchUrl(landed)) {
+      this.note(`poll › landed on ${landed}, which is not a job search`);
       let where = landed;
       try {
         where = new URL(landed).pathname;
@@ -400,10 +559,11 @@ class LinkedInJobsTab implements WatchTab {
     const drawn = await this.waitForCards(page);
     await sleep(AFTER_RELOAD_MS);
 
-    const jobs = ((await page.evaluate(READ_JOBS_JS).catch(() => [])) ?? []) as LinkedInJob[];
+    const jobs = await readJobs(page, within(this.trace, 'poll › readJobs'), this.note);
     if (!jobs.length) {
+      this.note(`poll › no jobs read (${drawn} card(s) counted while waiting)`);
       // A search can genuinely have no results in the past 24 hours. It says so.
-      const body = await page.innerText('main').catch(() => '');
+      const body = await innerTextOf(page.locator('main'), 'poll › main', this.trace);
       if (/no matching jobs|no results|0 results/i.test(body)) return { leads: [] };
       return {
         leads: [],
@@ -436,10 +596,14 @@ class LinkedInJobsTab implements WatchTab {
     let page: Page;
     try {
       page = await this.resolveTab();
-    } catch {
+    } catch (err) {
+      this.trace(`inspect ${id} › finding the tab`, err);
       return null;
     }
-    if (!isJobSearchUrl(page.url())) return null;
+    if (!isJobSearchUrl(page.url())) {
+      this.note(`inspect ${id} › the tab is not on a job search any more (${page.url()})`);
+      return null;
+    }
 
     const card = page
       .locator(
@@ -447,30 +611,36 @@ class LinkedInJobsTab implements WatchTab {
           `[data-occludable-job-id="${id}"] a[href*="/jobs/view/"], [data-job-id="${id}"] a[href*="/jobs/view/"]`,
       )
       .first();
-    if ((await card.count().catch(() => 0)) === 0) {
+    if ((await countOf(card, `inspect ${id} › find card`, this.trace)) === 0) {
       // Gone from the first page since it was spotted. Not worth a navigation.
       this.opts.log('that job is no longer in the list — alerting with what the card said');
       return null;
     }
 
+    let step = 'scroll to card';
     try {
       await card.scrollIntoViewIfNeeded({ timeout: 5_000 });
       await sleep(400 + Math.random() * 600);
+      step = 'click card';
       await card.click({ timeout: 5_000 });
 
+      step = 'read details pane';
+      const trace = within(this.trace, `inspect ${id} › readDetail`);
       const deadline = Date.now() + 12_000;
-      let detail = { ready: false, description: '', applicants: '' };
+      let detail: JobDetail = { ready: false, description: '', applicants: '' };
       while (Date.now() < deadline) {
         await sleep(700);
-        detail = (await page.evaluate(READ_DETAIL_JS(id)).catch(() => detail)) as typeof detail;
+        detail = await readDetail(page, id, trace).catch(() => detail);
         if (detail.ready && detail.description) break;
       }
+      if (!detail.description) this.note(`inspect ${id} › the details pane never showed a description`);
 
       const meta: LeadMetadata = {};
       if (detail.description) meta.description = detail.description.slice(0, 8000);
       if (detail.applicants) meta.applicants = detail.applicants;
       return Object.keys(meta).length ? meta : null;
     } catch (err) {
+      this.trace(`inspect ${id} › ${step}`, err);
       this.opts.log(`could not open that job in the list: ${(err as Error).message}`);
       return null;
     }

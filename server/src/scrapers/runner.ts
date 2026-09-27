@@ -1,4 +1,4 @@
-import { logger } from '../utils/logger';
+import { logStackInDev, logger } from '../utils/logger';
 import {
   insertLeads,
   leadsAlreadyReviewed,
@@ -39,17 +39,20 @@ import type { Scraper } from './types';
  *
  * Scraped leads only. Upwork alerts skip it: the watched feed is already the
  * user's own tuned search.
+ *
+ * @returns the ids of the leads the review rejected, so they are not announced.
  */
 async function reviewLeads(
   leads: LeadDTO[],
   config: AppConfig,
   log: (msg: string) => void,
-): Promise<void> {
-  if (!config.aiEnabled || !leads.length) return;
+): Promise<Set<string>> {
+  const rejected = new Set<string>();
+  if (!config.aiEnabled || !leads.length) return rejected;
 
   const alreadyDone = leadsAlreadyReviewed(leads.map((l) => l.id));
   const toReview = leads.filter((l) => !alreadyDone.has(l.id));
-  if (!toReview.length) return;
+  if (!toReview.length) return rejected;
 
   // Read the key only when there is actually something to review, so it is
   // never held in memory during the scrape itself.
@@ -59,6 +62,7 @@ async function reviewLeads(
   for (const [leadId, verdict] of verdicts) {
     // A skipped lead is left unchecked, so a pass after the pause reviews it.
     if (verdict.verdict === 'skipped') continue;
+    if (verdict.verdict === 'rejected') rejected.add(leadId);
     rows.push({
       leadId,
       verdict: verdict.verdict,
@@ -70,6 +74,7 @@ async function reviewLeads(
   }
 
   saveAiReviews(rows);
+  return rejected;
 }
 
 let running = false;
@@ -98,7 +103,17 @@ async function withWatcherPaused<T>(platform: string, fn: () => Promise<T>): Pro
   }
 }
 
-async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: number; inserted: LeadDTO[] }> {
+/**
+ * What one scraper run produced: everything it stored, and the part of that
+ * worth announcing — the AI's rejects are stored (and archived) but not sent.
+ */
+interface RunOutcome {
+  found: number;
+  inserted: LeadDTO[];
+  toNotify: LeadDTO[];
+}
+
+async function runOne(scraper: Scraper, config: AppConfig): Promise<RunOutcome> {
   const run = startRun(scraper.platform);
   const log = (msg: string) => logger.info(`[${scraper.name}] ${msg}`);
   log('scrape started');
@@ -121,7 +136,8 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
     }
 
     const { inserted, all, skippedAsCleared } = insertLeads(raw);
-    await reviewLeads(all, config, log);
+    const rejected = await reviewLeads(all, config, log);
+    const toNotify = inserted.filter((lead) => !rejected.has(lead.id));
 
     finishRun(run.id, { status: 'success', found: raw.length, inserted: inserted.length });
     markUsed(scraper.platform);
@@ -129,14 +145,16 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<{ found: num
       `scrape finished — found ${raw.length}, inserted ${inserted.length}` +
         // Otherwise "found 25, inserted 0" reads as a broken scraper when it is
         // really every result having been cleared away earlier.
-        (skippedAsCleared ? `, skipped ${skippedAsCleared} you had cleared` : ''),
+        (skippedAsCleared ? `, skipped ${skippedAsCleared} you had cleared` : '') +
+        (inserted.length > toNotify.length ? `, ${inserted.length - toNotify.length} rejected by AI review (not announced)` : ''),
     );
-    return { found: raw.length, inserted };
+    return { found: raw.length, inserted, toNotify };
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
     finishRun(run.id, { status: 'error', error: message });
     logger.error(`[${scraper.name}] scrape failed`, message);
-    return { found: 0, inserted: [] };
+    logStackInDev(env.devMode, `[${scraper.name}] scrape failed`, err);
+    return { found: 0, inserted: [], toNotify: [] };
   }
 }
 
@@ -178,11 +196,11 @@ export async function runScrapeCycle(): Promise<RunSummary> {
         continue;
       }
 
-      const { found, inserted } = await runOne(scraper, config);
+      const { found, inserted, toNotify } = await runOne(scraper, config);
       summary.perPlatform[scraper.platform] = { found, inserted: inserted.length };
       summary.totalFound += found;
       summary.totalInserted += inserted.length;
-      allNew.push(...inserted);
+      allNew.push(...toNotify);
     }
 
     if (allNew.length) await notifyNewLeads(allNew);

@@ -6,6 +6,7 @@ import type {
   WatchTab,
   WatchTabOptions,
 } from '../../server/src/scrapers/types';
+import { devTrace, type Trace } from '../lib/debug';
 import { openProfile, type BrowserSession } from '../lib/profile';
 import { loadUpworkRuntimeConfig } from './config';
 import {
@@ -135,10 +136,15 @@ class UpworkWatchTab implements WatchTab {
     );
   }
 
+  /** Where a swallowed error happened, logged in --dev mode only. */
+  private readonly trace: Trace;
+
   constructor(
     private readonly session: BrowserSession,
     private readonly opts: WatchTabOptions,
-  ) {}
+  ) {
+    this.trace = devTrace(opts.log, 'Upwork feed');
+  }
 
   isOpen(): boolean {
     if (this.closed) return false;
@@ -215,6 +221,7 @@ class UpworkWatchTab implements WatchTab {
       page = await this.resolveTab();
       status = await this.goToFeed(page);
     } catch (err) {
+      this.trace('poll › opening the feed', err);
       if (!this.isOpen()) return { leads: [], problem: 'closed' };
       return { leads: [], problem: 'no-feed', detail: (err as Error).message };
     }
@@ -312,7 +319,8 @@ class UpworkWatchTab implements WatchTab {
     let page: Page;
     try {
       page = await this.resolveTab();
-    } catch {
+    } catch (err) {
+      this.trace('inspect › finding the tab', err);
       return null;
     }
 
@@ -325,13 +333,14 @@ class UpworkWatchTab implements WatchTab {
       if (detail.proposals) meta.proposals = detail.proposals;
       return Object.keys(meta).length ? meta : null;
     } catch (err) {
+      this.trace(`inspect › reading ${url}`, err);
       this.opts.log(`could not read that job's page: ${(err as Error).message}`);
       return null;
     } finally {
       // Back to the feed, so the next poll is a reload rather than a navigation.
       await page
         .goto(this.opts.feedUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-        .catch(() => undefined);
+        .catch((err) => this.trace('inspect › returning to the feed', err));
     }
   }
 

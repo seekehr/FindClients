@@ -83,9 +83,11 @@ export function matchesLeadFilters(lead: LeadDTO, config: AppConfig): boolean {
  */
 const SOURCE_IS_THE_FILTER = new Set<string>(['blackhatworld']);
 
-/** Does this lead pass the platform / keyword / budget filters? */
+/** Does this lead pass the platform / keyword / budget filters and the AI review? */
 function matchesConfig(lead: LeadDTO, config: AppConfig): boolean {
   if (config.platforms.length && !config.platforms.includes(lead.platform)) return false;
+  // Judged against your criteria and found wanting. Unreviewed leads still count.
+  if (lead.ai.verdict === 'rejected') return false;
   if (SOURCE_IS_THE_FILTER.has(lead.platform)) {
     return matchesLeadFilters(lead, { ...config, keywords: [] });
   }

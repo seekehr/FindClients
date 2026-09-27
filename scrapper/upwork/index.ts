@@ -1,5 +1,15 @@
-import { type ElementHandle, type Page } from 'playwright';
+import { type ElementHandle, type Locator, type Page } from 'playwright';
 import type { LeadMetadata, RawLead, Scraper } from '../../server/src/scrapers/types';
+import { devNote, devTrace, noTrace, within, type Trace } from '../lib/debug';
+import {
+  allInnerTextsOf,
+  allOf,
+  attributeOf,
+  countOf,
+  firstOf,
+  innerTextOf,
+  lines,
+} from '../lib/dom';
 import { deleteProfile, hasProfile, openProfile, waitForSignIn } from '../lib/profile';
 import { loadUpworkRuntimeConfig, type UpworkRuntimeConfig } from './config';
 
@@ -281,6 +291,22 @@ export async function waitForCaptchaSolved(
   return false;
 }
 
+/**
+ * The client's rating on a job page: the "Rating is X out of 5" label, then
+ * the value text, then the rating bar's width — the same precedence as a tile.
+ */
+async function detailRating(page: Page, trace: Trace): Promise<string> {
+  const label = (await allInnerTextsOf(page.locator('span.sr-only'), 'label', trace)).find((t) => /Rating is/i.test(t));
+  if (label !== undefined) {
+    const m = label.match(/([\d.]+)\s+out of/);
+    if (m) return m[1];
+  }
+  const value = (await innerTextOf(page.locator('div.air3-rating-value-text'), 'value text', trace)).trim();
+  if (value) return value;
+  const style = await attributeOf(page.locator('div.air3-rating-foreground'), 'style', 'rating bar', trace);
+  return style === null ? '' : ratingFromForeground(style);
+}
+
 /** Visit a job's detail page to enrich client rating, hire rate and proposal count. */
 export async function readJobDetail(
   page: Page,
@@ -289,33 +315,19 @@ export async function readJobDetail(
   log: (m: string) => void,
 ): Promise<{ clientRating: string; clientHireRate: string; proposals: string }> {
   const result = { clientRating: '', clientHireRate: '', proposals: '' };
+  const trace = devTrace(log, 'Upwork job page');
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await page.waitForSelector('text=/hire rate/i', { timeout: cfg.detailTimeoutMs });
-  } catch {
+  } catch (err) {
+    trace(`readJobDetail › loading ${url}`, err);
     log(`detail timeout: ${url}`);
     return result;
   }
 
-  // Rating: prefer the "Rating is X out of 5" label, then the value text, then
-  // the rating-bar width (same precedence as the feed tile).
-  for (const sr of await page.$$('span.sr-only')) {
-    const t = await sr.innerText();
-    if (/Rating is/i.test(t)) {
-      const m = t.match(/([\d.]+)\s+out of/);
-      result.clientRating = m ? m[1] : '';
-      break;
-    }
-  }
-  if (!result.clientRating) {
-    result.clientRating = await safeText(await page.$('div.air3-rating-value-text'));
-  }
-  if (!result.clientRating) {
-    const fg = await page.$('div.air3-rating-foreground');
-    if (fg) result.clientRating = ratingFromForeground((await fg.getAttribute('style')) ?? '');
-  }
+  result.clientRating = await detailRating(page, within(trace, 'readJobDetail › rating'));
 
-  const body = await page.innerText('body').catch(() => '');
+  const body = await innerTextOf(page.locator('body'), 'readJobDetail › body', trace);
   const hire = body.match(/\d+%\s+hire rate/i);
   if (hire) result.clientHireRate = hire[0].trim();
 
@@ -375,9 +387,11 @@ export async function waitForFeed(page: Page, log: (m: string) => void): Promise
 //
 // All three read what the page already has. None of them loads more.
 //
-// The in-page code is plain JavaScript strings rather than functions: tsx
-// compiles functions with a `__name` helper that does not exist in the page,
-// and Playwright would ship that reference across verbatim.
+// Tiles and links are read with Playwright locators, one small reader per
+// field. The page data is the exception: it is JavaScript state, not markup,
+// so it is read with `page.evaluate` — as a plain string rather than a
+// function, because tsx compiles functions with a `__name` helper that does
+// not exist in the page and Playwright would ship that reference across.
 
 /**
  * A job's id: the "~02…" token in its URL, which the store calls `ciphertext`.
@@ -489,141 +503,238 @@ const TITLE_LINK_SELECTORS = [
   'a[href*="/jobs/"][href*="~0"]',
 ];
 
-/** Strategy 2 (tiles) and 3 (bare links), in one pass over the page. */
-const READ_DOM_JS = `(() => {
-  const TILES = ${JSON.stringify(TILE_SELECTORS)};
-  const LINKS = ${JSON.stringify(TITLE_LINK_SELECTORS)};
-  const text = (root, sel) => { const el = root.querySelector(sel); return el ? el.innerText.trim() : ''; };
-  const isJobHref = (href) => !!href && href.includes('/jobs/') && /~0[0-9a-z]{6,}/i.test(href);
-  const titleLink = (root) => {
-    for (const sel of LINKS) for (const a of root.querySelectorAll(sel)) if (isJobHref(a.getAttribute('href'))) return a;
-    return null;
-  };
-  const abs = (href) => (href.startsWith('http') ? href : 'https://www.upwork.com' + href);
-  const idOf = (href) => {
-    const m = href.match(/~0[0-9a-z]{6,}/i);
-    return m ? m[0].toLowerCase() : '';
-  };
-  const rating = (tile) => {
-    for (const sr of tile.querySelectorAll('span.sr-only')) {
-      const m = sr.innerText.match(/Rating is\\s*([\\d.]+)/i);
-      if (m) return m[1];
+interface LinkJob {
+  id: string;
+  title: string;
+  url: string;
+  posted: string;
+}
+
+const isJobHref = (href: string | null | undefined): href is string =>
+  !!href && href.includes('/jobs/') && /~0[0-9a-z]{6,}/i.test(href);
+
+const absoluteUrl = (href: string) => (href.startsWith('http') ? href : `https://www.upwork.com${href}`);
+
+/** Every selector a tile might match, as one list. */
+const ANY_TILE = TILE_SELECTORS.join(', ');
+
+/**
+ * The tiles to read, in the order the selectors are listed and then page order.
+ *
+ * Only the outermost: a tile matched by a loose selector can contain one
+ * matched by a tight one, and they are the same job. An element two selectors
+ * both match is taken under the first. And only cards that have a job link —
+ * the sidebar reuses the tile class.
+ */
+async function tileRoots(page: Page, trace: Trace): Promise<Locator[]> {
+  const roots: Locator[] = [];
+  for (const [i, sel] of TILE_SELECTORS.entries()) {
+    const earlier = TILE_SELECTORS.slice(0, i);
+    const outermost =
+      `${sel}:not(:is(${ANY_TILE}) *)` + (earlier.length ? `:not(:is(${earlier.join(', ')}))` : '');
+    const withLink = page.locator(outermost).filter({ has: page.locator('a[href*="/jobs/"][href*="~0"]') });
+    roots.push(...(await allOf(withLink, `tiles ${sel}`, trace)));
+  }
+  return roots;
+}
+
+/** A tile's title link: the first job link, trying the most specific selectors first. */
+async function titleLink(root: Locator, trace: Trace): Promise<{ link: Locator; href: string } | null> {
+  for (const sel of TITLE_LINK_SELECTORS) {
+    for (const link of await allOf(root.locator(sel), `title link ${sel}`, trace)) {
+      const href = await attributeOf(link, 'href', 'title link href', trace);
+      if (isJobHref(href)) return { link, href };
     }
-    const fg = tile.querySelector('div.air3-rating-foreground');
-    const w = fg && (fg.getAttribute('style') || '').match(/width:\\s*([\\d.]+)px/);
-    return w ? String(Math.round((parseFloat(w[1]) / 78) * 50) / 10) : '';
+  }
+  return null;
+}
+
+/** Trimmed drawn text of the first match inside `root`. */
+async function textIn(root: Locator, sel: string, trace: Trace): Promise<string> {
+  return (await innerTextOf(root.locator(sel), sel, trace)).trim();
+}
+
+/** Trimmed, de-duplicated skill chips, at most eight. */
+async function skillsIn(root: Locator, sel: string, trace: Trace): Promise<string[]> {
+  const skills = (await allInnerTextsOf(root.locator(sel), 'skills', trace)).map((s) => s.trim()).filter(Boolean);
+  return [...new Set(skills)].slice(0, 8);
+}
+
+/** "Rating is 4.9 out of 5" when the tile says so, else the rating bar's width. */
+async function tileRating(tile: Locator, trace: Trace): Promise<string> {
+  for (const sr of await allInnerTextsOf(tile.locator('span.sr-only'), 'rating label', trace)) {
+    const m = sr.match(/Rating is\s*([\d.]+)/i);
+    if (m) return m[1];
+  }
+  const style = await attributeOf(tile.locator('div.air3-rating-foreground'), 'style', 'rating bar', trace);
+  const w = (style ?? '').match(/width:\s*([\d.]+)px/);
+  return w ? String(Math.round((Number.parseFloat(w[1]) / 78) * 50) / 10) : '';
+}
+
+/** Strategy 2a: a classic tile, with a title link to the job. */
+async function readLinkedTile(tile: Locator, link: Locator, href: string, trace: Trace): Promise<TileJob> {
+  return {
+    id: upworkJobId(href),
+    title: (await innerTextOf(link, 'title', trace)).trim(),
+    url: absoluteUrl(href),
+    description: await textIn(tile, '[data-test="job-description-text"]', trace),
+    rate: await textIn(tile, '[data-test="job-type"]', trace),
+    estimatedBudget: await textIn(tile, '[data-test="budget"]', trace),
+    proposals: await textIn(tile, '[data-test="proposals-tier"]', trace),
+    posted: await textIn(tile, '[data-test="posted-on"]', trace),
+    clientMoneySpent: await textIn(tile, '[data-test="formatted-amount"]', trace),
+    paymentVerified: await textIn(tile, '[data-test="payment-verification-status"]', trace),
+    clientCountry: (await textIn(tile, '[data-test="client-country"]', trace)).replace(/\s+/g, ' '),
+    clientRating: await tileRating(tile, trace),
+    clientHireRate: '',
+    skills: await skillsIn(tile, '[data-test="token"], [data-test="attr-item"]', trace),
   };
+}
 
-  const tiles = new Set();
-  for (const sel of TILES) {
-    for (const el of document.querySelectorAll(sel)) {
-      // Only cards that are actually about a job; the sidebar reuses the class.
-      if (titleLink(el)) tiles.add(el);
-    }
+/** The job's type and pay: the first line of the block right after the title's row. */
+async function ngmRate(tile: Locator, trace: Trace): Promise<string> {
+  const title = await firstOf(tile.locator('[data-test="job-title"]'), 'job title', trace);
+  if (!title) return '';
+  return lines(await innerTextOf(title.locator('xpath=../following-sibling::*[1]'), 'rate', trace))[0] ?? '';
+}
+
+interface NgmClient {
+  clientMoneySpent: string;
+  paymentVerified: string;
+  clientCountry: string;
+}
+
+/** Verified / spent / country, read off the row that holds the verified badge. */
+async function ngmClient(tile: Locator, trace: Trace): Promise<NgmClient> {
+  const badge = await firstOf(tile.locator('.is-verified, .ngm-tag-inline'), 'client badge', trace);
+  let row: Locator | null = null;
+  if (badge) {
+    row =
+      (await firstOf(
+        badge.locator('xpath=ancestor-or-self::*[contains(concat(" ", normalize-space(@class), " "), " flex-wrap ")][1]'),
+        'client row',
+        trace,
+      )) ?? (await firstOf(badge.locator('xpath=..'), 'client row', trace));
   }
-  // A tile matched by a loose selector can contain one matched by a tight one.
-  const roots = [...tiles].filter((t) => ![...tiles].some((o) => o !== t && o.contains(t)));
+  const clientLines = row ? lines(await innerTextOf(row, 'client row', trace)) : [];
+  const paid = clientLines.find((l) => /^payment (un)?verified$/i.test(l)) || '';
+  const spent = clientLines.find((l) => /spent$/i.test(l)) || '';
+  const country =
+    [...clientLines].reverse().find((l) => !/verified$/i.test(l) && !/spent$/i.test(l) && !/^[\d.]+$/.test(l)) || '';
+  return { clientMoneySpent: spent.replace(/\s*spent$/i, ''), paymentVerified: paid, clientCountry: country };
+}
 
-  const fromTiles = roots.map((tile) => {
-    const a = titleLink(tile);
-    const href = a.getAttribute('href');
-    const skills = [...tile.querySelectorAll('[data-test="token"], [data-test="attr-item"]')]
-      .map((el) => el.innerText.trim()).filter(Boolean);
-    return {
-      id: idOf(href),
-      title: a.innerText.trim(),
-      url: abs(href),
-      description: text(tile, '[data-test="job-description-text"]'),
-      rate: text(tile, '[data-test="job-type"]'),
-      estimatedBudget: text(tile, '[data-test="budget"]'),
-      proposals: text(tile, '[data-test="proposals-tier"]'),
-      posted: text(tile, '[data-test="posted-on"]'),
-      clientMoneySpent: text(tile, '[data-test="formatted-amount"]'),
-      paymentVerified: text(tile, '[data-test="payment-verification-status"]'),
-      clientCountry: text(tile, '[data-test="client-country"]').replace(/\\s+/g, ' '),
-      clientRating: rating(tile),
-      clientHireRate: '',
-      skills: [...new Set(skills)].slice(0, 8),
-    };
-  });
+/** "Posted 5 minutes ago" — not always inside the badges row, so the leaf that says it. */
+async function ngmPosted(tile: Locator, trace: Trace): Promise<string> {
+  const leaves = tile.locator('span:not(:has(*)), small:not(:has(*)), div:not(:has(*))');
+  const texts = await allInnerTextsOf(leaves, 'posted', trace);
+  return texts.map((t) => t.trim()).find((t) => /^posted\s/i.test(t)) ?? '';
+}
 
-  // The 2026 "ngm" feed: a tile is a clickable card that opens a side panel, so
-  // it has no job link at all. Its numeric opening uid is the ciphertext minus
-  // its "~02" prefix (uid 2102… is /jobs/~022102…).
-  const lines = (el) => (el ? el.innerText.split('\\n').map((s) => s.trim()).filter(Boolean) : []);
-  for (const tile of document.querySelectorAll('[data-test="job-tile"]')) {
-    if (titleLink(tile)) continue;
-    const uidEl = tile.querySelector('[data-ev-opening_uid]');
-    const uid = uidEl ? (uidEl.getAttribute('data-ev-opening_uid') || '').trim() : '';
-    const title = text(tile, '[data-test="job-title"]');
-    if (!/^\\d{6,}$/.test(uid) || !title) continue;
-    const titleEl = tile.querySelector('[data-test="job-title"]');
-    const meta = titleEl && titleEl.parentElement ? titleEl.parentElement.nextElementSibling : null;
-    const ratingEl = tile.querySelector('[data-test="rating-minimal"]');
-    const clientRow = tile.querySelector('.is-verified, .ngm-tag-inline');
-    const clientLines = lines(clientRow ? clientRow.closest('.flex-wrap') || clientRow.parentElement : null);
-    const paid = clientLines.find((l) => /^payment (un)?verified$/i.test(l)) || '';
-    const spent = clientLines.find((l) => /spent$/i.test(l)) || '';
-    const country = [...clientLines].reverse().find((l) =>
-      !/verified$/i.test(l) && !/spent$/i.test(l) && !/^[\\d.]+$/.test(l)) || '';
-    // Not always inside [data-test="job-tile-badges"]; the leaf that says it is.
-    const postedEl = [...tile.querySelectorAll('span, small, div')].find((e) =>
-      e.children.length === 0 && /^posted\\s/i.test(e.innerText.trim()));
-    const posted = postedEl ? postedEl.innerText.trim() : '';
-    const skills = [...tile.querySelectorAll('[data-test="attr-item"]')].map((el) => el.innerText.trim()).filter(Boolean);
-    const desc = tile.querySelector('p.line-clamp') || tile.querySelector('p');
-    fromTiles.push({
-      id: '~02' + uid,
-      title,
-      url: 'https://www.upwork.com/jobs/~02' + uid,
-      description: desc ? desc.innerText.trim() : '',
-      rate: meta ? (lines(meta)[0] || '') : '',
-      estimatedBudget: '',
-      proposals: text(tile, '[data-test="proposals-tier"]'),
-      posted,
-      clientMoneySpent: spent.replace(/\\s*spent$/i, ''),
-      paymentVerified: paid,
-      clientCountry: country,
-      clientRating: ratingEl ? ratingEl.innerText.trim() : '',
-      clientHireRate: '',
-      skills: [...new Set(skills)].slice(0, 8),
-    });
-  }
+async function ngmDescription(tile: Locator, trace: Trace): Promise<string> {
+  const desc =
+    (await firstOf(tile.locator('p.line-clamp'), 'description', trace)) ??
+    (await firstOf(tile.locator('p'), 'description', trace));
+  return desc ? (await innerTextOf(desc, 'description', trace)).trim() : '';
+}
 
-  // Link text is a last resort for a title. A link's first line only, and never
-  // an icon's label — the job side panel carries an "Open job in a new window"
-  // link that once became a job's title.
-  const linkTitle = (a) => {
-    const first = (a.innerText || '').split('\\n').map((s) => s.trim()).find(Boolean) || '';
-    return /^open (this )?job in a new (window|tab)$/i.test(first) ? '' : first;
+/**
+ * Strategy 2b: the 2026 "ngm" feed. A tile is a clickable card that opens a
+ * side panel, so it has no job link at all. Its numeric opening uid is the
+ * ciphertext minus its "~02" prefix (uid 2102… is /jobs/~022102…).
+ */
+async function readNgmTile(tile: Locator, trace: Trace): Promise<TileJob | null> {
+  const uid = ((await attributeOf(tile.locator('[data-ev-opening_uid]'), 'data-ev-opening_uid', 'uid', trace)) ?? '').trim();
+  const title = await textIn(tile, '[data-test="job-title"]', trace);
+  if (!/^\d{6,}$/.test(uid) || !title) return null;
+  const t = within(trace, `uid ${uid}`);
+  const ratingEl = await firstOf(tile.locator('[data-test="rating-minimal"]'), 'rating', t);
+  return {
+    id: `~02${uid}`,
+    title,
+    url: `https://www.upwork.com/jobs/~02${uid}`,
+    description: await ngmDescription(tile, t),
+    rate: await ngmRate(tile, t),
+    estimatedBudget: '',
+    proposals: await textIn(tile, '[data-test="proposals-tier"]', t),
+    posted: await ngmPosted(tile, t),
+    ...(await ngmClient(tile, t)),
+    clientRating: ratingEl ? (await innerTextOf(ratingEl, 'rating', t)).trim() : '',
+    clientHireRate: '',
+    skills: await skillsIn(tile, '[data-test="attr-item"]', t),
   };
-  const inTile = new Set(fromTiles.map((j) => j.id));
-  const fromLinks = [];
-  for (const a of document.querySelectorAll('a[href*="/jobs/"]')) {
-    const href = a.getAttribute('href');
-    const title = linkTitle(a);
-    if (!isJobHref(href) || !title) continue;
-    const id = idOf(href);
-    if (!id || inTile.has(id)) continue;
-    inTile.add(id);
-    // Nearest "Posted …" above the link, if the page still labels it.
-    const box = a.closest('section, article, li') || a.parentElement;
-    fromLinks.push({ id, title, url: abs(href), posted: box ? text(box, '[data-test="posted-on"]') : '' });
-  }
-  return { tiles: fromTiles, links: fromLinks };
-})()`;
+}
 
-/** How many tiles are drawn, and how many jobs the page's data says it has. */
-const COUNT_JS = `(() => {
-  let tiles = 0;
-  for (const sel of ${JSON.stringify(TILE_SELECTORS)}) tiles = Math.max(tiles, document.querySelectorAll(sel).length);
+/** Strategy 2: every drawn tile, both kinds. */
+async function readTiles(page: Page, trace: Trace): Promise<TileJob[]> {
+  const jobs: TileJob[] = [];
+  for (const [i, tile] of (await tileRoots(page, trace)).entries()) {
+    const t = within(trace, `tile #${i}`);
+    const found = await titleLink(tile, t);
+    if (found) jobs.push(await readLinkedTile(tile, found.link, found.href, t));
+  }
+  for (const [i, tile] of (await allOf(page.locator('[data-test="job-tile"]'), 'ngm tiles', trace)).entries()) {
+    const t = within(trace, `ngm tile #${i}`);
+    if (await titleLink(tile, t)) continue;
+    const job = await readNgmTile(tile, t);
+    if (job) jobs.push(job);
+  }
+  return jobs;
+}
+
+/**
+ * Link text is a last resort for a title. A link's first line only, and never
+ * an icon's label — the job side panel carries an "Open job in a new window"
+ * link that once became a job's title.
+ */
+function linkTitle(text: string): string {
+  const first = lines(text)[0] ?? '';
+  return /^open (this )?job in a new (window|tab)$/i.test(first) ? '' : first;
+}
+
+/** The nearest "Posted …" around a bare link, if the page still labels it. */
+async function linkPosted(link: Locator, trace: Trace): Promise<string> {
+  const box =
+    (await firstOf(link.locator('xpath=ancestor::*[self::section or self::article or self::li][1]'), 'link box', trace)) ??
+    (await firstOf(link.locator('xpath=..'), 'link box', trace));
+  return box ? textIn(box, '[data-test="posted-on"]', trace) : '';
+}
+
+/** Strategy 3: any job link on the page whose job no tile accounted for. */
+async function readLinks(page: Page, known: Set<string>, trace: Trace): Promise<LinkJob[]> {
+  const seen = new Set(known);
+  const jobs: LinkJob[] = [];
+  for (const link of await allOf(page.locator('a[href*="/jobs/"]'), 'job links', trace)) {
+    const href = await attributeOf(link, 'href', 'link href', trace);
+    if (!isJobHref(href)) continue;
+    const title = linkTitle(await innerTextOf(link, 'link title', trace));
+    const id = upworkJobId(href);
+    if (!title || !id || seen.has(id)) continue;
+    seen.add(id);
+    jobs.push({ id, title, url: absoluteUrl(href), posted: await linkPosted(link, within(trace, `link ${id}`)) });
+  }
+  return jobs;
+}
+
+/**
+ * How many jobs the page's data says it has. The store is page state, not
+ * markup, so there is no element to point a locator at.
+ */
+const STORE_JOB_COUNT_JS = `(() => {
   let data = 0;
   try {
     const s = window.$nuxt && window.$nuxt.$store && window.$nuxt.$store.state;
     for (const k of Object.keys(s || {})) if (s[k] && Array.isArray(s[k].jobs)) data = Math.max(data, s[k].jobs.length);
   } catch (e) {}
-  return { tiles, data };
+  return data;
 })()`;
+
+/** How many tiles are drawn, by whichever selector finds the most. */
+async function countTiles(page: Page, trace: Trace): Promise<number> {
+  let tiles = 0;
+  for (const sel of TILE_SELECTORS) tiles = Math.max(tiles, await countOf(page.locator(sel), `count ${sel}`, trace));
+  return tiles;
+}
 
 /** "$14.97" → "$15", "$640" → "$600+", "$20,480" → "$20K+" — the tile's own wording. */
 function formatSpent(amount: number): string {
@@ -684,15 +795,18 @@ const STABLE_MAX_MS = 12_000;
  * for hours. The page data is what covers that now; this only waits for the
  * tile count to catch up with it, or to stop changing for a few seconds.
  */
-async function waitForTilesToSettle(page: Page): Promise<void> {
+async function waitForTilesToSettle(page: Page, trace: Trace): Promise<void> {
   const deadline = Date.now() + STABLE_MAX_MS;
   let last = -1;
   let steady = 0;
   while (Date.now() < deadline) {
-    const { tiles, data } = (await page.evaluate(COUNT_JS).catch(() => ({ tiles: 0, data: 0 }))) as {
-      tiles: number;
-      data: number;
-    };
+    const tiles = await countTiles(page, trace);
+    const data = Number(
+      await page.evaluate(STORE_JOB_COUNT_JS).catch((err) => {
+        trace('store job count', err);
+        return 0;
+      }),
+    );
     if (data > 0 && tiles >= data) return;
     steady = tiles === last && tiles > 0 ? steady + 1 : 0;
     last = tiles;
@@ -710,18 +824,22 @@ async function waitForTilesToSettle(page: Page): Promise<void> {
  * about still comes through, with a plain `/jobs/~0…` URL.
  */
 export async function readFeed(page: Page, log?: (m: string) => void): Promise<UpworkJob[]> {
-  await waitForTilesToSettle(page);
+  const trace = log ? devTrace(log, 'Upwork feed') : noTrace;
+  const note = log ? devNote(log, 'Upwork feed') : () => undefined;
 
-  const store = (await page.evaluate(READ_STORE_JS).catch(() => null)) as
-    | { source: string; jobs: StoreJob[] }
-    | null;
-  const dom = (await page.evaluate(READ_DOM_JS).catch(() => null)) as
-    | { tiles: TileJob[]; links: { id: string; title: string; url: string; posted: string }[] }
-    | null;
+  await waitForTilesToSettle(page, within(trace, 'waitForTilesToSettle'));
+
+  const store = (await page.evaluate(READ_STORE_JS).catch((err) => {
+    trace('readFeed › page data', err);
+    return null;
+  })) as { source: string; jobs: StoreJob[] } | null;
+  const tileJobs = await readTiles(page, within(trace, 'readFeed › tiles'));
+  const linkJobs = await readLinks(page, new Set(tileJobs.map((j) => j.id)), within(trace, 'readFeed › links'));
 
   const storeJobs = (store?.jobs ?? []).map(storeJobToUpworkJob).filter((j) => j.id && j.title);
-  const tileJobs = dom?.tiles ?? [];
-  const linkJobs = dom?.links ?? [];
+  if (!storeJobs.length && !tileJobs.length && !linkJobs.length) {
+    note(`readFeed › nothing read at ${page.url()} (no page data, no tiles, no job links)`);
+  }
 
   // Page order, newest first: the store's when it has one, else the tiles'.
   const order: string[] = [];

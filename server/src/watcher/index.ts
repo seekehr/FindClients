@@ -1,5 +1,5 @@
 import { env } from '../config/env';
-import { logger } from '../utils/logger';
+import { logStackInDev, logger } from '../utils/logger';
 import { loadWatcher } from '../scrapers/loader';
 import { browserStatus, invalidateBrowserStatus } from '../services/browser.service';
 import { getConfig } from '../services/config.service';
@@ -432,6 +432,7 @@ async function tick(r: WatcherRuntime): Promise<void> {
     r.lastError = message;
     setState(r, 'error', message);
     logger.error(`[${site} alerts] check failed`, message);
+    logStackInDev(env.devMode, `[${site} alerts] check failed`, err);
     markError(r.platform, message);
     // The tab is the usual casualty; drop it so the next tick reopens one.
     await closeTab(r);
@@ -538,9 +539,10 @@ function queueNew(r: WatcherRuntime, leads: RawLead[]): number {
     const wait = alertDelayMs(s.delaySeconds[0], s.delaySeconds[1]) + staggerMs(index);
 
     const timer = setTimeout(() => {
-      void release(r, key).catch((err) =>
-        logger.error(`[${SITE[r.platform]} alerts] could not release an alert`, (err as Error).message),
-      );
+      void release(r, key).catch((err) => {
+        logger.error(`[${SITE[r.platform]} alerts] could not release an alert`, (err as Error).message);
+        logStackInDev(env.devMode, `[${SITE[r.platform]} alerts] releasing "${lead.title.slice(0, 60)}"`, err);
+      });
     }, wait);
     timer.unref?.();
 

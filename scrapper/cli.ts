@@ -8,6 +8,9 @@
  * browser profiles the app uses (data/browser/<platform>/), so sign in once in
  * the app — or with `npm run cli -- --sign-in <platform>` — and the CLI is
  * signed in too.
+ *
+ * Add `--dev` (`npm run cli -- --dev`) to log where a scraper ran into an
+ * error — which card, which field, which step — instead of carrying on quietly.
  */
 import fs from 'node:fs';
 import path from 'node:path';

@@ -30,6 +30,13 @@ export const env = {
   port: num(process.env.PORT, 4000),
 
   /**
+   * Dev mode: `npm run dev`, `--dev`, or FINDCLIENTS_DEV=true. The scrapers
+   * then log where they ran into an error instead of quietly carrying on, and
+   * a failed check or scrape logs its stack.
+   */
+  devMode: process.argv.includes('--dev') || bool(process.env.FINDCLIENTS_DEV, false),
+
+  /**
    * Which interface to listen on. Loopback by default, deliberately: this
    * server has no authentication, so binding it to every interface would hand
    * anyone on the same network your leads, your saved sessions and a button

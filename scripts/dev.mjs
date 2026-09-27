@@ -21,7 +21,8 @@ if (missing.length) {
 const children = [
   start('npm', ['run', 'dev'], {
     cwd: path.join(ROOT, 'server'),
-    env: { SERVE_WEBSITE: 'false' },
+    // FINDCLIENTS_DEV: the scrapers log where they hit an error (scrapper/lib/debug.ts).
+    env: { SERVE_WEBSITE: 'false', FINDCLIENTS_DEV: 'true' },
   }),
   start('npm', ['run', 'dev'], {
     cwd: path.join(ROOT, 'website'),
