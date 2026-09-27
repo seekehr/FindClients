@@ -1,21 +1,40 @@
 import crypto from 'node:crypto';
-import { MAX_RUNS, leadsStore, runsStore } from '../store';
+import { MAX_RUNS, clearedStatsStore, leadsStore, runsStore } from '../store';
 import type { Platform, ScrapeRun } from '../types';
 
 /**
  * Dashboard numbers and the scrape history.
  *
- * All of it is computed from the two JSON files on every call. That is a full
+ * All of it is computed from the JSON files on every call. That is a full
  * pass over the leads array, which at a few thousand leads is well under a
  * millisecond — cheaper than the round trip to the SQL functions this replaced,
  * and it can never disagree with what the leads page is showing.
+ *
+ * Leads you cleared are gone from `leads.json` but still counted: they were
+ * found, and "how many leads did X bring in" should not drop because you
+ * tidied up. `clearedStatsStore` keeps the platform and date of each.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Platform and found-at date of every lead ever collected, cleared or not. */
+function everyLead(): { platform: string; createdAt: string }[] {
+  // A cleared lead you restored and the scrapers found again is back in
+  // leads.json; count it there, not twice.
+  const live = new Set(leadsStore.data.map((l) => l.sourceHash));
+  return [...leadsStore.data, ...clearedStatsStore.data.filter((s) => !live.has(s.hash))];
+}
+
+/** Cleared leads that are not back in the feed. */
+function clearedCount(): number {
+  const live = new Set(leadsStore.data.map((l) => l.sourceHash));
+  return clearedStatsStore.data.filter((s) => !live.has(s.hash)).length;
+}
+
 /** Top-line dashboard metrics. */
 export function overview() {
   const leads = leadsStore.data;
+  const all = everyLead();
   const weekAgo = Date.now() - 7 * DAY_MS;
 
   const contacted = leads.filter((l) => l.status === 'contacted').length;
@@ -23,23 +42,25 @@ export function overview() {
 
   return {
     newLeads: leads.filter((l) => l.status === 'new').length,
-    totalLeads: leads.length,
+    totalLeads: all.length,
+    cleared: clearedCount(),
     bookmarked: leads.filter((l) => l.bookmarked).length,
     contacted,
     won,
     conversionRate: contacted > 0 ? Math.round((won / contacted) * 100) : 0,
-    last7d: leads.filter((l) => new Date(l.createdAt).getTime() >= weekAgo).length,
+    last7d: all.filter((l) => new Date(l.createdAt).getTime() >= weekAgo).length,
   };
 }
 
 /** Lead counts grouped by platform, with percentages. */
 export function byPlatform() {
+  const all = everyLead();
   const counts = new Map<string, number>();
-  for (const lead of leadsStore.data) {
+  for (const lead of all) {
     counts.set(lead.platform, (counts.get(lead.platform) ?? 0) + 1);
   }
 
-  const total = leadsStore.data.length || 1;
+  const total = all.length || 1;
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([platform, count]) => ({
@@ -64,7 +85,7 @@ export function leadsTrend(days = 14) {
     buckets.set(d.toISOString().slice(0, 10), 0);
   }
 
-  for (const lead of leadsStore.data) {
+  for (const lead of everyLead()) {
     const day = lead.createdAt.slice(0, 10);
     if (buckets.has(day)) buckets.set(day, (buckets.get(day) ?? 0) + 1);
   }

@@ -34,8 +34,6 @@ interface PlatformCliConfig {
   maxPostAgeHours?: number;
   forumUrls?: string[];
   limitPerForum?: number;
-  postSource?: 'feed' | 'search';
-  feedScrolls?: number;
 }
 
 interface CliConfig {
@@ -92,9 +90,7 @@ function configFromCli(file: CliConfig): AppConfig {
       ? bhw.forumUrls
       : ['https://www.blackhatworld.com/forums/hire-a-freelancer.76/'],
     bhwLimitPerForum: bhw.limitPerForum ?? 20,
-    linkedinPostSource: li.postSource ?? 'feed',
     linkedinLimitPerKeyword: li.limitPerKeyword ?? 10,
-    linkedinFeedScrolls: li.feedScrolls ?? 8,
     upworkWatchEnabled: false,
     upworkJobsUrl:
       uw.jobsUrl ?? 'https://www.upwork.com/nx/find-work/most-recent?nav_dir=pop',

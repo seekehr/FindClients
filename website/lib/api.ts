@@ -127,10 +127,8 @@ export interface UserConfig {
   bhwForumUrls: string[]
   bhwLimitPerForum: number
 
-  /** LinkedIn posts: scroll your home feed, or search posts per keyword. */
-  linkedinPostSource: 'feed' | 'search'
+  /** LinkedIn posts: each keyword is searched for, latest first. */
   linkedinLimitPerKeyword: number
-  linkedinFeedScrolls: number
 
   /** Upwork is watched for job alerts, never scraped. See `watchApi`. */
   upworkWatchEnabled: boolean
@@ -369,6 +367,7 @@ export const analyticsApi = {
     api<{
       newLeads: number
       totalLeads: number
+      cleared: number
       bookmarked: number
       contacted: number
       won: number

@@ -13,7 +13,7 @@ There are **two exported lists**, and which one a platform is in is a decision a
 | `blackhatworld/` | BlackHatWorld scraper — new threads in the sub forums you list, no account |
 | `upwork/` | Upwork connector — sign-in, session checks, feed parsing |
 | `upwork/watch.ts` | The Upwork tab: reload, read, occasionally click through to one job |
-| `linkedin/` | LinkedIn posts scraper — home feed or post search by keyword — plus sign-in and session checks |
+| `linkedin/` | LinkedIn posts scraper — keyword searches through the search bar — plus sign-in and session checks |
 | `linkedin/watch.ts` | The LinkedIn jobs tab: reload your job search, read the cards, click one to read it |
 | `lib/profile.ts` | Where sessions live: attaches to your Chrome over CDP, or launches a persistent profile per platform |
 | `lib/local.ts` | Reads `data/config.json` for the standalone tools |

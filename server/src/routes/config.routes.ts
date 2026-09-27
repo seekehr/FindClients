@@ -58,10 +58,7 @@ const patchSchema = z
       .max(20),
     bhwLimitPerForum: z.number().int().min(1).max(100),
 
-    linkedinPostSource: z.enum(['feed', 'search']),
     linkedinLimitPerKeyword: z.number().int().min(1).max(50),
-    /** Each scroll is one more screen of feed loaded — bounded like everything else. */
-    linkedinFeedScrolls: z.number().int().min(1).max(30),
 
     upworkWatchEnabled: z.boolean(),
     upworkJobsUrl: z.string().url().max(500),

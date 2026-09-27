@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils'
 interface Overview {
   newLeads: number
   totalLeads: number
+  /** Leads you cleared — still counted in the totals and charts. */
+  cleared: number
   bookmarked: number
   contacted: number
   won: number
@@ -205,7 +207,11 @@ export default function AnalyticsPage() {
           <StatTile
             label="Total leads"
             value={overview.totalLeads}
-            hint={`${overview.newLeads} found in the last 24 hours`}
+            hint={
+              overview.cleared > 0
+                ? `Including ${overview.cleared} you cleared`
+                : `${overview.newLeads} found in the last 24 hours`
+            }
             emphasis
           />
           <StatTile

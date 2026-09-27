@@ -23,13 +23,11 @@
     "limitPerForum": 10
   },
   "linkedin": {
-    "postSource": "feed",
     "keywords": [
       "looking for a developer",
       "looking to hire"
     ],
     "limitPerKeyword": 10,
-    "feedScrolls": 8,
     "maxPostAgeHours": 48
   }
 }

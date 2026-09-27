@@ -60,16 +60,6 @@ export type WatchedPlatform = 'upwork' | 'linkedin';
 export const WATCHED_PLATFORMS: WatchedPlatform[] = ['upwork', 'linkedin'];
 
 /**
- * How LinkedIn posts are found.
- *
- *  - `'feed'` — scroll your home feed and keep posts containing one of your
- *    keywords. Only sees what LinkedIn chooses to show you.
- *  - `'search'` — search posts for each keyword, latest first, the way the X
- *    scraper does. Finds far more, and is one search page per keyword.
- */
-export type LinkedInPostSource = 'feed' | 'search';
-
-/**
  * Platform-specific facts a scraper collected about a lead, beyond the fields
  * every platform shares. Free-form on purpose: an Upwork job has a client hire
  * rate, a tweet has view counts, and neither should force a field on the other.
@@ -178,14 +168,11 @@ export interface AppConfig {
   bhwLimitPerForum: number;
 
   /**
-   * LinkedIn posts — the scraped half of LinkedIn. Your keywords decide what
-   * counts; `linkedinPostSource` decides where they are looked for.
+   * LinkedIn posts — the scraped half of LinkedIn. Each keyword is typed into
+   * LinkedIn's search bar and the post results read, latest first; this is how
+   * many are collected per keyword.
    */
-  linkedinPostSource: LinkedInPostSource;
-  /** Posts collected per keyword, in search mode. */
   linkedinLimitPerKeyword: number;
-  /** Screens of the home feed to scroll through, in feed mode. */
-  linkedinFeedScrolls: number;
 
   /**
    * Upwork job alerts.

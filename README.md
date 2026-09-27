@@ -82,6 +82,8 @@ Everything is JSON files in `data/`:
 | `config.json` | Your settings, and your Gemini API key |
 | `leads.json` | Every lead, with its status, bookmark and AI verdict |
 | `dismissed.json` | Source hashes of leads you cleared, so they stay cleared for 30 days |
+| `cleared/<platform>.json` | Every lead you cleared, as `[{ title, description }]` per platform — raw material for spotting client pain points |
+| `cleared-stats.json` | Platform and date of each cleared lead, so Analytics keeps counting them |
 | `opportunities.json` | The New Opportunities feed — Upwork and LinkedIn job alerts (last 300) |
 | `connections.json` | Which platforms are signed in, and how the last run went |
 | `chrome-profile/` | The Chrome profile `npm run chrome` uses — your live sessions |

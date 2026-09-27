@@ -19,10 +19,9 @@ const SIGN_IN_URL = `${ORIGIN}/login`;
 /**
  * LinkedIn — two halves, collected two different ways.
  *
- *  - **Posts** are scraped, like X. Each cycle either scrolls your home feed
- *    and keeps the posts that contain one of your keywords, or searches posts
- *    for each keyword, latest first — `linkedinPostSource` decides which. That
- *    is this file's `scrape`.
+ *  - **Posts** are scraped, like X. Each cycle types every keyword into
+ *    LinkedIn's search bar, the way a person would, and reads the post
+ *    results latest first. That is this file's `scrape`.
  *  - **Jobs** are watched, like Upwork: one tab left on your saved job search,
  *    reloaded now and then, new postings announced after a random pause. That
  *    is ./watch.ts, and the scrape cycle never touches job search.
@@ -285,45 +284,57 @@ export function postToLead(post: LinkedInPost): RawLead {
 }
 
 /**
- * A search for one keyword. A phrase is quoted so LinkedIn matches it as a
- * phrase — "looking for a developer" unquoted matches any post with those four
- * words anywhere — unless you already quoted it or wrote your own AND / OR.
+ * What to search for one keyword. A phrase is quoted so LinkedIn matches it as
+ * a phrase — "looking for a developer" unquoted matches any post with those
+ * four words anywhere — unless you already quoted it or wrote your own AND / OR.
  */
-export function searchUrl(keyword: string): string {
+export function searchQuery(keyword: string): string {
   const k = keyword.trim();
   const hasSyntax = /["()]|\b(AND|OR|NOT)\b/.test(k);
-  const q = !hasSyntax && /\s/.test(k) ? `"${k}"` : k;
+  return !hasSyntax && /\s/.test(k) ? `"${k}"` : k;
+}
+
+/** Post results for one keyword, latest first. */
+export function searchUrl(keyword: string, origin?: string): string {
   return (
-    `${ORIGIN}/search/results/content/?keywords=${encodeURIComponent(q)}` +
-    `&sortBy=${encodeURIComponent('"date_posted"')}`
+    `${ORIGIN}/search/results/content/?keywords=${encodeURIComponent(searchQuery(keyword))}` +
+    `&sortBy=${encodeURIComponent('"date_posted"')}` +
+    (origin ? `&origin=${encodeURIComponent(origin)}` : '')
   );
 }
 
-/** Does this post mention one of the keywords? Case-insensitive, as a phrase. */
-export function matchesKeywords(text: string, keywords: string[]): boolean {
-  const hay = text.toLowerCase();
-  return keywords.some((k) => {
-    const needle = k.replace(/"/g, '').trim().toLowerCase();
-    return needle !== '' && hay.includes(needle);
-  });
+/**
+ * What makes two posts the same post, in words: who wrote it and what it says.
+ *
+ * The id alone is not enough. One post can be drawn as `urn:li:activity:…` in
+ * one result and `urn:li:ugcPost:…` in another — two different numbers — and a
+ * reposted post is a new card with a new id around the same text.
+ */
+export function postContentKey(post: Pick<LinkedInPost, 'authorName' | 'text'>): string {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${norm(post.authorName)}::${norm(post.text)}`;
 }
 
 interface PostScrapeOptions {
   cutoff: Date | null;
   limit: number;
   maxScrolls: number;
-  keep: (post: LinkedInPost) => boolean;
+  /**
+   * Ids and content keys of posts already taken this cycle, shared across
+   * keywords, so a post found for one keyword is not taken again for the next
+   * — nor counted against that keyword's limit.
+   */
+  seen: Set<string>;
   log: (m: string) => void;
 }
 
 /**
- * Collect posts from the page in front of us, scrolling a screen at a time.
- * Scrolling is what loads more on both the feed and search results — there is
- * no "next page" to request.
+ * Collect posts from the search results in front of us, scrolling a screen at
+ * a time. Scrolling is what loads more — there is no "next page" to request.
  */
 async function collectPosts(page: Page, opts: PostScrapeOptions): Promise<LinkedInPost[]> {
   const found: LinkedInPost[] = [];
-  const seen = new Set<string>();
+  const { seen } = opts;
   const trace = devTrace(opts.log, 'LinkedIn posts');
   const note = devNote(opts.log, 'LinkedIn posts');
 
@@ -331,10 +342,11 @@ async function collectPosts(page: Page, opts: PostScrapeOptions): Promise<Linked
     const posts = await readPosts(page, within(trace, `collectPosts › screen ${scroll}`));
     if (!posts.length) note(`collectPosts › screen ${scroll}: no readable posts on ${page.url()}`);
     for (const post of posts) {
-      if (seen.has(post.id)) continue;
+      const contentKey = postContentKey(post);
+      if (seen.has(post.id) || seen.has(contentKey)) continue;
       seen.add(post.id);
+      seen.add(contentKey);
       if (opts.cutoff && new Date(post.postedAt) < opts.cutoff) continue;
-      if (!opts.keep(post)) continue;
       found.push(post);
       if (found.length >= opts.limit) break;
     }
@@ -348,13 +360,10 @@ async function collectPosts(page: Page, opts: PostScrapeOptions): Promise<Linked
 }
 
 /**
- * Put a page on `url` and make sure it is a readable, signed-in page.
- * Returns false (having said why) when it is not.
+ * Is the page in front of us one we can read — signed in, and not held at a
+ * security check? Returns false (having said why) when it is not.
  */
-async function openPostsPage(page: Page, url: string, ctx: ScrapeContext): Promise<boolean> {
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await settle(page);
-
+async function pageIsUsable(page: Page, ctx: ScrapeContext): Promise<boolean> {
   if (looksSignedOut(page)) {
     throw new Error('Your LinkedIn session has expired — sign in again on the Connections page.');
   }
@@ -365,13 +374,82 @@ async function openPostsPage(page: Page, url: string, ctx: ScrapeContext): Promi
     }
     if (!(await waitForChallengeCleared(page, ctx.log, ctx.captchaTimeoutMs))) return false;
   }
+  return true;
+}
 
+/**
+ * The search box in LinkedIn's top bar. Found by what it is — a combobox
+ * labelled or hinted "Search" — never by its hashed class.
+ */
+const SEARCH_BAR = [
+  'input[role="combobox"][placeholder*="Search" i]',
+  'input[role="combobox"][aria-label*="Search" i]',
+  'input[type="search"]',
+  'input[placeholder="Search" i]',
+].join(', ');
+
+/**
+ * Type a search into the top bar and press Enter, the way a person searches.
+ *
+ * On a narrow window LinkedIn folds the bar behind a magnifier button, so if
+ * no bar is showing that button is clicked first. Returns false when there is
+ * no bar to type into, or the search went nowhere.
+ */
+async function typeIntoSearchBar(page: Page, query: string, trace: Trace): Promise<boolean> {
   try {
-    await page.waitForSelector('[role="listitem"][componentkey^="update-card-focus"]', { timeout: 20_000 });
+    const bar = page.locator(SEARCH_BAR).first();
+    if (!(await bar.isVisible())) {
+      await page
+        .getByRole('button', { name: /^search$/i })
+        .first()
+        .click({ timeout: 3_000 })
+        .catch((err) => trace('typeIntoSearchBar › open folded search', err));
+    }
+    await bar.click({ timeout: 5_000 });
+    await bar.fill('');
+    await bar.pressSequentially(query, { delay: 60 + Math.random() * 90 });
+    await humanDelay(0.4, 1.2);
+    await bar.press('Enter');
+    await page.waitForURL(/\/search\/results\//, { timeout: 20_000 });
     return true;
   } catch (err) {
-    devTrace(ctx.log, 'LinkedIn posts')(`openPostsPage › waiting for posts at ${page.url()}`, err);
-    ctx.log(`no posts rendered at ${new URL(page.url()).pathname} — LinkedIn may have changed its layout`);
+    trace('typeIntoSearchBar', err);
+    return false;
+  }
+}
+
+/**
+ * Search posts for one keyword through the search bar, and land on its post
+ * results, latest first.
+ *
+ * The bar lands on "All" results in LinkedIn's own order. Narrowing those to
+ * posts sorted by date goes through the results URL rather than the filter
+ * pills — the URL is the stable interface, the pills are hashed markup — but
+ * the search itself went through the bar, as a person's would. With no bar to
+ * type into, the results URL is opened directly.
+ */
+async function searchPosts(page: Page, keyword: string, ctx: ScrapeContext): Promise<boolean> {
+  const trace = devTrace(ctx.log, 'LinkedIn search');
+
+  if (await typeIntoSearchBar(page, searchQuery(keyword), trace)) {
+    await settle(page);
+    if (!(await pageIsUsable(page, ctx))) return false;
+    const origin = new URL(page.url()).searchParams.get('origin') ?? undefined;
+    await humanDelay(1, 2.5);
+    await page.goto(searchUrl(keyword, origin), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  } else {
+    ctx.log("could not find LinkedIn's search bar — opening the search results directly");
+    await page.goto(searchUrl(keyword), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  }
+  await settle(page);
+  if (!(await pageIsUsable(page, ctx))) return false;
+
+  try {
+    await page.waitForSelector(POST_CARD, { timeout: 20_000 });
+    return true;
+  } catch (err) {
+    trace(`searchPosts › waiting for posts at ${page.url()}`, err);
+    ctx.log(`no posts rendered for "${keyword}" — nothing recent, or LinkedIn changed its layout`);
     return false;
   }
 }
@@ -458,43 +536,35 @@ export const linkedinScraper: Scraper = {
     const runtime = loadLinkedInRuntimeConfig();
     let session: BrowserSession | null = null;
     const posts = new Map<string, LinkedInPost>();
+    const seen = new Set<string>();
 
     try {
       session = await openProfile(PLATFORM, { headless: runtime.headless, userAgent: runtime.userAgent });
       ctx.log(session.attached ? 'attached to your Chrome' : `browser started (headless=${runtime.headless})`);
       const page = await session.page();
 
-      if (config.linkedinPostSource === 'search') {
+      // Somewhere with LinkedIn's top bar on it, to search from.
+      if (!isLinkedInUrl(page.url()) || looksSignedOut(page)) {
+        await page.goto(FEED_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+        await settle(page);
+      }
+      if (await pageIsUsable(page, ctx)) {
         for (const keyword of keywords) {
           const remaining = ctx.limit - posts.size;
           if (remaining <= 0) break;
           ctx.log(`searching posts: "${keyword}"`);
-          if (!(await openPostsPage(page, searchUrl(keyword), ctx))) continue;
+          if (!(await searchPosts(page, keyword, ctx))) continue;
           const found = await collectPosts(page, {
             cutoff,
             limit: Math.min(config.linkedinLimitPerKeyword, remaining),
             // Results come newest first, so a few screens reach the cutoff.
             maxScrolls: Math.ceil(config.linkedinLimitPerKeyword / 3) + 2,
-            // The search is the filter here, as it is on X.
-            keep: () => true,
+            seen,
             log: ctx.log,
           });
           for (const post of found) posts.set(post.id, post);
-          ctx.log(`${found.length} post(s) for "${keyword}"`);
+          ctx.log(`${found.length} new post(s) for "${keyword}"`);
           await humanDelay(3, 7);
-        }
-      } else {
-        ctx.log('reading your home feed');
-        if (await openPostsPage(page, FEED_URL, ctx)) {
-          const found = await collectPosts(page, {
-            cutoff,
-            limit: ctx.limit,
-            maxScrolls: config.linkedinFeedScrolls,
-            // Your feed is not a search, so your keywords are what pick posts.
-            keep: (post) => matchesKeywords(post.text, keywords),
-            log: ctx.log,
-          });
-          for (const post of found) posts.set(post.id, post);
         }
       }
     } finally {

@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
-import { DISMISS_TTL_MS, dismissedStore, leadsStore } from '../store';
+import {
+  DISMISS_TTL_MS,
+  clearedArchive,
+  clearedStatsStore,
+  dismissedStore,
+  leadsStore,
+} from '../store';
 import { sourceHash } from '../utils/ids';
 import { relativeTime } from '../utils/time';
 import { sanitizeMetadata, sanitizeNullable, sanitizeText } from '../utils/text';
@@ -158,6 +164,23 @@ function stableId(platform: string, url: string | null | undefined): string {
   return '';
 }
 
+/**
+ * A LinkedIn post by its author and words, for the duplicates its id misses:
+ * one post drawn as `urn:li:activity:…` in one place and `urn:li:ugcPost:…` in
+ * another carries two different ids, and a repost is a new id around the same
+ * text. '' for anything else — on other platforms the id is the whole story.
+ */
+function contentHash(lead: Pick<Lead, 'platform' | 'author' | 'description' | 'metadata'>): string {
+  if (lead.platform !== 'linkedin' || lead.metadata?.kind !== 'post') return '';
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const text = norm(lead.description);
+  if (!text) return '';
+  return crypto
+    .createHash('sha1')
+    .update(`content::${lead.platform}::${norm(lead.author ?? '')}::${text}`)
+    .digest('hex');
+}
+
 function stableIds(): Map<string, Lead> {
   const ids = new Map<string, Lead>();
   for (const lead of leadsStore.data) {
@@ -196,6 +219,11 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
   const byHash = new Map(leadsStore.data.map((lead) => [lead.sourceHash, lead]));
   const dismissed = activeDismissals();
   const byJobId = stableIds();
+  const byContent = new Map<string, Lead>();
+  for (const lead of leadsStore.data) {
+    const key = contentHash(lead);
+    if (key) byContent.set(key, lead);
+  }
 
   const inserted: Lead[] = [];
   const all: Lead[] = [];
@@ -209,16 +237,30 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
     if (seen.has(hash)) continue;
     seen.add(hash);
 
-    // Cleared away on purpose — do not drag it back in.
-    if (dismissed.has(hash)) {
+    const content = contentHash({
+      platform: r.platform,
+      author: r.author ?? null,
+      description: sanitizeText(r.description ?? ''),
+      metadata: sanitizeMetadata(r.metadata),
+    });
+    if (content) {
+      if (seen.has(content)) continue;
+      seen.add(content);
+    }
+
+    // Cleared away on purpose — do not drag it back in, reposted or not.
+    if (dismissed.has(hash) || (content && dismissed.has(content))) {
       skippedAsCleared += 1;
       continue;
     }
 
     const jobId = stableId(r.platform, r.url);
-    const existing = byHash.get(hash) ?? (jobId ? byJobId.get(jobId) : undefined);
+    const existing =
+      byHash.get(hash) ??
+      (jobId ? byJobId.get(jobId) : undefined) ??
+      (content ? byContent.get(content) : undefined);
     if (existing) {
-      all.push(existing);
+      if (!all.includes(existing)) all.push(existing);
       continue;
     }
 
@@ -253,6 +295,7 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
     leadsStore.data.push(lead);
     byHash.set(hash, lead);
     if (jobId) byJobId.set(jobId, lead);
+    if (content) byContent.set(content, lead);
     inserted.push(lead);
     all.push(lead);
   }
@@ -334,21 +377,45 @@ function isWorked(lead: Lead): boolean {
  * these same records, so dropping them would silently zero your history.
  *
  * The source hashes of the ones that do go are remembered, so the next scrape
- * does not simply find the same posts and put them all back.
+ * does not simply find the same posts and put them all back. Their title and
+ * description go to `data/cleared/<platform>.json`, and analytics keeps
+ * counting them — clearing tidies the feed, it does not unmake history.
  */
 export function clearLeads(): number {
   const keep: Lead[] = [];
   const now = new Date().toISOString();
   const dismissed = new Map(dismissedStore.data.map((d) => [d.hash, d]));
+  const archived = new Set(clearedStatsStore.data.map((s) => s.hash));
+  const touched = new Set<string>();
 
   for (const lead of leadsStore.data) {
-    if (isWorked(lead)) keep.push(lead);
-    else dismissed.set(lead.sourceHash, { hash: lead.sourceHash, at: now });
+    if (isWorked(lead)) {
+      keep.push(lead);
+      continue;
+    }
+    dismissed.set(lead.sourceHash, { hash: lead.sourceHash, at: now });
+    // So a repost of a cleared LinkedIn post stays cleared too.
+    const content = contentHash(lead);
+    if (content) dismissed.set(content, { hash: content, at: now });
+
+    // Kept on disk for reading later, and in analytics, once per lead.
+    if (archived.has(lead.sourceHash)) continue;
+    archived.add(lead.sourceHash);
+    clearedArchive(lead.platform).data.push({ title: lead.title, description: lead.description });
+    clearedStatsStore.data.push({
+      hash: lead.sourceHash,
+      platform: lead.platform,
+      createdAt: lead.createdAt,
+      clearedAt: now,
+    });
+    touched.add(lead.platform);
   }
 
   const removed = leadsStore.data.length - keep.length;
   if (!removed) return 0;
 
+  for (const platform of touched) clearedArchive(platform).save();
+  if (touched.size) clearedStatsStore.save();
   leadsStore.data = keep;
   dismissedStore.data = [...dismissed.values()];
   return removed;

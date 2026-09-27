@@ -90,9 +90,7 @@ export function defaultConfig(): StoredConfig {
     bhwForumUrls: ['https://www.blackhatworld.com/forums/hire-a-freelancer.76/'],
     bhwLimitPerForum: 20,
 
-    linkedinPostSource: 'feed',
     linkedinLimitPerKeyword: 10,
-    linkedinFeedScrolls: 8,
 
     upworkWatchEnabled: true,
     upworkJobsUrl: 'https://www.upwork.com/nx/find-work/most-recent',
@@ -141,6 +139,17 @@ export const configStore = registerForFlush(
   new JsonFile<StoredConfig>(file('config.json'), defaultConfig),
 );
 configStore.data = { ...defaultConfig(), ...configStore.data };
+
+// LinkedIn posts used to have a home-feed mode. Posts are always searched for
+// now, so the settings that chose and tuned the feed are dropped.
+{
+  const legacy = configStore.data as unknown as Record<string, unknown>;
+  if ('linkedinPostSource' in legacy || 'linkedinFeedScrolls' in legacy) {
+    delete legacy.linkedinPostSource;
+    delete legacy.linkedinFeedScrolls;
+    configStore.save();
+  }
+}
 
 // A file saved before the reload floor existed can still say "every 5
 // minutes". Raise it rather than honour it — the floor is the point. The
@@ -196,6 +205,53 @@ export const dismissedStore = registerForFlush(
 dismissedStore.data = dismissedStore.data.map((entry) =>
   typeof entry === 'string' ? { hash: entry as unknown as string, at: new Date().toISOString() } : entry,
 );
+
+/**
+ * A lead you cleared, as it reads: kept in `data/cleared/<platform>.json`.
+ *
+ * Clearing empties the Leads page, but what people were asking for is still
+ * worth having — read together, a few hundred cleared posts are a fair map of
+ * the problems clients keep bringing to that platform. Only the words are
+ * kept, so the file can be handed to anything (a spreadsheet, an LLM) as-is.
+ */
+export interface ClearedLead {
+  title: string;
+  description: string;
+}
+
+/**
+ * What analytics needs to keep counting a lead after it is cleared: which
+ * platform found it and when. One per cleared lead, never pruned — unlike
+ * `dismissedStore`, which expires. The hash stops a lead cleared, restored,
+ * found again and cleared again from being counted (or archived) twice.
+ */
+export interface ClearedStat {
+  hash: string;
+  platform: string;
+  createdAt: string;
+  clearedAt: string;
+}
+
+export const clearedStatsStore = registerForFlush(
+  new JsonFile<ClearedStat[]>(file('cleared-stats.json'), () => []),
+);
+
+const clearedArchives = new Map<string, JsonFile<ClearedLead[]>>();
+
+/** The cleared-lead archive for one platform, opened on first use. */
+export function clearedArchive(platform: string): JsonFile<ClearedLead[]> {
+  // Platform names come from our own enum; this is only belt and braces
+  // against one ever becoming a path.
+  const name = platform.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'other';
+  let archive = clearedArchives.get(name);
+  if (!archive) {
+    archive = registerForFlush(
+      new JsonFile<ClearedLead[]>(path.join(env.dataDir, 'cleared', `${name}.json`), () => []),
+    );
+    clearedArchives.set(name, archive);
+  }
+  return archive;
+}
 
 export const connectionsStore = registerForFlush(
   new JsonFile<Record<string, StoredConnection>>(file('connections.json'), () => ({})),

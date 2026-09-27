@@ -304,9 +304,7 @@ const FIELD_LABELS: Record<string, string> = {
   upworkAlertDelayMinSeconds: 'Shortest hold',
   upworkAlertDelayMaxSeconds: 'Longest hold',
   upworkMaxAgeHours: 'Max job age',
-  linkedinPostSource: 'Where to look',
   linkedinLimitPerKeyword: 'Per keyword',
-  linkedinFeedScrolls: 'Screens to scroll',
   linkedinJobsUrl: 'LinkedIn job search URL',
   linkedinReloadMinMinutes: 'Shortest gap (LinkedIn)',
   linkedinReloadMaxMinutes: 'Longest gap (LinkedIn)',
@@ -689,55 +687,15 @@ export default function ConfigPage() {
           </SubGroup>
 
           <SubGroup title="LinkedIn posts">
-            <Field
-              label="Where to look"
-              hint={
-                config.linkedinPostSource === 'feed'
-                  ? 'Scrolls your home feed and keeps posts containing one of your keywords. Only sees what LinkedIn chooses to show you.'
-                  : 'Searches posts for each keyword, latest first — the way X is searched. Finds far more; one search per keyword per cycle.'
-              }
-              htmlFor="linkedin-post-source"
-            >
-              <Select
-                id="linkedin-post-source"
-                value={config.linkedinPostSource}
-                onChange={(value) =>
-                  patch({ linkedinPostSource: value as UserConfig['linkedinPostSource'] })
-                }
-                options={[
-                  {
-                    value: 'feed',
-                    label: 'Your home feed',
-                    description: 'Posts in your feed that mention a keyword.',
-                  },
-                  {
-                    value: 'search',
-                    label: 'Post search',
-                    description: 'Every recent post LinkedIn finds for each keyword.',
-                  },
-                ]}
-              />
-            </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              {config.linkedinPostSource === 'feed' ? (
-                <NumberField
-                  label="Screens to scroll"
-                  hint="How far down your feed to read, per cycle (1–30)."
-                  value={config.linkedinFeedScrolls}
-                  min={1}
-                  max={30}
-                  onChange={(linkedinFeedScrolls) => patch({ linkedinFeedScrolls })}
-                />
-              ) : (
-                <NumberField
-                  label="Per keyword"
-                  hint="Posts collected per search term (1–50)."
-                  value={config.linkedinLimitPerKeyword}
-                  min={1}
-                  max={50}
-                  onChange={(linkedinLimitPerKeyword) => patch({ linkedinLimitPerKeyword })}
-                />
-              )}
+              <NumberField
+                label="Per keyword"
+                hint="Each keyword is typed into LinkedIn's search bar and recent posts read, latest first (1–50 per keyword)."
+                value={config.linkedinLimitPerKeyword}
+                min={1}
+                max={50}
+                onChange={(linkedinLimitPerKeyword) => patch({ linkedinLimitPerKeyword })}
+              />
             </div>
           </SubGroup>
 
