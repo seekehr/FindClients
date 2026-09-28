@@ -1,14 +1,14 @@
 import cron, { type ScheduledTask } from 'node-cron';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
-import { runScrapeCycle } from '../scrapers/runner';
+import { runScrapeCycle, type ScrapeTrigger } from '../scrapers/runner';
 
 let task: ScheduledTask | null = null;
 let pending: NodeJS.Timeout | null = null;
 
-function fire(reason: string): void {
-  void runScrapeCycle().catch((err) =>
-    logger.error(`${reason} scrape crashed`, (err as Error).message),
+function fire(trigger: ScrapeTrigger): void {
+  void runScrapeCycle(trigger).catch((err) =>
+    logger.error(`${trigger} scrape crashed`, (err as Error).message),
   );
 }
 
@@ -32,12 +32,12 @@ export function startScheduler(): void {
 
   task = cron.schedule(env.scrapeCron, () => {
     const delay = env.scrapeJitterMs > 0 ? Math.floor(Math.random() * env.scrapeJitterMs) : 0;
-    if (!delay) return fire('Scheduled');
+    if (!delay) return fire('scheduled');
 
     logger.info(`Next scrape in ${Math.round(delay / 1000)}s`);
     pending = setTimeout(() => {
       pending = null;
-      fire('Scheduled');
+      fire('scheduled');
     }, delay);
     pending.unref?.();
   });
@@ -49,7 +49,7 @@ export function startScheduler(): void {
 
   // Off by default. Restarting the app is not a reason to hit the platforms
   // again, and in development that would mean a scrape on every file save.
-  if (env.scrapeOnStart) fire('Startup');
+  if (env.scrapeOnStart) fire('startup');
 }
 
 export function stopScheduler(): void {

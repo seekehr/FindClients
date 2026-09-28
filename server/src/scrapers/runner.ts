@@ -77,7 +77,17 @@ async function reviewLeads(
   return rejected;
 }
 
-let running = false;
+/** What started a cycle — named in the log when a second one is turned away. */
+export type ScrapeTrigger = 'scheduled' | 'startup' | 'manual';
+
+/**
+ * The cycle in flight, if any. Only one runs at a time: a scheduled tick that
+ * lands while you pressed "Scrape now" a minute earlier is skipped, not queued
+ * — the next tick will pick up anything new.
+ */
+let current: { trigger: ScrapeTrigger; startedAt: Date; platform: string | null } | null = null;
+
+const clock = (d: Date) => d.toTimeString().slice(0, 8);
 
 export interface RunSummary {
   totalFound: number;
@@ -158,7 +168,7 @@ async function runOne(scraper: Scraper, config: AppConfig): Promise<RunOutcome> 
   }
 }
 
-export async function runScrapeCycle(): Promise<RunSummary> {
+export async function runScrapeCycle(trigger: ScrapeTrigger): Promise<RunSummary> {
   const summary: RunSummary = {
     totalFound: 0,
     totalInserted: 0,
@@ -166,11 +176,15 @@ export async function runScrapeCycle(): Promise<RunSummary> {
     skipped: [],
   };
 
-  if (running) {
-    logger.warn('A scrape is already in progress — skipping this one');
+  if (current) {
+    logger.warn(
+      `Skipping the ${trigger} scrape — the ${current.trigger} scrape started at ` +
+        `${clock(current.startedAt)} is still running` +
+        (current.platform ? ` (on ${current.platform})` : ''),
+    );
     return summary;
   }
-  running = true;
+  current = { trigger, startedAt: new Date(), platform: null };
 
   try {
     const config = getConfig();
@@ -196,6 +210,7 @@ export async function runScrapeCycle(): Promise<RunSummary> {
         continue;
       }
 
+      current.platform = scraper.name;
       const { found, inserted, toNotify } = await runOne(scraper, config);
       summary.perPlatform[scraper.platform] = { found, inserted: inserted.length };
       summary.totalFound += found;
@@ -205,7 +220,7 @@ export async function runScrapeCycle(): Promise<RunSummary> {
 
     if (allNew.length) await notifyNewLeads(allNew);
   } finally {
-    running = false;
+    current = null;
   }
 
   return summary;
@@ -213,5 +228,5 @@ export async function runScrapeCycle(): Promise<RunSummary> {
 
 /** Whether a cycle is in flight, for the manual "Scrape now" button. */
 export function isScraping(): boolean {
-  return running;
+  return current !== null;
 }

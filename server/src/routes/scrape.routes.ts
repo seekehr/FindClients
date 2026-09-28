@@ -22,7 +22,7 @@ scrapeRouter.post(
       return;
     }
 
-    void runScrapeCycle().catch((err) =>
+    void runScrapeCycle('manual').catch((err) =>
       logger.error('Manual scrape crashed', (err as Error).message),
     );
 

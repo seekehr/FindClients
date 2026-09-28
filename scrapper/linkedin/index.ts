@@ -298,7 +298,9 @@ export function searchQuery(keyword: string): string {
 export function searchUrl(keyword: string, origin?: string): string {
   return (
     `${ORIGIN}/search/results/content/?keywords=${encodeURIComponent(searchQuery(keyword))}` +
-    `&sortBy=${encodeURIComponent('"date_posted"')}` +
+    // `sortBy=["date_posted"]`, brackets escaped — LinkedIn's own filter
+    // writes it as a list; the bare `"date_posted"` is not always honoured.
+    `&sortBy=%5B%22date_posted%22%5D` +
     (origin ? `&origin=${encodeURIComponent(origin)}` : '')
   );
 }

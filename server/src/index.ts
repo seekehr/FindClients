@@ -21,7 +21,10 @@ import { startWatchers, stopWatchers } from './watcher';
  */
 async function loadWebsite(): Promise<RequestHandler | undefined> {
   if (!env.serveWebsite) {
-    logger.info('SERVE_WEBSITE=false — API only. Run the website with `npm run dev` in website/.');
+    // The root `npm run dev` sets this and starts the website itself, as its own
+    // `next dev` process on :3000 — so this is where the website is, not a
+    // sign that it is missing.
+    logger.info('SERVE_WEBSITE=false — this process serves the API only; the website runs separately (`npm run dev` starts it on :3000)');
     return undefined;
   }
 
@@ -58,6 +61,12 @@ async function loadWebsite(): Promise<RequestHandler | undefined> {
 
 async function main() {
   initStore();
+
+  // Dev mode is otherwise silent until something goes wrong, which reads the
+  // same as it being off.
+  if (env.devMode) {
+    logger.info('Dev mode on — scrapers log swallowed errors and empty pages as [dev] lines');
+  }
 
   // Runs left open by a process that was killed mid-scrape. The browser they
   // were driving is gone, so nothing will ever close them, and leaving them
