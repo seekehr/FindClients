@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
@@ -207,12 +208,16 @@ dismissedStore.data = dismissedStore.data.map((entry) =>
 );
 
 /**
- * A lead you cleared, as it reads: kept in `data/cleared/<platform>.json`.
+ * A lead you cleared, as it reads: kept in `data/old_jobs/<platform>.json`.
  *
  * Clearing empties the Leads page, but what people were asking for is still
  * worth having — read together, a few hundred cleared posts are a fair map of
  * the problems clients keep bringing to that platform. Only the words are
  * kept, so the file can be handed to anything (a spreadsheet, an LLM) as-is.
+ *
+ * Only jobs worth reading go in: every watched job (Upwork, LinkedIn jobs),
+ * and scraped posts (X, LinkedIn posts, BlackHatWorld) only if the AI review
+ * qualified them. See `clearLeads`.
  */
 export interface ClearedLead {
   title: string;
@@ -221,12 +226,14 @@ export interface ClearedLead {
 
 /**
  * What analytics needs to keep counting a lead after it is cleared: which
- * platform found it and when. One per cleared lead, never pruned — unlike
+ * platform found it and when. One per archived lead, never pruned — unlike
  * `dismissedStore`, which expires. The hash stops a lead cleared, restored,
  * found again and cleared again from being counted (or archived) twice.
  */
 export interface ClearedStat {
   hash: string;
+  /** The platform's own id (`idKey`), when it has one — catches the same job under another URL. */
+  id?: string;
   platform: string;
   createdAt: string;
   clearedAt: string;
@@ -235,6 +242,22 @@ export interface ClearedStat {
 export const clearedStatsStore = registerForFlush(
   new JsonFile<ClearedStat[]>(file('cleared-stats.json'), () => []),
 );
+
+const OLD_JOBS_DIR = path.join(env.dataDir, 'old_jobs');
+
+// The archive used to live in data/cleared/. Move it once, before anything
+// opens a file there, so what was already saved carries over.
+{
+  const legacy = path.join(env.dataDir, 'cleared');
+  if (fs.existsSync(legacy) && !fs.existsSync(OLD_JOBS_DIR)) {
+    try {
+      fs.renameSync(legacy, OLD_JOBS_DIR);
+      logger.info('Moved data/cleared/ to data/old_jobs/');
+    } catch (err) {
+      logger.error(`Could not move data/cleared/ to data/old_jobs/: ${(err as Error).message}`);
+    }
+  }
+}
 
 const clearedArchives = new Map<string, JsonFile<ClearedLead[]>>();
 
@@ -246,7 +269,7 @@ export function clearedArchive(platform: string): JsonFile<ClearedLead[]> {
   let archive = clearedArchives.get(name);
   if (!archive) {
     archive = registerForFlush(
-      new JsonFile<ClearedLead[]>(path.join(env.dataDir, 'cleared', `${name}.json`), () => []),
+      new JsonFile<ClearedLead[]>(path.join(OLD_JOBS_DIR, `${name}.json`), () => []),
     );
     clearedArchives.set(name, archive);
   }

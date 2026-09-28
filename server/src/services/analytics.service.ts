@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { MAX_RUNS, clearedStatsStore, leadsStore, runsStore } from '../store';
+import { MAX_RUNS, clearedStatsStore, leadsStore, runsStore, type ClearedStat } from '../store';
+import { idKey } from './lead.service';
 import type { Platform, ScrapeRun } from '../types';
 
 /**
@@ -18,17 +19,26 @@ import type { Platform, ScrapeRun } from '../types';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Platform and found-at date of every lead ever collected, cleared or not. */
+/** Cleared leads that are not back in the feed, by hash or by the platform's own id. */
+function clearedNotLive(): ClearedStat[] {
+  const live = new Set<string>();
+  for (const lead of leadsStore.data) {
+    live.add(lead.sourceHash);
+    const id = idKey(lead.platform, lead.url);
+    if (id) live.add(id);
+  }
+  return clearedStatsStore.data.filter((s) => !live.has(s.hash) && !(s.id && live.has(s.id)));
+}
+
 function everyLead(): { platform: string; createdAt: string }[] {
   // A cleared lead you restored and the scrapers found again is back in
   // leads.json; count it there, not twice.
-  const live = new Set(leadsStore.data.map((l) => l.sourceHash));
-  return [...leadsStore.data, ...clearedStatsStore.data.filter((s) => !live.has(s.hash))];
+  return [...leadsStore.data, ...clearedNotLive()];
 }
 
 /** Cleared leads that are not back in the feed. */
 function clearedCount(): number {
-  const live = new Set(leadsStore.data.map((l) => l.sourceHash));
-  return clearedStatsStore.data.filter((s) => !live.has(s.hash)).length;
+  return clearedNotLive().length;
 }
 
 /** Top-line dashboard metrics. */

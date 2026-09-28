@@ -136,9 +136,25 @@ function activeDismissals(): Set<string> {
 export function isLeadKnown(platform: string, url: string | null | undefined, title: string): boolean {
   const hash = sourceHash(platform, url, title);
   if (leadsStore.data.some((lead) => lead.sourceHash === hash)) return true;
-  if (activeDismissals().has(hash)) return true;
+  const dismissed = activeDismissals();
+  if (dismissed.has(hash)) return true;
   const jobId = stableId(platform, url);
+  if (jobId && dismissed.has(idKey(platform, url))) return true;
   return !!jobId && stableIds().has(jobId);
+}
+
+/**
+ * The platform's own id as a dismissal / archive key — '' when there is none.
+ *
+ * A cleared lead has to be remembered by this as well as by its source hash.
+ * The hash is taken from the URL, and the same Upwork job reaches us under a
+ * slugged link one time and a bare `/jobs/~02…` the next: remembered by hash
+ * alone, it comes back as a "new" job, is alerted again, and — cleared a
+ * second time — lands in the cleared archive twice.
+ */
+export function idKey(platform: string, url: string | null | undefined): string {
+  const id = stableId(platform, url);
+  return id ? `id::${platform}::${id}` : '';
 }
 
 /**
@@ -249,7 +265,12 @@ export function insertLeads(raw: RawLead[]): InsertLeadsResult {
     }
 
     // Cleared away on purpose — do not drag it back in, reposted or not.
-    if (dismissed.has(hash) || (content && dismissed.has(content))) {
+    const clearedId = idKey(r.platform, r.url);
+    if (
+      dismissed.has(hash) ||
+      (content && dismissed.has(content)) ||
+      (clearedId && dismissed.has(clearedId))
+    ) {
       skippedAsCleared += 1;
       continue;
     }
@@ -369,6 +390,25 @@ function isWorked(lead: Lead): boolean {
 }
 
 /**
+ * Did this lead come from a job watcher rather than a scraper? Upwork is only
+ * ever watched; LinkedIn is both, and its watcher marks jobs `kind: 'job'`
+ * (posts are `kind: 'post'`).
+ */
+function isWatched(lead: Lead): boolean {
+  if (lead.platform === 'upwork') return true;
+  return lead.platform === 'linkedin' && lead.metadata?.kind === 'job';
+}
+
+/**
+ * Should a cleared lead go to old_jobs/? Watched jobs always. Scraped posts
+ * only when the AI review qualified them — a rejected or never-reviewed post
+ * is noise, and would bury the real pain points in the archive.
+ */
+function worthArchiving(lead: Lead): boolean {
+  return isWatched(lead) || lead.ai.verdict === 'qualified';
+}
+
+/**
  * Clear the leads you have not acted on.
  *
  * Bookmarked, contacted and won leads stay. "Clear all" is for emptying the
@@ -377,15 +417,21 @@ function isWorked(lead: Lead): boolean {
  * these same records, so dropping them would silently zero your history.
  *
  * The source hashes of the ones that do go are remembered, so the next scrape
- * does not simply find the same posts and put them all back. Their title and
- * description go to `data/cleared/<platform>.json`, and analytics keeps
- * counting them — clearing tidies the feed, it does not unmake history.
+ * does not simply find the same posts and put them all back.
+ *
+ * What is kept of them depends on where they came from. A watched job (Upwork,
+ * LinkedIn jobs) is your own job search, so its title and description go to
+ * `data/old_jobs/<platform>.json` and analytics keeps counting it. A scraped
+ * post (X, LinkedIn posts, BlackHatWorld) is only kept that way if the AI
+ * review qualified it; rejected and unreviewed posts are deleted outright —
+ * not archived, not counted. Only their tombstone remains, so they are not
+ * scraped straight back in.
  */
 export function clearLeads(): number {
   const keep: Lead[] = [];
   const now = new Date().toISOString();
   const dismissed = new Map(dismissedStore.data.map((d) => [d.hash, d]));
-  const archived = new Set(clearedStatsStore.data.map((s) => s.hash));
+  const archived = new Set(clearedStatsStore.data.flatMap((s) => (s.id ? [s.hash, s.id] : [s.hash])));
   const touched = new Set<string>();
 
   for (const lead of leadsStore.data) {
@@ -397,13 +443,20 @@ export function clearLeads(): number {
     // So a repost of a cleared LinkedIn post stays cleared too.
     const content = contentHash(lead);
     if (content) dismissed.set(content, { hash: content, at: now });
+    // And by the platform's own id, so the same job under another URL does too.
+    const id = idKey(lead.platform, lead.url);
+    if (id) dismissed.set(id, { hash: id, at: now });
 
-    // Kept on disk for reading later, and in analytics, once per lead.
-    if (archived.has(lead.sourceHash)) continue;
+    // Kept on disk for reading later, and in analytics, once per lead — if
+    // it is worth keeping at all.
+    if (!worthArchiving(lead)) continue;
+    if (archived.has(lead.sourceHash) || (id && archived.has(id))) continue;
     archived.add(lead.sourceHash);
+    if (id) archived.add(id);
     clearedArchive(lead.platform).data.push({ title: lead.title, description: lead.description });
     clearedStatsStore.data.push({
       hash: lead.sourceHash,
+      ...(id ? { id } : {}),
       platform: lead.platform,
       createdAt: lead.createdAt,
       clearedAt: now,

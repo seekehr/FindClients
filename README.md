@@ -82,8 +82,8 @@ Everything is JSON files in `data/`:
 | `config.json` | Your settings, and your Gemini API key |
 | `leads.json` | Every lead, with its status, bookmark and AI verdict |
 | `dismissed.json` | Source hashes of leads you cleared, so they stay cleared for 30 days |
-| `cleared/<platform>.json` | Every lead you cleared, as `[{ title, description }]` per platform — raw material for spotting client pain points |
-| `cleared-stats.json` | Platform and date of each cleared lead, so Analytics keeps counting them |
+| `old_jobs/<platform>.json` | Leads you cleared that were worth keeping, as `[{ title, description }]` per platform — raw material for spotting client pain points. Every watched job (Upwork, LinkedIn jobs); scraped posts (X, LinkedIn posts, BlackHatWorld) only if the AI review qualified them. The rest are deleted outright |
+| `cleared-stats.json` | Platform and date of each lead in `old_jobs/`, so Analytics keeps counting them |
 | `opportunities.json` | The New Opportunities feed — Upwork and LinkedIn job alerts (last 300) |
 | `connections.json` | Which platforms are signed in, and how the last run went |
 | `chrome-profile/` | The Chrome profile `npm run chrome` uses — your live sessions |
