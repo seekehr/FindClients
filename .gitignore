@@ -3,7 +3,6 @@ data/
 
 # Environment — everything except the committed template.
 # Broad on purpose: .env.backup, .env.old and friends hold real keys too.
-.env*
 !.env.example
 
 # Dependencies and build output
@@ -20,3 +19,4 @@ dist/
 
 # Build metadata
 *.tsbuildinfo
+config.bat
