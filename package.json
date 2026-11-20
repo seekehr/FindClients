@@ -9,10 +9,10 @@
   },
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "start": "node scripts/start.mjs",
+    "start": "node init && node scripts/start.mjs",
     "chrome": "node scripts/chrome.mjs",
-    "dev": "node scripts/dev.mjs",
-    "build": "npm run build --prefix website",
+    "dev": "node init && node scripts/dev.mjs",
+    "build": "node init && npm run build --prefix website",
     "typecheck": "npm run typecheck --prefix server"
   }
 }
